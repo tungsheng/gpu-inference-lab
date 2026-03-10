@@ -29,8 +29,8 @@ module "eks" {
   vpc_id          = module.vpc.vpc_id
   private_subnets = module.vpc.private_subnets
 
-  endpoint_public_access       = true
-  endpoint_public_access_cidrs = ["0.0.0.0/0"]
+  endpoint_public_access       = length(var.eks_public_access_cidrs) > 0
+  endpoint_public_access_cidrs = var.eks_public_access_cidrs
 
   enable_cluster_creator_admin_permissions = true
 }

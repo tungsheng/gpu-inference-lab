@@ -42,15 +42,15 @@ variable "cluster_admin_role_arn" {
 }
 
 variable "kms_key_administrator_arns" {
-  description = "IAM role or root ARNs to administer the EKS KMS key. Defaults to the account root principal to avoid binding the key to the Terraform caller."
+  description = "IAM user, role, or root ARNs to administer the EKS KMS key. Defaults to the current Terraform caller to preserve access for future updates and destroys."
   type        = list(string)
   default     = []
 
   validation {
     condition = alltrue([
       for arn in var.kms_key_administrator_arns :
-      length(regexall(":role/|:root$", arn)) > 0
+      length(regexall(":role/|:user/|:root$", arn)) > 0
     ])
-    error_message = "kms_key_administrator_arns must contain only IAM role ARNs or the account root ARN."
+    error_message = "kms_key_administrator_arns must contain only IAM role ARNs, IAM user ARNs, or the account root ARN."
   }
 }

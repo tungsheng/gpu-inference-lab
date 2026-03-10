@@ -2,6 +2,10 @@ data "aws_caller_identity" "current" {}
 
 data "aws_partition" "current" {}
 
+data "aws_iam_session_context" "current" {
+  arn = data.aws_caller_identity.current.arn
+}
+
 data "aws_iam_policy_document" "vpc_cni_pod_identity_assume_role" {
   statement {
     sid = "PodIdentity"
@@ -29,8 +33,6 @@ resource "aws_iam_role_policy_attachment" "vpc_cni" {
 }
 
 locals {
-  account_root_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
-
   cluster_access_entries = var.cluster_admin_role_arn == null ? {} : {
     cluster_admin = {
       principal_arn = var.cluster_admin_role_arn
@@ -46,5 +48,5 @@ locals {
     }
   }
 
-  kms_key_administrators = length(var.kms_key_administrator_arns) > 0 ? var.kms_key_administrator_arns : [local.account_root_arn]
+  kms_key_administrators = length(var.kms_key_administrator_arns) > 0 ? var.kms_key_administrator_arns : [try(data.aws_iam_session_context.current.issuer_arn, data.aws_caller_identity.current.arn)]
 }
