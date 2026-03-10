@@ -47,10 +47,10 @@ module "eks" {
       instance_types             = ["t3.micro"]
       iam_role_attach_cni_policy = false
 
-      min_size = 2
-      max_size = 3
+      min_size = 6
+      max_size = 10
 
-      desired_size = 2
+      desired_size = 8
     }
   }
 }

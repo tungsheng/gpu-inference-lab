@@ -1,5 +1,9 @@
 variable "vpc_cidr" {
-  
+
+}
+
+variable "cluster_name" {
+  type = string
 }
 
 variable "public_subnets" {

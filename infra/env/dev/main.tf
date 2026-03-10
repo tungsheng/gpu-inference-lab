@@ -5,7 +5,8 @@ provider "aws" {
 module "vpc" {
   source = "../../modules/vpc"
 
-  vpc_cidr = "10.0.0.0/16"
+  cluster_name = "gpu-inference"
+  vpc_cidr     = "10.0.0.0/16"
 
   public_subnets = [
     "10.0.1.0/24",
@@ -29,8 +30,8 @@ module "eks" {
   vpc_id          = module.vpc.vpc_id
   private_subnets = module.vpc.private_subnets
 
-  endpoint_public_access       = length(var.eks_public_access_cidrs) > 0
-  endpoint_public_access_cidrs = var.eks_public_access_cidrs
+  endpoint_public_access       = true          #length(var.eks_public_access_cidrs) > 0
+  endpoint_public_access_cidrs = ["0.0.0.0/0"] #var.eks_public_access_cidrs
 
   enable_cluster_creator_admin_permissions = true
 }
