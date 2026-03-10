@@ -9,3 +9,7 @@ output "cluster_endpoint" {
 output "oidc_provider_arn" {
   value = module.eks.oidc_provider_arn
 }
+
+output "vpc_cni_role_arn" {
+  value = aws_iam_role.vpc_cni.arn
+}
