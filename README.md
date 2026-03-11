@@ -2,17 +2,39 @@
 
 **gpu-inference-lab** is a hands-on project that builds a production-style machine learning inference platform on AWS.
 
-The system deploys a cloud-native stack using **Terraform** and **Kubernetes**, running on **AWS EKS**. The platform exposes model inference APIs through an **ALB (Application Load Balancer)** and dynamically scales compute resources to support GPU workloads.
+The target platform combines **Terraform**, **Amazon EKS**, **Karpenter**, **Application Load Balancer**, and GPU-serving workloads. The current repository implements the infrastructure foundation: VPC networking, an EKS cluster, ALB-backed ingress, and a sample Kubernetes service.
 
 The project focuses on the **infrastructure foundations required for ML platforms**, including:
 
 - VPC networking with public/private subnets and NAT routing
 - Kubernetes ingress and ALB integration
 - IAM roles and IRSA for secure service access
-- Autoscaling compute nodes for inference workloads
-- Containerized model serving infrastructure
+- Elastic compute patterns for inference workloads
+- Containerized serving infrastructure
 
 This repository is structured as a **learning lab and reference architecture** for building scalable ML inference systems.
+
+## Current status
+
+The repository currently covers the platform foundation milestones:
+
+- Milestone 1: AWS networking layer
+- Milestone 2: EKS cluster deployment
+- Milestone 3: ingress and load balancer integration
+
+The next major milestone is dynamic GPU compute with Karpenter.
+
+## Docs
+
+- [Roadmap](docs/roadmap.md)
+- [Architecture](docs/architecture.md)
+- [Networking](docs/networking.md)
+- [Scaling](docs/scaling.md)
+- [Inference](docs/inference.md)
+- [Cost optimization](docs/cost-optimization.md)
+- [GPU bin packing](docs/gpu-binpacking.md)
+- [Operations](docs/operations.md)
+- [Dev environment workflow](docs/dev-environment.md)
 
 ## Quick start
 
