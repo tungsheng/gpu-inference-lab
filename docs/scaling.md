@@ -1,93 +1,171 @@
 # Scaling
 
-## Current state
+## Current compute model
 
-The current repository does not yet implement elastic compute. The EKS module provisions a fixed managed node group, and the sample workload does not use GPU resources.
-
-What exists today:
-
-- An EKS managed node group for baseline cluster capacity.
-- A public sample workload behind an ALB.
-- No Karpenter controller.
-- No GPU device plugin.
-- No Horizontal Pod Autoscaler.
-
-## Core scaling model for this project
-
-The most important control flow to understand is:
+The repository now runs a split-capacity baseline instead of a system-only
+cluster:
 
 ```text
-traffic increases
-        |
-        v
-more pods are created
-        |
-        v
-pods are unschedulable
-        |
-        v
-Karpenter observes pending pods
-        |
-        v
-EC2 instances launch
-        |
-        v
-nodes join EKS
-        |
-        v
-pods are scheduled
+system nodes (managed) -> m7i-flex.large -> controllers and shared services
+gpu nodes (managed)    -> g4dn.xlarge    -> GPU validation and inference pods
 ```
 
-Two different scaling loops matter:
+Isolation rules:
 
-- Workload scaling creates more pods. That is the job of the Horizontal Pod Autoscaler or another workload-level controller.
-- Capacity scaling creates more nodes. That is the job of Karpenter once pending pods cannot be placed.
+- System nodes are labeled `workload=system`
+- GPU nodes are labeled `workload=gpu`
+- GPU nodes are tainted `gpu=true:NoSchedule`
+- GPU workloads opt in with both a matching `nodeSelector` and toleration
+- The NVIDIA device plugin runs only on `workload=gpu` nodes and tolerates the
+  GPU taint
 
-## Roadmap sequence
+That gives the lab a clear baseline:
 
-Milestone 4:
+- controllers and ingress stay on cheaper CPU capacity
+- GPU runtime components land only where they are needed
+- the cluster exposes `nvidia.com/gpu` before any real inference workload is
+  applied
 
-- Install Karpenter.
-- Define the first `EC2NodeClass`.
-- Define the first `NodePool`.
-- Demonstrate scale from zero for a pending GPU workload.
+## Baseline apply flow
 
-Milestone 5:
+The default environment helper now provisions both managed node groups and then
+completes the cluster-side prerequisites:
 
-- Add GPU node requirements.
-- Add taints, tolerations, and explicit GPU resource requests.
-- Install the NVIDIA device plugin and related runtime support.
+```bash
+terraform -chdir=infra/env/dev init
+./scripts/apply-dev.sh
+```
 
-Milestone 6:
+`./scripts/apply-dev.sh` now:
 
-- Support heterogeneous GPU instance types so provisioning can adapt to price and capacity.
+1. Runs `terraform apply` for `infra/env/dev`
+2. Updates local kubeconfig
+3. Installs the AWS Load Balancer Controller
+4. Applies the checked-in NVIDIA device plugin manifest at
+   `platform/system/nvidia-device-plugin.yaml`
+5. Waits for GPU nodes to advertise `nvidia.com/gpu`
+6. Applies the sample ingress workload under `platform/test-app`
 
-Milestone 8:
+The helper is intentionally strict. If the GPU node group comes up but the
+device plugin never exposes GPU allocatable capacity, the script fails instead
+of reporting a half-ready environment.
 
-- Add availability-zone-aware scheduling and provisioning constraints.
+## Baseline verification
 
-Milestone 10:
+After `./scripts/apply-dev.sh`, verify the node split:
 
-- Maintain warm GPU capacity to reduce cold-start latency.
+```bash
+kubectl get nodes -L workload,node.kubernetes.io/instance-type -o wide
+```
 
-Milestone 12:
+Expected shape:
 
-- Add workload-level autoscaling with HPA and production-relevant metrics.
+- at least one `m7i-flex.large` node labeled `workload=system`
+- at least one `g4dn.xlarge` node labeled `workload=gpu`
 
-## Questions this project should be able to answer
+Verify the device plugin:
 
-- What signal causes a GPU node to launch
-- How Karpenter discovers subnets and security groups
-- How IAM permissions allow Karpenter to provision EC2 instances
-- How GPU scheduling is enabled inside Kubernetes
-- When warm pools are worth the extra idle cost
+```bash
+kubectl get daemonset nvidia-device-plugin-daemonset -n kube-system
+kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds -o wide
+```
 
-## Acceptance criteria for the next scaling milestone
+Then inspect a GPU node:
 
-The next scaling milestone is complete when the repository can demonstrate:
+```bash
+kubectl describe node <gpu-node-name>
+```
 
-- Zero GPU nodes before the workload is created.
-- A pending GPU pod with `nvidia.com/gpu` requests.
-- Automatic node launch by Karpenter.
-- Successful pod scheduling onto the new node.
-- Node removal after the workload becomes idle.
+Look for:
+
+```text
+Allocatable:
+  nvidia.com/gpu: 1
+```
+
+If that line is missing, stop there and fix the GPU runtime path before testing
+an inference workload.
+
+## GPU smoke test
+
+The first real validation path is the checked-in GPU pod:
+
+```bash
+kubectl apply -f platform/tests/gpu-test.yaml
+kubectl logs -n app gpu-test
+```
+
+Expected result: `nvidia-smi` output from the container.
+
+That confirms:
+
+- the pod reached the tainted GPU node group
+- the device plugin exposed the GPU resource
+- the container runtime can see the GPU
+
+## Placeholder inference workload
+
+Once the smoke test passes, you can exercise the placeholder deployment:
+
+```bash
+kubectl apply -f platform/inference/gpu-inference.yaml
+kubectl get pods -n app -o wide
+```
+
+This deployment is not a real inference server yet. It exists to validate the
+scheduling contract the future serving stack will depend on:
+
+- `nodeSelector: workload=gpu`
+- `gpu=true:NoSchedule` toleration
+- `limits.nvidia.com/gpu: 1`
+
+## Destroy flow
+
+The teardown helper understands the full baseline path:
+
+```bash
+./scripts/destroy-dev.sh
+```
+
+Before Terraform destroy, it now removes:
+
+- the ingress so the ALB can be deleted cleanly
+- the sample app service and deployment
+- `platform/tests/gpu-test.yaml`
+- `platform/inference/gpu-inference.yaml`
+- the checked-in NVIDIA device plugin daemonset
+- optional Karpenter resources if you installed them separately
+
+That ordering matters because the ALB and GPU runtime resources are created
+through Kubernetes rather than directly through Terraform state.
+
+## Version pins
+
+The current pinned baseline is:
+
+- EKS control plane: `1.35`
+- System node group AMI type: `AL2023_x86_64_STANDARD`
+- System node group release: `1.35.2-20260304`
+- GPU node group AMI type: `AL2023_x86_64_NVIDIA`
+- GPU node group release: `1.35.2-20260304`
+- NVIDIA device plugin image: `v0.18.1`
+
+The repo also keeps an optional Karpenter path pinned to:
+
+- Karpenter chart/CRDs: `1.9.0`
+- `EC2NodeClass` alias: `al2023@v20260304`
+
+Those pins are intentional so the lab stays reproducible instead of drifting
+whenever upstream recommended images change.
+
+## Optional Karpenter path
+
+Karpenter remains checked in, but it is no longer the baseline compute story.
+Use it as a separate experiment after the managed GPU path is working:
+
+- Terraform: `infra/modules/karpenter/`
+- Manifests: `platform/karpenter/`
+- CPU scale test: `platform/tests/cpu-scale-test.yaml`
+
+That path is useful for proving pod-pending-to-new-node behavior, but the
+default apply/destroy helpers are now centered on the fixed system/GPU split.

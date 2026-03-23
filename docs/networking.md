@@ -4,7 +4,7 @@
 
 The current dev environment provisions:
 
-- One VPC in `us-west-1`
+- One VPC in `us-west-2`
 - Two public subnets
 - Two private subnets
 - One Internet Gateway
@@ -16,7 +16,7 @@ The current CIDR layout in `infra/env/dev/main.tf` is:
 - VPC: `10.0.0.0/16`
 - Public subnets: `10.0.1.0/24`, `10.0.2.0/24`
 - Private subnets: `10.0.11.0/24`, `10.0.12.0/24`
-- Availability zones: `us-west-1a`, `us-west-1c`
+- Availability zones: `us-west-2a`, `us-west-2c`
 
 ## Packet flow
 
@@ -80,6 +80,7 @@ Private subnets:
 The current public entry path is implemented with:
 
 - `platform/controller/aws-load-balancer-controller/service-account.yaml`
+- Helm release `aws-load-balancer-controller` from the `eks` chart repository
 - `platform/test-app/service.yaml`
 - `platform/test-app/ingress.yaml`
 

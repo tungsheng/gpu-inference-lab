@@ -12,14 +12,22 @@ The apply flow:
 
 - Applies Terraform for the dev environment.
 - Updates local kubeconfig.
-- Installs the AWS Load Balancer Controller.
+- Applies the AWS Load Balancer Controller CRDs and installs the pinned Helm chart.
+- Applies the checked-in NVIDIA device plugin daemonset for the tainted GPU
+  node group and waits for GPU capacity to appear.
 - Waits for the controller to become ready.
 - Applies the sample application manifests.
+
+That helper is intentionally scoped to the baseline ingress path. Karpenter
+installation and test workloads are still managed as a separate workflow.
 
 The destroy flow:
 
 - Removes the ingress first so the ALB can be deleted cleanly.
 - Removes the sample workload.
+- Removes the GPU smoke-test and example inference workload if they were applied.
+- Removes Karpenter test resources and waits for Karpenter-managed nodes to terminate if Karpenter has been installed.
+- Removes the checked-in NVIDIA device plugin daemonset.
 - Uninstalls the AWS Load Balancer Controller.
 - Destroys the Terraform environment.
 

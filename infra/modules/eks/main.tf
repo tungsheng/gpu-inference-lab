@@ -9,6 +9,10 @@ module "eks" {
 
   subnet_ids = var.private_subnets
 
+  node_security_group_tags = {
+    "karpenter.sh/discovery" = "gpu-inference"
+  }
+
   endpoint_private_access      = var.endpoint_private_access
   endpoint_public_access       = var.endpoint_public_access
   endpoint_public_access_cidrs = var.endpoint_public_access_cidrs
@@ -43,14 +47,43 @@ module "eks" {
   }
 
   eks_managed_node_groups = {
-    systems = {
-      instance_types             = ["t3.micro"]
+    system = {
+      instance_types             = ["m7i-flex.large"]
+      ami_type                   = "AL2023_x86_64_STANDARD"
+      ami_release_version        = "1.35.2-20260304"
       iam_role_attach_cni_policy = false
 
-      min_size = 6
-      max_size = 10
+      labels = {
+        workload                  = "system"
+        "karpenter.sh/controller" = "true"
+      }
 
-      desired_size = 8
+      desired_size = 2
+      min_size     = 2
+      max_size     = 3
+    }
+
+    gpu = {
+      instance_types             = ["g4dn.xlarge"]
+      ami_type                   = "AL2023_x86_64_NVIDIA"
+      ami_release_version        = "1.35.2-20260304"
+      iam_role_attach_cni_policy = false
+
+      desired_size = 1
+      min_size     = 0
+      max_size     = 2
+
+      labels = {
+        workload = "gpu"
+      }
+
+      taints = {
+        gpu = {
+          key    = "gpu"
+          value  = "true"
+          effect = "NO_SCHEDULE"
+        }
+      }
     }
   }
 }

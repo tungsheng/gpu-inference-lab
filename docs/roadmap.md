@@ -46,42 +46,38 @@ Final system:
 
 ## Repository Structure
 
-Target structure:
+Current structure:
 
 ```text
 gpu-inference-lab/
 
 infra/
-  modules/
-    vpc/
-    eks/
-    alb-controller/
-    karpenter/
-
-  envs/
+  env/
     dev/
+  modules/
+    eks/
+    karpenter/
+    vpc/
 
 platform/
-  ingress/
-  karpenter/
+  controller/
   inference/
+  karpenter/
+  system/
+  test-app/
+  tests/
 
+scripts/
 docs/
-  roadmap.md
-  architecture.md
-  networking.md
-  scaling.md
-  inference.md
-  operations.md
 ```
 
-Current repository notes:
+Key paths:
 
-- The live Terraform environment path is `infra/env/dev`.
-- The AWS Load Balancer Controller manifests currently live under `platform/controller/aws-load-balancer-controller`.
-- The sample public workload currently lives under `platform/test-app`.
-
-Keep the target structure in mind for new work, but do not break the current apply and destroy flow while migrating paths.
+- `infra/env/dev/` is the active Terraform environment
+- `platform/controller/` holds the AWS Load Balancer Controller service account
+- `platform/test-app/` holds the baseline ingress sample
+- `platform/system/` holds cluster-level runtime manifests such as the NVIDIA device plugin
+- `platform/tests/` holds manual smoke tests
 
 ## Milestone 0 - Repository Foundation
 
@@ -138,7 +134,7 @@ Objective:
 Infrastructure:
 
 - EKS control plane
-- Managed node group
+- Managed node groups for system and GPU capacity
 - IAM roles
 - OIDC provider
 
@@ -180,11 +176,11 @@ Documentation:
 
 ## Milestone 4 - Dynamic Compute Layer
 
-Status: next.
+Status: experimental.
 
 Objective:
 
-- Introduce node autoscaling with Karpenter.
+- Introduce optional node autoscaling with Karpenter.
 
 Components:
 
@@ -194,9 +190,9 @@ Components:
 
 Demonstration:
 
-- No GPU nodes exist initially
-- A GPU pod is created
-- A node is launched
+- A non-system pod remains pending
+- Karpenter launches a matching node
+- The node joins the cluster
 - The pod is scheduled
 
 Deliverables:
@@ -210,7 +206,7 @@ Documentation:
 
 ## Milestone 5 - GPU Scheduling
 
-Status: planned.
+Status: implemented baseline.
 
 Objective:
 
@@ -218,10 +214,12 @@ Objective:
 
 Add:
 
-- GPU node pools
+- Dedicated managed GPU capacity
 - Taints
 - Tolerations
 - GPU resource requests such as `nvidia.com/gpu: 1`
+- NVIDIA device plugin
+- GPU smoke test and placeholder deployment
 
 Documentation:
 

@@ -1,5 +1,14 @@
+locals {
+  aws_region = "us-west-2"
+
+  azs = [
+    "us-west-2a",
+    "us-west-2c"
+  ]
+}
+
 provider "aws" {
-  region = "us-west-1"
+  region = local.aws_region
 }
 
 module "vpc" {
@@ -18,10 +27,7 @@ module "vpc" {
     "10.0.12.0/24"
   ]
 
-  azs = [
-    "us-west-1a",
-    "us-west-1c"
-  ]
+  azs = local.azs
 }
 
 module "eks" {
@@ -30,8 +36,16 @@ module "eks" {
   vpc_id          = module.vpc.vpc_id
   private_subnets = module.vpc.private_subnets
 
-  endpoint_public_access       = true          #length(var.eks_public_access_cidrs) > 0
-  endpoint_public_access_cidrs = ["0.0.0.0/0"] #var.eks_public_access_cidrs
+  endpoint_public_access       = true
+  endpoint_public_access_cidrs = ["0.0.0.0/0"]
 
   enable_cluster_creator_admin_permissions = true
+}
+
+module "karpenter" {
+  source = "../../modules/karpenter"
+
+  cluster_name       = module.eks.cluster_name
+  iam_role_name      = "${module.eks.cluster_name}-karpenter-controller"
+  node_iam_role_name = "${module.eks.cluster_name}-karpenter-node"
 }

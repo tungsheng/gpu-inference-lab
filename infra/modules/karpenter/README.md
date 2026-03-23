@@ -1,7 +1,12 @@
 # infra/modules/karpenter
 
-This directory is reserved for Terraform resources required by Karpenter, such as:
+This module is a thin local wrapper around the upstream
+`terraform-aws-modules/eks/aws//modules/karpenter` submodule.
 
-- IAM roles and policies
-- Discovery tags and related AWS integration
-- Other supporting infrastructure that should exist before Kubernetes manifests are applied
+It provisions the AWS-side prerequisites for Karpenter in this repo:
+
+- Controller IAM role and policy
+- Pod Identity association for the `karpenter` service account
+- Node IAM role and EKS access entry for Karpenter-managed nodes
+
+The Kubernetes-side resources remain under `platform/karpenter/`.
