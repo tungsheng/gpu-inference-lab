@@ -7,16 +7,18 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "${SCRIPT_DIR}/dev-environment-paths.sh"
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/dev-environment-common.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/kube.sh"
 # shellcheck disable=SC2034
 SCRIPT_NAME="measure-gpu-serving-path"
 
 # Runtime configuration.
 APP_NAMESPACE=${APP_NAMESPACE:-app}
 KARPENTER_NAMESPACE=${KARPENTER_NAMESPACE:-karpenter}
-DEPLOYMENT_NAME=${DEPLOYMENT_NAME:-vllm-openai}
+DEPLOYMENT_NAME=${DEPLOYMENT_NAME:-${GPU_INFERENCE_DEPLOYMENT_NAME}}
 NODEPOOL_NAME=${NODEPOOL_NAME:-${KARPENTER_NODEPOOL_NAME}}
 NODECLASS_NAME=${NODECLASS_NAME:-${KARPENTER_NODECLASS_NAME}}
-LOAD_TEST_JOB_NAME=${LOAD_TEST_JOB_NAME:-gpu-load-test}
+LOAD_TEST_JOB_NAME=${LOAD_TEST_JOB_NAME:-${GPU_LOAD_TEST_JOB_NAME}}
 POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-2}
 PROGRESS_LOG_INTERVAL_SECONDS=${PROGRESS_LOG_INTERVAL_SECONDS:-10}
 STATE_REFRESH_INTERVAL_SECONDS=${STATE_REFRESH_INTERVAL_SECONDS:-4}
@@ -26,7 +28,9 @@ WAIT_TIMEOUT_QUICK_SECONDS=${WAIT_TIMEOUT_QUICK_SECONDS:-300}
 WAIT_TIMEOUT_STANDARD_SECONDS=${WAIT_TIMEOUT_STANDARD_SECONDS:-480}
 WAIT_TIMEOUT_SCALE_SECONDS=${WAIT_TIMEOUT_SCALE_SECONDS:-720}
 WAIT_TIMEOUT_SCALE_DOWN_SECONDS=${WAIT_TIMEOUT_SCALE_DOWN_SECONDS:-900}
-REPORT_PATH=${1:-"/tmp/gpu-serving-report-$(date +%Y%m%d-%H%M%S).md"}
+DISABLE_SPINNER=${DISABLE_SPINNER:-0}
+REPORT_PATH=""
+REPORT_PATH_DEFAULT="/tmp/gpu-serving-report-$(date +%Y%m%d-%H%M%S).md"
 
 SPINNER_FRAMES=("/" "-" "\\" "|")
 TOTAL_STAGES=8
@@ -35,6 +39,31 @@ WAIT_PROGRESS_FILE=""
 WAIT_SPINNER_PID=""
 first_gpu_node_name=""
 second_gpu_node_name=""
+CURRENT_MEASUREMENT_CACHE_KEY=""
+MEASUREMENT_STATE_REFRESHED_AT=""
+STATE_GPU_NODE_LINES=""
+STATE_GPU_NODE_NAMES=""
+STATE_GPU_NODE_COUNT="0"
+STATE_NODECLAIM_COUNT="0"
+STATE_DEPLOYMENT_READY_REPLICAS=""
+STATE_DEPLOYMENT_DESIRED_REPLICAS=""
+STATE_HPA_CURRENT_REPLICAS=""
+STATE_HPA_DESIRED_REPLICAS=""
+STATE_FIRST_POD_NAME=""
+STATE_FIRST_POD_PHASE=""
+STATE_FIRST_POD_NODE_NAME=""
+STATE_FIRST_POD_WAITING_REASON=""
+STATE_FIRST_POD_TERMINATED_REASON=""
+STATE_FIRST_POD_SCHEDULING_REASON=""
+STATE_LOAD_TEST_EXISTS="0"
+STATE_LOAD_TEST_ACTIVE=""
+STATE_LOAD_TEST_SUCCEEDED=""
+STATE_LOAD_TEST_FAILED=""
+STATE_LOAD_TEST_POD_NAME=""
+STATE_LOAD_TEST_POD_PHASE=""
+STATE_LOAD_TEST_POD_REASON=""
+STATE_NVIDIA_READY_COUNT=""
+STATE_NVIDIA_DESIRED_COUNT=""
 
 # Timeline checkpoints recorded for the report.
 EVENT_NAMES=(
@@ -76,6 +105,95 @@ TIMELINE_EVENT_LABELS=(
 
 require_command kubectl
 
+usage() {
+  cat <<EOF
+Usage:
+  ./scripts/measure-gpu-serving-path.sh [options] [report-path]
+
+Options:
+  --report <path>            Write the Markdown report to a specific path
+  --namespace <name>         Application namespace (default: ${APP_NAMESPACE})
+  --deployment <name>        Inference deployment name (default: ${DEPLOYMENT_NAME})
+  --nodepool <name>          Karpenter NodePool name (default: ${NODEPOOL_NAME})
+  --nodeclass <name>         Karpenter EC2NodeClass name (default: ${NODECLASS_NAME})
+  --poll-interval <seconds>  Polling interval in seconds (default: ${POLL_INTERVAL_SECONDS})
+  --no-spinner               Disable the interactive spinner even on a TTY
+  -h, --help                 Show this help
+
+Examples:
+  ./scripts/measure-gpu-serving-path.sh
+  ./scripts/measure-gpu-serving-path.sh --report docs/reports/latest.md
+  ./scripts/measure-gpu-serving-path.sh --poll-interval 5 docs/reports/latest.md
+EOF
+}
+
+parse_args() {
+  local report_override=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --report)
+        report_override=${2:-}
+        shift 2
+        ;;
+      --namespace)
+        APP_NAMESPACE=${2:-}
+        shift 2
+        ;;
+      --deployment)
+        DEPLOYMENT_NAME=${2:-}
+        shift 2
+        ;;
+      --nodepool)
+        NODEPOOL_NAME=${2:-}
+        shift 2
+        ;;
+      --nodeclass)
+        NODECLASS_NAME=${2:-}
+        shift 2
+        ;;
+      --poll-interval)
+        POLL_INTERVAL_SECONDS=${2:-}
+        shift 2
+        ;;
+      --no-spinner)
+        DISABLE_SPINNER=1
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        log_error "unknown option: $1"
+        usage >&2
+        exit 1
+        ;;
+      *)
+        if [[ -n "${report_override}" ]]; then
+          log_error "report path was provided twice"
+          usage >&2
+          exit 1
+        fi
+        report_override=$1
+        shift
+        ;;
+    esac
+  done
+
+  if [[ $# -gt 0 ]]; then
+    log_error "unexpected extra arguments: $*"
+    usage >&2
+    exit 1
+  fi
+
+  REPORT_PATH=${report_override:-${REPORT_PATH_DEFAULT}}
+}
+
 initialize_event_state() {
   local event_name
 
@@ -83,10 +201,6 @@ initialize_event_state() {
     printf -v "${event_name}" '%s' ""
     printf -v "${event_name}_human" '%s' ""
   done
-}
-
-verify_cluster_connectivity() {
-  kubectl cluster-info >/dev/null 2>&1
 }
 
 timestamp_utc() {
@@ -130,23 +244,7 @@ truncate_progress_line() {
 }
 
 spinner_enabled() {
-  [[ -t 2 ]]
-}
-
-progress_color_enabled() {
-  [[ -t 2 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]
-}
-
-progress_colorize_text() {
-  local color_code=$1
-  local text=$2
-
-  if ! progress_color_enabled; then
-    printf '%s' "${text}"
-    return 0
-  fi
-
-  printf '\033[%sm%s\033[0m' "${color_code}" "${text}"
+  [[ "${DISABLE_SPINNER}" != "1" && -t 2 ]]
 }
 
 trim_spaces() {
@@ -246,8 +344,8 @@ progress_spinner_loop() {
     frame_index=$((frame_index + 1))
     spinner_frame_display=${frame}
 
-    if progress_color_enabled; then
-      spinner_frame_display=$(progress_colorize_text "${LOG_COLOR_INFO}" "${spinner_frame_display}")
+    if color_enabled; then
+      spinner_frame_display=$(colorize_text "${LOG_COLOR_INFO}" "${spinner_frame_display}")
     fi
 
     write_progress '\r'
@@ -291,6 +389,7 @@ stop_wait_progress() {
 
   WAIT_SPINNER_PID=""
   WAIT_PROGRESS_FILE=""
+  CURRENT_MEASUREMENT_CACHE_KEY=""
 
   if [[ -n "${progress_file}" ]]; then
     rm -f "${progress_file}" 2>/dev/null || true
@@ -389,15 +488,80 @@ pause_between_polls() {
   fi
 }
 
-ensure_namespace() {
-  local namespace=$1
+mark_measurement_state_stale() {
+  MEASUREMENT_STATE_REFRESHED_AT=""
+}
 
-  if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+refresh_measurement_state() {
+  local cache_key=${1:-$(now_epoch)}
+  local deployment_fields
+  local hpa_fields
+  local pod_fields
+  local node_line
+  local job_fields
+  local load_test_pod_fields
+  local load_test_reason_fields
+  local nvidia_fields
+
+  deployment_fields=$(kubectl get deployment "${DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" \
+    -o jsonpath='{.status.readyReplicas}{"|"}{.spec.replicas}' 2>/dev/null || true)
+  IFS='|' read -r STATE_DEPLOYMENT_READY_REPLICAS STATE_DEPLOYMENT_DESIRED_REPLICAS <<<"${deployment_fields}"
+
+  hpa_fields=$(kubectl get hpa "${DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" \
+    -o jsonpath='{.status.currentReplicas}{"|"}{.status.desiredReplicas}' 2>/dev/null || true)
+  IFS='|' read -r STATE_HPA_CURRENT_REPLICAS STATE_HPA_DESIRED_REPLICAS <<<"${hpa_fields}"
+
+  pod_fields=$(kubectl get pods -n "${APP_NAMESPACE}" -l "app=${DEPLOYMENT_NAME}" \
+    -o jsonpath='{.items[0].metadata.name}{"|"}{.items[0].status.phase}{"|"}{.items[0].spec.nodeName}{"|"}{.items[0].status.containerStatuses[0].state.waiting.reason}{"|"}{.items[0].status.containerStatuses[0].state.terminated.reason}{"|"}{.items[0].status.conditions[?(@.type=="PodScheduled")].reason}' 2>/dev/null || true)
+  IFS='|' read -r STATE_FIRST_POD_NAME STATE_FIRST_POD_PHASE STATE_FIRST_POD_NODE_NAME STATE_FIRST_POD_WAITING_REASON STATE_FIRST_POD_TERMINATED_REASON STATE_FIRST_POD_SCHEDULING_REASON <<<"${pod_fields}"
+
+  STATE_NODECLAIM_COUNT=$(kubectl_name_count nodeclaims "" "karpenter.sh/nodepool=${NODEPOOL_NAME}")
+
+  STATE_GPU_NODE_LINES=$(kubectl get nodes -l "karpenter.sh/nodepool=${NODEPOOL_NAME}" \
+    -o go-template='{{range .items}}{{.metadata.name}}{{"|" }}{{index .status.allocatable "nvidia.com/gpu"}}{{"\n"}}{{end}}' 2>/dev/null || true)
+  STATE_GPU_NODE_NAMES=""
+  while IFS= read -r node_line; do
+    [[ -z "${node_line}" ]] && continue
+    STATE_GPU_NODE_NAMES+="${node_line%%|*}"$'\n'
+  done <<<"${STATE_GPU_NODE_LINES}"
+  STATE_GPU_NODE_COUNT=$(printf '%s' "${STATE_GPU_NODE_NAMES}" | sed '/^$/d' | wc -l | tr -d ' ')
+
+  job_fields=$(kubectl get job "${LOAD_TEST_JOB_NAME}" -n "${APP_NAMESPACE}" \
+    -o jsonpath='{.status.active}{"|"}{.status.succeeded}{"|"}{.status.failed}' 2>/dev/null || true)
+  if [[ -n "${job_fields}" ]]; then
+    STATE_LOAD_TEST_EXISTS="1"
+    IFS='|' read -r STATE_LOAD_TEST_ACTIVE STATE_LOAD_TEST_SUCCEEDED STATE_LOAD_TEST_FAILED <<<"${job_fields}"
+    load_test_pod_fields=$(kubectl get pods -n "${APP_NAMESPACE}" -l "job-name=${LOAD_TEST_JOB_NAME}" \
+      -o jsonpath='{.items[0].metadata.name}{"|"}{.items[0].status.phase}' 2>/dev/null || true)
+    IFS='|' read -r STATE_LOAD_TEST_POD_NAME STATE_LOAD_TEST_POD_PHASE <<<"${load_test_pod_fields}"
+    load_test_reason_fields=$(kubectl get pod "${STATE_LOAD_TEST_POD_NAME}" -n "${APP_NAMESPACE}" \
+      -o jsonpath='{range .status.containerStatuses[*]}{.state.waiting.reason}{" "}{.state.terminated.reason}{" "}{end}' 2>/dev/null || true)
+    STATE_LOAD_TEST_POD_REASON=$(awk '{print $1}' <<<"${load_test_reason_fields}")
+  else
+    STATE_LOAD_TEST_EXISTS="0"
+    STATE_LOAD_TEST_ACTIVE=""
+    STATE_LOAD_TEST_SUCCEEDED=""
+    STATE_LOAD_TEST_FAILED=""
+    STATE_LOAD_TEST_POD_NAME=""
+    STATE_LOAD_TEST_POD_PHASE=""
+    STATE_LOAD_TEST_POD_REASON=""
+  fi
+
+  nvidia_fields=$(kubectl get daemonset "${NVIDIA_DEVICE_PLUGIN_DAEMONSET_NAME}" -n kube-system \
+    -o jsonpath='{.status.numberReady}{"|"}{.status.desiredNumberScheduled}' 2>/dev/null || true)
+  IFS='|' read -r STATE_NVIDIA_READY_COUNT STATE_NVIDIA_DESIRED_COUNT <<<"${nvidia_fields}"
+
+  MEASUREMENT_STATE_REFRESHED_AT="${cache_key}"
+}
+
+ensure_measurement_state_current() {
+  local cache_key=${CURRENT_MEASUREMENT_CACHE_KEY:-$(now_epoch)}
+
+  if [[ "${MEASUREMENT_STATE_REFRESHED_AT:-}" == "${cache_key}" ]]; then
     return 0
   fi
 
-  log "Namespace ${namespace} not found; creating it"
-  kubectl create namespace "${namespace}" >/dev/null
+  refresh_measurement_state "${cache_key}"
 }
 
 capture_command_output() {
@@ -451,8 +615,8 @@ verify_prerequisites() {
     exit 1
   fi
 
-  if ! resource_exists deployment metrics-server kube-system; then
-    missing+=("metrics-server deployment in kube-system")
+  if ! resource_exists deployment "${METRICS_SERVER_DEPLOYMENT_NAME}" kube-system; then
+    missing+=("${METRICS_SERVER_DEPLOYMENT_NAME} deployment in kube-system")
   fi
 
   if ! namespace_exists "${KARPENTER_NAMESPACE}"; then
@@ -471,8 +635,8 @@ verify_prerequisites() {
     missing+=("Karpenter EC2NodeClass CRD")
   fi
 
-  if ! resource_exists deployment karpenter "${KARPENTER_NAMESPACE}"; then
-    missing+=("karpenter deployment in ${KARPENTER_NAMESPACE}")
+  if ! resource_exists deployment "${KARPENTER_RELEASE_NAME}" "${KARPENTER_NAMESPACE}"; then
+    missing+=("${KARPENTER_RELEASE_NAME} deployment in ${KARPENTER_NAMESPACE}")
   fi
 
   if crd_exists "nodepools.karpenter.sh" && ! resource_exists nodepool "${NODEPOOL_NAME}"; then
@@ -483,13 +647,16 @@ verify_prerequisites() {
     missing+=("Karpenter EC2NodeClass ${NODECLASS_NAME}")
   fi
 
-  if ! resource_exists daemonset nvidia-device-plugin-daemonset kube-system; then
-    missing+=("NVIDIA device plugin daemonset")
+  if ! resource_exists daemonset "${NVIDIA_DEVICE_PLUGIN_DAEMONSET_NAME}" kube-system; then
+    missing+=("${NVIDIA_DEVICE_PLUGIN_DAEMONSET_NAME} daemonset")
   fi
 
   if (( ${#missing[@]} > 0 )); then
+    local missing_item
     log_error "dynamic GPU serving prerequisites are missing"
-    printf '  - %s\n' "${missing[@]}" >&2
+    for missing_item in "${missing[@]}"; do
+      log_error "missing prerequisite: ${missing_item}"
+    done
     log_error "this cluster is not fully post-applied for the dynamic GPU path"
     log_error "re-run ./scripts/apply-dev.sh and capture the first 'post-terraform-apply failed ... during step: ...' block, or verify kubectl is pointed at the intended cluster"
     exit 1
@@ -568,17 +735,19 @@ apply_manifest_quiet() {
   local manifest_path=$1
 
   kubectl apply -f "${manifest_path}" >/dev/null
+  mark_measurement_state_stale
 }
 
 delete_manifest_quiet() {
   local manifest_path=$1
 
   kubectl delete -f "${manifest_path}" --ignore-not-found=true >/dev/null 2>&1 || true
+  mark_measurement_state_stale
 }
 
 gpu_node_names() {
-  kubectl get nodes -l "karpenter.sh/nodepool=${NODEPOOL_NAME}" \
-    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true
+  ensure_measurement_state_current
+  printf '%s' "${STATE_GPU_NODE_NAMES}"
 }
 
 find_gpu_node_name() {
@@ -615,44 +784,49 @@ resolve_gpu_node_name() {
 }
 
 gpu_node_count() {
-  local count
-  count=$(gpu_node_names | sed '/^$/d' | wc -l | tr -d ' ')
-  printf '%s\n' "${count:-0}"
+  ensure_measurement_state_current
+  printf '%s\n' "${STATE_GPU_NODE_COUNT:-0}"
 }
 
 nodeclaim_count() {
-  kubectl get nodeclaims -l "karpenter.sh/nodepool=${NODEPOOL_NAME}" --no-headers 2>/dev/null \
-    | wc -l | tr -d ' '
+  ensure_measurement_state_current
+  printf '%s\n' "${STATE_NODECLAIM_COUNT:-0}"
 }
 
 deployment_ready_replicas() {
-  kubectl get deployment "${DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" \
-    -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true
+  ensure_measurement_state_current
+  printf '%s\n' "${STATE_DEPLOYMENT_READY_REPLICAS}"
 }
 
 deployment_desired_replicas() {
-  kubectl get deployment "${DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" \
-    -o jsonpath='{.spec.replicas}' 2>/dev/null || true
+  ensure_measurement_state_current
+  printf '%s\n' "${STATE_DEPLOYMENT_DESIRED_REPLICAS}"
 }
 
 hpa_desired_replicas() {
-  kubectl get hpa "${DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" \
-    -o jsonpath='{.status.desiredReplicas}' 2>/dev/null || true
+  ensure_measurement_state_current
+  printf '%s\n' "${STATE_HPA_DESIRED_REPLICAS}"
 }
 
 hpa_current_replicas() {
-  kubectl get hpa "${DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" \
-    -o jsonpath='{.status.currentReplicas}' 2>/dev/null || true
+  ensure_measurement_state_current
+  printf '%s\n' "${STATE_HPA_CURRENT_REPLICAS}"
 }
 
 first_pod_status_fields() {
-  kubectl get pods -n "${APP_NAMESPACE}" -l "app=${DEPLOYMENT_NAME}" \
-    -o jsonpath='{.items[0].metadata.name}{"|"}{.items[0].status.phase}{"|"}{.items[0].spec.nodeName}{"|"}{.items[0].status.containerStatuses[0].state.waiting.reason}{"|"}{.items[0].status.containerStatuses[0].state.terminated.reason}{"|"}{.items[0].status.conditions[?(@.type=="PodScheduled")].reason}' 2>/dev/null || true
+  ensure_measurement_state_current
+  printf '%s|%s|%s|%s|%s|%s\n' \
+    "${STATE_FIRST_POD_NAME}" \
+    "${STATE_FIRST_POD_PHASE}" \
+    "${STATE_FIRST_POD_NODE_NAME}" \
+    "${STATE_FIRST_POD_WAITING_REASON}" \
+    "${STATE_FIRST_POD_TERMINATED_REASON}" \
+    "${STATE_FIRST_POD_SCHEDULING_REASON}"
 }
 
 first_pod_name() {
-  kubectl get pods -n "${APP_NAMESPACE}" -l "app=${DEPLOYMENT_NAME}" \
-    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
+  ensure_measurement_state_current
+  printf '%s\n' "${STATE_FIRST_POD_NAME}"
 }
 
 first_pod_status_summary() {
@@ -693,30 +867,24 @@ first_pod_status_summary() {
 }
 
 load_test_job_summary() {
-  local active_count
-  local succeeded_count
-  local failed_count
+  ensure_measurement_state_current
 
-  if ! resource_exists job "${LOAD_TEST_JOB_NAME}" "${APP_NAMESPACE}"; then
+  if [[ "${STATE_LOAD_TEST_EXISTS}" != "1" ]]; then
     printf '%s\n' "load idle"
     return 0
   fi
 
-  active_count=$(kubectl get job "${LOAD_TEST_JOB_NAME}" -n "${APP_NAMESPACE}" -o jsonpath='{.status.active}' 2>/dev/null || true)
-  succeeded_count=$(kubectl get job "${LOAD_TEST_JOB_NAME}" -n "${APP_NAMESPACE}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)
-  failed_count=$(kubectl get job "${LOAD_TEST_JOB_NAME}" -n "${APP_NAMESPACE}" -o jsonpath='{.status.failed}' 2>/dev/null || true)
-
-  if [[ -n "${failed_count}" && "${failed_count}" != "0" ]]; then
-    printf 'load failed(%s)\n' "${failed_count}"
+  if [[ -n "${STATE_LOAD_TEST_FAILED}" && "${STATE_LOAD_TEST_FAILED}" != "0" ]]; then
+    printf 'load failed(%s)\n' "${STATE_LOAD_TEST_FAILED}"
     return 0
   fi
 
-  if [[ -n "${active_count}" && "${active_count}" != "0" ]]; then
+  if [[ -n "${STATE_LOAD_TEST_ACTIVE}" && "${STATE_LOAD_TEST_ACTIVE}" != "0" ]]; then
     printf '%s\n' "load running"
     return 0
   fi
 
-  if [[ -n "${succeeded_count}" && "${succeeded_count}" != "0" ]]; then
+  if [[ -n "${STATE_LOAD_TEST_SUCCEEDED}" && "${STATE_LOAD_TEST_SUCCEEDED}" != "0" ]]; then
     printf '%s\n' "load done"
     return 0
   fi
@@ -725,15 +893,8 @@ load_test_job_summary() {
 }
 
 nvidia_daemonset_status_summary() {
-  local desired_count
-  local ready_count
-
-  desired_count=$(kubectl get daemonset nvidia-device-plugin-daemonset -n kube-system \
-    -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || true)
-  ready_count=$(kubectl get daemonset nvidia-device-plugin-daemonset -n kube-system \
-    -o jsonpath='{.status.numberReady}' 2>/dev/null || true)
-
-  printf '%s\n' "${ready_count:-0}/${desired_count:-0}"
+  ensure_measurement_state_current
+  printf '%s\n' "${STATE_NVIDIA_READY_COUNT:-0}/${STATE_NVIDIA_DESIRED_COUNT:-0}"
 }
 
 serving_state_snapshot() {
@@ -827,42 +988,30 @@ fatal_serving_state() {
 }
 
 fatal_load_test_state() {
-  local failed_count
-  local load_test_pod_name
-  local pod_phase_value
-  local pod_reason
+  ensure_measurement_state_current
 
-  if ! resource_exists job "${LOAD_TEST_JOB_NAME}" "${APP_NAMESPACE}"; then
+  if [[ "${STATE_LOAD_TEST_EXISTS}" != "1" ]]; then
     return 0
   fi
 
-  failed_count=$(kubectl get job "${LOAD_TEST_JOB_NAME}" -n "${APP_NAMESPACE}" -o jsonpath='{.status.failed}' 2>/dev/null || true)
-
-  if [[ -n "${failed_count}" && "${failed_count}" != "0" ]]; then
-    printf 'load-test job %s reported %s failed pod(s)\n' "${LOAD_TEST_JOB_NAME}" "${failed_count}"
+  if [[ -n "${STATE_LOAD_TEST_FAILED}" && "${STATE_LOAD_TEST_FAILED}" != "0" ]]; then
+    printf 'load-test job %s reported %s failed pod(s)\n' "${LOAD_TEST_JOB_NAME}" "${STATE_LOAD_TEST_FAILED}"
     return 0
   fi
 
-  load_test_pod_name=$(kubectl get pods -n "${APP_NAMESPACE}" -l "job-name=${LOAD_TEST_JOB_NAME}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-
-  if [[ -z "${load_test_pod_name}" ]]; then
+  if [[ -z "${STATE_LOAD_TEST_POD_NAME}" ]]; then
     return 0
   fi
 
-  pod_phase_value=$(kubectl get pod "${load_test_pod_name}" -n "${APP_NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
-  pod_reason=$(kubectl get pod "${load_test_pod_name}" -n "${APP_NAMESPACE}" \
-    -o jsonpath='{range .status.containerStatuses[*]}{.state.waiting.reason}{" "}{.state.terminated.reason}{" "}{end}' 2>/dev/null || true)
-  pod_reason=$(awk '{print $1}' <<<"${pod_reason}")
-
-  case "${pod_reason}" in
+  case "${STATE_LOAD_TEST_POD_REASON}" in
     ImagePullBackOff|ErrImagePull|InvalidImageName|CreateContainerConfigError|CreateContainerError|CrashLoopBackOff|RunContainerError|ContainerCannotRun|OOMKilled|StartError|Error)
-      printf 'load-test pod %s entered %s\n' "${load_test_pod_name}" "${pod_reason}"
+      printf 'load-test pod %s entered %s\n' "${STATE_LOAD_TEST_POD_NAME}" "${STATE_LOAD_TEST_POD_REASON}"
       return 0
       ;;
   esac
 
-  if [[ "${pod_phase_value}" == "Failed" ]]; then
-    printf 'load-test pod %s entered Failed phase\n' "${load_test_pod_name}"
+  if [[ "${STATE_LOAD_TEST_POD_PHASE}" == "Failed" ]]; then
+    printf 'load-test pod %s entered Failed phase\n' "${STATE_LOAD_TEST_POD_NAME}"
   fi
 }
 
@@ -880,24 +1029,23 @@ fatal_scale_out_state() {
 
 node_allocatable_gpu() {
   local node_name=$1
+  local node_line
   local gpu_count
 
   if [[ -z "${node_name}" ]]; then
     return 0
   fi
 
-  # Go templates are more reliable than kubectl JSONPath for resource keys that contain dots/slashes.
-  gpu_count=$(kubectl get node "${node_name}" \
-    -o go-template='{{ index .status.allocatable "nvidia.com/gpu" }}' 2>/dev/null || true)
-  gpu_count=$(trim_spaces "${gpu_count}")
+  ensure_measurement_state_current
 
-  case "${gpu_count}" in
-    ""|"<no value>"|"<nil>")
-      gpu_count=$(kubectl get node "${node_name}" \
-        -o jsonpath='{.status.allocatable.nvidia\.com/gpu}' 2>/dev/null || true)
+  while IFS= read -r node_line; do
+    [[ -z "${node_line}" ]] && continue
+    if [[ "${node_line%%|*}" == "${node_name}" ]]; then
+      gpu_count=${node_line#*|}
       gpu_count=$(trim_spaces "${gpu_count}")
-      ;;
-  esac
+      break
+    fi
+  done <<<"${STATE_GPU_NODE_LINES}"
 
   case "${gpu_count}" in
     ""|"<no value>"|"<nil>")
@@ -1025,6 +1173,7 @@ wait_for_condition() {
 
   while true; do
     loop_started_at=$(now_epoch)
+    CURRENT_MEASUREMENT_CACHE_KEY=${loop_started_at}
 
     if ! capture_command_output value "${value_command}" "${value_arg}"; then
       fail_wait_progress "${description}" "value command failed: ${value_command}" "${observed_value:-waiting}"
@@ -1246,106 +1395,131 @@ $(render_timeline_rows)
 ## Notes
 
 - Measurements are based on polling the Kubernetes API from this script, not on controller-internal trace timestamps.
-- The load test uses the checked-in \`platform/tests/gpu-load-test.yaml\` job and targets the in-cluster \`vllm-openai\` service.
+- The load test uses the checked-in \`platform/tests/gpu-load-test.yaml\` job and targets the in-cluster \`${DEPLOYMENT_NAME}\` service.
 - The run intentionally deletes the inference workload at the end to validate full GPU scale-down back to zero nodes.
 EOF
 }
 
-initialize_event_state
-cleanup_existing_workloads
+prepare_measurement_run() {
+  cleanup_existing_workloads
 
-log_stage 2 "verify cluster prerequisites for the dynamic GPU path"
-verify_prerequisites
-ensure_namespace "${APP_NAMESPACE}"
+  log_stage 2 "verify cluster prerequisites for the dynamic GPU path"
+  verify_prerequisites
+  ensure_namespace "${APP_NAMESPACE}"
+  record_event start_time
+}
 
-record_event start_time
+measure_first_cold_start() {
+  log_stage 3 "apply the GPU inference deployment and measure the first cold start"
+  apply_manifest_quiet "${GPU_INFERENCE_MANIFEST}"
 
-log_stage 3 "apply the GPU inference deployment and measure the first cold start"
-apply_manifest_quiet "${GPU_INFERENCE_MANIFEST}"
+  log "waiting for the first serving pod object to appear"
+  wait_for_value "the first serving pod to be created" "${WAIT_TIMEOUT_QUICK_SECONDS}" first_pod_name serving_state_snapshot fatal_serving_state >/dev/null
+  record_event first_pod_seen
 
-log "waiting for the first serving pod object to appear"
-wait_for_value "the first serving pod to be created" "${WAIT_TIMEOUT_QUICK_SECONDS}" first_pod_name serving_state_snapshot fatal_serving_state >/dev/null
-record_event first_pod_seen
+  log "waiting for Karpenter to create the first NodeClaim"
+  wait_for_numeric_at_least "the first NodeClaim" "${WAIT_TIMEOUT_QUICK_SECONDS}" 1 nodeclaim_count serving_state_snapshot fatal_serving_state >/dev/null
+  record_event first_nodeclaim_seen
 
-log "waiting for Karpenter to create the first NodeClaim"
-wait_for_numeric_at_least "the first NodeClaim" "${WAIT_TIMEOUT_QUICK_SECONDS}" 1 nodeclaim_count serving_state_snapshot fatal_serving_state >/dev/null
-record_event first_nodeclaim_seen
+  log "waiting for the first GPU worker node to register with the cluster"
+  wait_for_numeric_at_least "the first GPU node" "${WAIT_TIMEOUT_SCALE_SECONDS}" 1 gpu_node_count serving_state_snapshot fatal_serving_state >/dev/null
+  record_event first_gpu_node_seen
+  first_gpu_node_name=$(find_gpu_node_name)
 
-log "waiting for the first GPU worker node to register with the cluster"
-wait_for_numeric_at_least "the first GPU node" "${WAIT_TIMEOUT_SCALE_SECONDS}" 1 gpu_node_count serving_state_snapshot fatal_serving_state >/dev/null
-record_event first_gpu_node_seen
-first_gpu_node_name=$(find_gpu_node_name)
+  log "waiting for NVIDIA device capacity on node ${first_gpu_node_name}"
+  wait_for_gpu_allocatable \
+    "nvidia.com/gpu allocatable on the first GPU node" \
+    "${WAIT_TIMEOUT_STANDARD_SECONDS}" \
+    first_gpu_node_allocatable \
+    first_gpu_capacity_snapshot \
+    fatal_serving_state \
+    describe_first_gpu_timeout_context >/dev/null
+  record_event first_gpu_allocatable_seen
 
-log "waiting for NVIDIA device capacity on node ${first_gpu_node_name}"
-wait_for_gpu_allocatable \
-  "nvidia.com/gpu allocatable on the first GPU node" \
-  "${WAIT_TIMEOUT_STANDARD_SECONDS}" \
-  first_gpu_node_allocatable \
-  first_gpu_capacity_snapshot \
-  fatal_serving_state \
-  describe_first_gpu_timeout_context >/dev/null
-record_event first_gpu_allocatable_seen
+  log "waiting for the first vLLM replica to become Ready"
+  wait_for_numeric_at_least "the first Ready serving replica" "${WAIT_TIMEOUT_SCALE_SECONDS}" 1 deployment_ready_replicas serving_state_snapshot fatal_serving_state >/dev/null
+  record_event first_ready_seen
+}
 
-log "waiting for the first vLLM replica to become Ready"
-wait_for_numeric_at_least "the first Ready serving replica" "${WAIT_TIMEOUT_SCALE_SECONDS}" 1 deployment_ready_replicas serving_state_snapshot fatal_serving_state >/dev/null
-record_event first_ready_seen
+confirm_steady_state_before_scale_out() {
+  log_stage 4 "confirm the inference service is steady before scale-out"
+  log "waiting for the HPA to settle at one desired replica before applying load"
+  wait_for_numeric_at_least "the HPA to report a desired replica count" "${WAIT_TIMEOUT_STANDARD_SECONDS}" 1 hpa_desired_replicas serving_state_snapshot fatal_serving_state >/dev/null
+  wait_for_numeric_at_most "the HPA to remain at one desired replica before load starts" "${WAIT_TIMEOUT_STANDARD_SECONDS}" 1 hpa_desired_replicas serving_state_snapshot fatal_serving_state >/dev/null
+}
 
-log_stage 4 "confirm the inference service is steady before scale-out"
-log "waiting for the HPA to settle at one desired replica before applying load"
-wait_for_numeric_at_least "the HPA to report a desired replica count" "${WAIT_TIMEOUT_STANDARD_SECONDS}" 1 hpa_desired_replicas serving_state_snapshot fatal_serving_state >/dev/null
-wait_for_numeric_at_most "the HPA to remain at one desired replica before load starts" "${WAIT_TIMEOUT_STANDARD_SECONDS}" 1 hpa_desired_replicas serving_state_snapshot fatal_serving_state >/dev/null
+measure_scale_out_under_load() {
+  log_stage 5 "apply synthetic load to trigger HPA-driven GPU scale-out"
+  apply_manifest_quiet "${GPU_LOAD_TEST_MANIFEST}"
+  record_event load_test_applied
 
-log_stage 5 "apply synthetic load to trigger HPA-driven GPU scale-out"
-apply_manifest_quiet "${GPU_LOAD_TEST_MANIFEST}"
-record_event load_test_applied
+  log "waiting for the HPA to request a second replica"
+  wait_for_numeric_at_least "the HPA desired replica count to reach 2" "${WAIT_TIMEOUT_SCALE_SECONDS}" 2 hpa_desired_replicas serving_and_load_state_snapshot fatal_scale_out_state >/dev/null
+  record_event hpa_scale_out_seen
 
-log "waiting for the HPA to request a second replica"
-wait_for_numeric_at_least "the HPA desired replica count to reach 2" "${WAIT_TIMEOUT_SCALE_SECONDS}" 2 hpa_desired_replicas serving_and_load_state_snapshot fatal_scale_out_state >/dev/null
-record_event hpa_scale_out_seen
+  log "waiting for Karpenter to create a second NodeClaim"
+  wait_for_numeric_at_least "the second NodeClaim" "${WAIT_TIMEOUT_SCALE_SECONDS}" 2 nodeclaim_count serving_and_load_state_snapshot fatal_scale_out_state >/dev/null
+  record_event second_nodeclaim_seen
 
-log "waiting for Karpenter to create a second NodeClaim"
-wait_for_numeric_at_least "the second NodeClaim" "${WAIT_TIMEOUT_SCALE_SECONDS}" 2 nodeclaim_count serving_and_load_state_snapshot fatal_scale_out_state >/dev/null
-record_event second_nodeclaim_seen
+  log "waiting for the second GPU worker node to join"
+  wait_for_numeric_at_least "the second GPU node" "${WAIT_TIMEOUT_SCALE_SECONDS}" 2 gpu_node_count serving_and_load_state_snapshot fatal_scale_out_state >/dev/null
+  record_event second_gpu_node_seen
+  second_gpu_node_name=$(find_gpu_node_name "${first_gpu_node_name:-}")
 
-log "waiting for the second GPU worker node to join"
-wait_for_numeric_at_least "the second GPU node" "${WAIT_TIMEOUT_SCALE_SECONDS}" 2 gpu_node_count serving_and_load_state_snapshot fatal_scale_out_state >/dev/null
-record_event second_gpu_node_seen
-second_gpu_node_name=$(find_gpu_node_name "${first_gpu_node_name:-}")
+  log "waiting for NVIDIA device capacity on node ${second_gpu_node_name}"
+  wait_for_gpu_allocatable \
+    "nvidia.com/gpu allocatable on the second GPU node" \
+    "${WAIT_TIMEOUT_STANDARD_SECONDS}" \
+    second_gpu_node_allocatable \
+    second_gpu_capacity_snapshot \
+    fatal_scale_out_state \
+    describe_second_gpu_timeout_context >/dev/null
 
-log "waiting for NVIDIA device capacity on node ${second_gpu_node_name}"
-wait_for_gpu_allocatable \
-  "nvidia.com/gpu allocatable on the second GPU node" \
-  "${WAIT_TIMEOUT_STANDARD_SECONDS}" \
-  second_gpu_node_allocatable \
-  second_gpu_capacity_snapshot \
-  fatal_scale_out_state \
-  describe_second_gpu_timeout_context >/dev/null
+  log "waiting for both vLLM replicas to become Ready"
+  wait_for_numeric_at_least "two Ready serving replicas" "${WAIT_TIMEOUT_SCALE_SECONDS}" 2 deployment_ready_replicas serving_and_load_state_snapshot fatal_scale_out_state >/dev/null
+  record_event second_ready_seen
+}
 
-log "waiting for both vLLM replicas to become Ready"
-wait_for_numeric_at_least "two Ready serving replicas" "${WAIT_TIMEOUT_SCALE_SECONDS}" 2 deployment_ready_replicas serving_and_load_state_snapshot fatal_scale_out_state >/dev/null
-record_event second_ready_seen
+measure_partial_scale_down() {
+  log_stage 6 "remove load and validate partial scale-down"
+  delete_manifest_quiet "${GPU_LOAD_TEST_MANIFEST}"
+  record_event load_test_deleted
 
-log_stage 6 "remove load and validate partial scale-down"
-delete_manifest_quiet "${GPU_LOAD_TEST_MANIFEST}"
-record_event load_test_deleted
+  log "waiting for the deployment to settle back to one Ready replica"
+  wait_for_numeric_at_most "the deployment to settle back to one Ready replica" "${WAIT_TIMEOUT_SCALE_DOWN_SECONDS}" 1 deployment_ready_replicas serving_state_snapshot fatal_serving_state >/dev/null
+  record_event scale_in_ready_seen
 
-log "waiting for the deployment to settle back to one Ready replica"
-wait_for_numeric_at_most "the deployment to settle back to one Ready replica" "${WAIT_TIMEOUT_SCALE_DOWN_SECONDS}" 1 deployment_ready_replicas serving_state_snapshot fatal_serving_state >/dev/null
-record_event scale_in_ready_seen
+  log "waiting for the extra GPU node to terminate after consolidation"
+  wait_for_numeric_at_most "the extra GPU node to terminate" "${WAIT_TIMEOUT_SCALE_DOWN_SECONDS}" 1 gpu_node_count serving_state_snapshot fatal_serving_state >/dev/null
+  record_event scale_in_node_seen
+}
 
-log "waiting for the extra GPU node to terminate after consolidation"
-wait_for_numeric_at_most "the extra GPU node to terminate" "${WAIT_TIMEOUT_SCALE_DOWN_SECONDS}" 1 gpu_node_count serving_state_snapshot fatal_serving_state >/dev/null
-record_event scale_in_node_seen
+measure_full_scale_down() {
+  log_stage 7 "delete the inference workload and validate full GPU scale-down"
+  delete_manifest_quiet "${GPU_INFERENCE_MANIFEST}"
+  record_event inference_deleted
 
-log_stage 7 "delete the inference workload and validate full GPU scale-down"
-delete_manifest_quiet "${GPU_INFERENCE_MANIFEST}"
-record_event inference_deleted
+  log "waiting for all Karpenter GPU nodes to disappear"
+  wait_for_numeric_at_most "all GPU nodes to scale back to zero" "${WAIT_TIMEOUT_SCALE_DOWN_SECONDS}" 0 gpu_node_count serving_state_snapshot >/dev/null
+  record_event all_gpu_nodes_removed
+}
 
-log "waiting for all Karpenter GPU nodes to disappear"
-wait_for_numeric_at_most "all GPU nodes to scale back to zero" "${WAIT_TIMEOUT_SCALE_DOWN_SECONDS}" 0 gpu_node_count serving_state_snapshot >/dev/null
-record_event all_gpu_nodes_removed
+write_measurement_report_stage() {
+  log_stage 8 "write the measurement report"
+  render_report
+  log_success "report written to ${REPORT_PATH}"
+}
 
-log_stage 8 "write the measurement report"
-render_report
+main() {
+  parse_args "$@"
+  initialize_event_state
+  prepare_measurement_run
+  measure_first_cold_start
+  confirm_steady_state_before_scale_out
+  measure_scale_out_under_load
+  measure_partial_scale_down
+  measure_full_scale_down
+  write_measurement_report_stage
+}
 
-log_success "report written to ${REPORT_PATH}"
+main "$@"

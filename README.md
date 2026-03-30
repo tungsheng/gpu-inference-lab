@@ -93,7 +93,7 @@ terraform -chdir=infra/env/dev init
 Apply the dev environment:
 
 ```bash
-./scripts/apply-dev.sh
+./scripts/dev up
 ```
 
 Expected post-apply state:
@@ -105,26 +105,39 @@ Expected post-apply state:
 - the sample ingress app is present
 - **GPU worker node count is still zero**
 
-That last point is intentional. `./scripts/apply-dev.sh` makes the cluster
+That last point is intentional. `./scripts/dev up` makes the cluster
 **GPU-ready**, but it does not apply the GPU inference workload. The first GPU
 node should appear only after a GPU pod is created.
 
 Run the dynamic GPU serving validation flow:
 
 ```bash
-./scripts/measure-gpu-serving-path.sh
+./scripts/dev measure
 ```
 
 Optional custom report path:
 
 ```bash
-./scripts/measure-gpu-serving-path.sh docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
+./scripts/dev measure --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
 ```
 
 Destroy the environment:
 
 ```bash
-./scripts/destroy-dev.sh
+./scripts/dev down
+```
+
+Inspect readiness or current cluster state:
+
+```bash
+./scripts/dev doctor
+./scripts/dev status
+```
+
+Run the local shell checks:
+
+```bash
+./test/run.sh
 ```
 
 ## Manual Checks
@@ -160,15 +173,21 @@ kubectl delete -f platform/inference/vllm-openai.yaml
 
 ## Key Scripts
 
-- `./scripts/apply-dev.sh`
+- `./scripts/dev up`
   Applies Terraform, updates kubeconfig, installs controllers, applies the GPU
   `EC2NodeClass` and `NodePool`, and deploys the sample echo app.
-- `./scripts/measure-gpu-serving-path.sh`
+- `./scripts/dev measure`
   Applies the vLLM workload, drives load, records scale-up and scale-down
   milestones, and writes a Markdown report.
-- `./scripts/destroy-dev.sh`
+- `./scripts/dev down`
   Removes Kubernetes-side resources in teardown-safe order, then destroys the
   Terraform-managed infrastructure.
+- `./scripts/dev doctor`
+  Verifies local prerequisites, Terraform outputs, and core cluster resources
+  needed for the dynamic GPU path.
+- `./scripts/dev status`
+  Prints a compact cluster snapshot for nodes, platform controllers, ingress,
+  and app workloads.
 
 ## Docs
 

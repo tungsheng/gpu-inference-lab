@@ -11,6 +11,22 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SCRIPT_NAME="apply-dev"
 TF_DIR="${TF_DIR_DEFAULT}"
 
+usage() {
+  cat <<EOF
+Usage:
+  ./scripts/apply-dev.sh [terraform apply args]
+
+Examples:
+  ./scripts/apply-dev.sh
+  ./scripts/apply-dev.sh -auto-approve
+  ./scripts/apply-dev.sh -var-file=dev.tfvars
+
+Notes:
+  - This wrapper always runs the full post-apply Kubernetes setup.
+  - For targeted or refresh-only operations, use terraform directly.
+EOF
+}
+
 reject_unsupported_apply_args() {
   local arg
 
@@ -28,6 +44,12 @@ reject_unsupported_apply_args() {
   done
 }
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+require_command terraform
 require_directory "${TF_DIR}" "Terraform directory"
 reject_unsupported_apply_args "$@"
 

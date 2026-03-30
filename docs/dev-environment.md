@@ -21,17 +21,17 @@ terraform -chdir=infra/env/dev init
 Apply the environment:
 
 ```bash
-./scripts/apply-dev.sh
+./scripts/dev up
 ```
 
 Common variants:
 
 ```bash
-./scripts/apply-dev.sh -auto-approve
-./scripts/apply-dev.sh -var-file=dev.tfvars
+./scripts/dev up -auto-approve
+./scripts/dev up -var-file=dev.tfvars
 ```
 
-What `./scripts/apply-dev.sh` does:
+What `./scripts/dev up` does:
 
 1. Runs `terraform -chdir=infra/env/dev apply`
 2. Updates local kubeconfig
@@ -68,7 +68,7 @@ Expected result:
 The easiest end-to-end validation is:
 
 ```bash
-./scripts/measure-gpu-serving-path.sh
+./scripts/dev measure
 ```
 
 That script applies the real vLLM serving manifest, runs the checked-in load
@@ -78,7 +78,14 @@ test, waits for scale-out and scale-down, and writes a Markdown report to
 Example:
 
 ```bash
-./scripts/measure-gpu-serving-path.sh docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
+./scripts/dev measure --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
+```
+
+Useful companion commands:
+
+```bash
+./scripts/dev doctor
+./scripts/dev status
 ```
 
 ## Manual GPU checks
@@ -104,13 +111,13 @@ kubectl delete -f platform/inference/vllm-openai.yaml
 Destroy the environment with:
 
 ```bash
-./scripts/destroy-dev.sh
+./scripts/dev down
 ```
 
 Common variant:
 
 ```bash
-./scripts/destroy-dev.sh -auto-approve
+./scripts/dev down -auto-approve
 ```
 
 The destroy helper:
@@ -131,7 +138,7 @@ The destroy helper:
 If the EKS cluster is already gone or intentionally unreachable:
 
 ```bash
-SKIP_K8S_CLEANUP=1 ./scripts/destroy-dev.sh
+SKIP_K8S_CLEANUP=1 ./scripts/dev down
 ```
 
 Use that only when the Kubernetes-managed resources are already removed or no

@@ -233,26 +233,19 @@ wait_for_resource_existence() {
 
 wait_for_no_resources() {
   local resource_kind=$1
-  local selector=${2:-}
-  local timeout_seconds=${3:-300}
-  local all_namespaces=${4:-0}
+  local resource_namespace=${2:-}
+  local selector=${3:-}
+  local timeout_seconds=${4:-300}
+  local all_namespaces=${5:-0}
   local start_time
 
   start_time=$(date +%s)
 
   while true; do
     local count
-    local args=("${resource_kind}" "--no-headers")
+    local args=("get" "${resource_kind}")
 
-    if [[ "${all_namespaces}" == "1" ]]; then
-      args=("${resource_kind}" "-A" "--no-headers")
-    fi
-
-    if [[ -n "${selector}" ]]; then
-      args+=("-l" "${selector}")
-    fi
-
-    count=$(kubectl get "${args[@]}" 2>/dev/null | wc -l | tr -d ' ')
+    count=$(kubectl_name_count "${resource_kind}" "${resource_namespace}" "${selector}" "${all_namespaces}")
 
     if [[ "${count}" == "0" ]]; then
       return 0
@@ -260,7 +253,15 @@ wait_for_no_resources() {
 
     if (( $(date +%s) - start_time >= timeout_seconds )); then
       log_error "timed out waiting for ${resource_kind} resources to disappear"
-      kubectl get "${args[@]}" >&2 || true
+      if [[ "${all_namespaces}" == "1" ]]; then
+        args+=("-A")
+      elif [[ -n "${resource_namespace}" ]]; then
+        args+=("-n" "${resource_namespace}")
+      fi
+      if [[ -n "${selector}" ]]; then
+        args+=("-l" "${selector}")
+      fi
+      kubectl "${args[@]}" >&2 || true
       return 1
     fi
 

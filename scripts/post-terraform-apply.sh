@@ -7,6 +7,12 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "${SCRIPT_DIR}/dev-environment-paths.sh"
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/dev-environment-common.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/kube.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/terraform.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/diagnostics.sh"
 # shellcheck disable=SC2034
 SCRIPT_NAME="post-terraform-apply"
 TF_DIR=${1:-"${TF_DIR_DEFAULT}"}
@@ -74,34 +80,7 @@ apply_aws_load_balancer_controller_crds() {
 }
 
 print_diagnostics() {
-  log_warn "collecting Kubernetes diagnostics"
-  kubectl config current-context >&2 || true
-  kubectl get nodes -L workload,node.kubernetes.io/instance-type -o wide >&2 || true
-  kubectl get pods -n kube-system -o wide >&2 || true
-  kubectl get deployment aws-load-balancer-controller -n kube-system -o wide >&2 || true
-  kubectl get deployment metrics-server -n kube-system -o wide >&2 || true
-  if namespace_exists "${KARPENTER_NAMESPACE}"; then
-    kubectl get pods -n "${KARPENTER_NAMESPACE}" -o wide >&2 || true
-    kubectl get deployment karpenter -n "${KARPENTER_NAMESPACE}" -o wide >&2 || true
-  fi
-  if api_resource_exists "nodepools.karpenter.sh"; then
-    kubectl get nodepools >&2 || true
-  fi
-  if api_resource_exists "nodeclaims.karpenter.sh"; then
-    kubectl get nodeclaims >&2 || true
-  fi
-  if api_resource_exists "ec2nodeclasses.karpenter.k8s.aws"; then
-    kubectl get ec2nodeclasses >&2 || true
-  fi
-  if resource_exists daemonset nvidia-device-plugin-daemonset kube-system; then
-    kubectl get daemonset nvidia-device-plugin-daemonset -n kube-system -o wide >&2 || true
-  fi
-  kubectl get pods -n kube-system -l name=nvidia-device-plugin-ds -o wide >&2 || true
-  if namespace_exists "${APP_NAMESPACE}"; then
-    kubectl get service -n "${APP_NAMESPACE}" >&2 || true
-    kubectl get ingress -n "${APP_NAMESPACE}" >&2 || true
-  fi
-  kubectl get events -A --sort-by=.metadata.creationTimestamp >&2 || true
+  print_apply_diagnostics
 }
 
 handle_error() {
@@ -115,14 +94,6 @@ handle_error() {
 }
 
 trap 'handle_error $? $LINENO' ERR
-
-ensure_namespace() {
-  local namespace=$1
-
-  if ! namespace_exists "${namespace}"; then
-    kubectl create namespace "${namespace}"
-  fi
-}
 
 wait_for_metrics_api() {
   local timeout_seconds=${1:-300}
@@ -142,46 +113,7 @@ wait_for_metrics_api() {
     if (( $(date +%s) - start_time >= timeout_seconds )); then
       log_error "timed out waiting for the metrics API to become available"
       kubectl get apiservice v1beta1.metrics.k8s.io -o yaml >&2 || true
-      kubectl get deployment metrics-server -n kube-system -o yaml >&2 || true
-      return 1
-    fi
-
-    sleep 5
-  done
-}
-
-wait_for_status_condition() {
-  local resource_kind=$1
-  local resource_name=$2
-  local condition_type=$3
-  local expected_status=${4:-True}
-  local timeout_seconds=${5:-300}
-  local resource_namespace=${6:-}
-  local start_time
-  local condition_status
-
-  start_time=$(date +%s)
-
-  while true; do
-    if [[ -n "${resource_namespace}" ]]; then
-      condition_status=$(kubectl get "${resource_kind}" "${resource_name}" -n "${resource_namespace}" \
-        -o jsonpath="{.status.conditions[?(@.type=='${condition_type}')].status}" 2>/dev/null || true)
-    else
-      condition_status=$(kubectl get "${resource_kind}" "${resource_name}" \
-        -o jsonpath="{.status.conditions[?(@.type=='${condition_type}')].status}" 2>/dev/null || true)
-    fi
-
-    if [[ "${condition_status}" == "${expected_status}" ]]; then
-      return 0
-    fi
-
-    if (( $(date +%s) - start_time >= timeout_seconds )); then
-      log_error "timed out waiting for ${resource_kind}/${resource_name} condition ${condition_type}=${expected_status}"
-      if [[ -n "${resource_namespace}" ]]; then
-        kubectl get "${resource_kind}" "${resource_name}" -n "${resource_namespace}" -o yaml >&2 || true
-      else
-        kubectl get "${resource_kind}" "${resource_name}" -o yaml >&2 || true
-      fi
+      kubectl get deployment "${METRICS_SERVER_DEPLOYMENT_NAME}" -n kube-system -o yaml >&2 || true
       return 1
     fi
 
@@ -194,11 +126,11 @@ install_metrics_server() {
     retry_command 5 5 kubectl apply -f "${METRICS_SERVER_MANIFEST_URL}"
 
   run_step "waiting for metrics-server deployment to appear" \
-    wait_for_resource_existence deployment metrics-server kube-system 60
+    wait_for_resource_existence deployment "${METRICS_SERVER_DEPLOYMENT_NAME}" kube-system 60
 
   run_step "patching metrics-server deployment args" \
     retry_command 5 5 \
-      kubectl patch deployment metrics-server \
+      kubectl patch deployment "${METRICS_SERVER_DEPLOYMENT_NAME}" \
         -n kube-system \
         --type strategic \
         -p '{
@@ -224,7 +156,7 @@ install_metrics_server() {
         }'
 
   run_step "waiting for metrics-server rollout" \
-    kubectl rollout status deployment/metrics-server -n kube-system --timeout=5m
+    kubectl rollout status "deployment/${METRICS_SERVER_DEPLOYMENT_NAME}" -n kube-system --timeout=5m
   run_step "waiting for metrics API" wait_for_metrics_api 300
 }
 
@@ -235,7 +167,7 @@ install_aws_load_balancer_controller() {
   run_step "annotating AWS load balancer controller service account" \
     kubectl annotate serviceaccount \
       -n kube-system \
-      aws-load-balancer-controller \
+      "${AWS_LOAD_BALANCER_CONTROLLER_SERVICE_ACCOUNT_NAME}" \
       "eks.amazonaws.com/role-arn=${aws_load_balancer_controller_role_arn}" \
       --overwrite
 
@@ -246,7 +178,7 @@ install_aws_load_balancer_controller() {
   run_step "applying AWS load balancer controller CRDs" apply_aws_load_balancer_controller_crds
 
   run_step "installing AWS load balancer controller" \
-    helm upgrade --install aws-load-balancer-controller \
+    helm upgrade --install "${AWS_LOAD_BALANCER_CONTROLLER_RELEASE_NAME}" \
       "${AWS_LOAD_BALANCER_CONTROLLER_HELM_REPO_NAME}/aws-load-balancer-controller" \
       -n kube-system \
       --wait \
@@ -254,12 +186,12 @@ install_aws_load_balancer_controller() {
       --version "${AWS_LOAD_BALANCER_CONTROLLER_CHART_VERSION}" \
       --set clusterName="${cluster_name}" \
       --set serviceAccount.create=false \
-      --set serviceAccount.name=aws-load-balancer-controller \
+      --set serviceAccount.name="${AWS_LOAD_BALANCER_CONTROLLER_SERVICE_ACCOUNT_NAME}" \
       --set region="${aws_region}" \
       --set vpcId="${vpc_id}"
 
   run_step "waiting for AWS load balancer controller rollout" \
-    kubectl rollout status deployment/aws-load-balancer-controller -n kube-system --timeout=10m
+    kubectl rollout status "deployment/${AWS_LOAD_BALANCER_CONTROLLER_RELEASE_NAME}" -n kube-system --timeout=10m
 
   run_step "waiting for AWS load balancer webhook endpoints" \
     wait_for_webhook_endpoints kube-system "${AWS_LOAD_BALANCER_CONTROLLER_WEBHOOK_SERVICE}" 300
@@ -273,7 +205,7 @@ install_karpenter() {
 
   run_step "installing Karpenter CRD chart" \
     retry_command 3 10 \
-      helm upgrade --install karpenter-crd oci://public.ecr.aws/karpenter/karpenter-crd \
+      helm upgrade --install "${KARPENTER_CRD_RELEASE_NAME}" oci://public.ecr.aws/karpenter/karpenter-crd \
         -n "${KARPENTER_NAMESPACE}" \
         --create-namespace \
         --version "${KARPENTER_CHART_VERSION}" \
@@ -286,7 +218,7 @@ install_karpenter() {
 
   run_step "installing Karpenter controller chart" \
     retry_command 3 10 \
-      helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
+      helm upgrade --install "${KARPENTER_RELEASE_NAME}" oci://public.ecr.aws/karpenter/karpenter \
         -n "${KARPENTER_NAMESPACE}" \
         --create-namespace \
         --version "${KARPENTER_CHART_VERSION}" \
@@ -294,10 +226,10 @@ install_karpenter() {
         --timeout 10m \
         --set settings.clusterName="${cluster_name}" \
         --set serviceAccount.create=false \
-        --set serviceAccount.name=karpenter
+        --set serviceAccount.name="${KARPENTER_SERVICE_ACCOUNT_NAME}"
 
   run_step "waiting for Karpenter rollout" \
-    kubectl rollout status deployment/karpenter -n "${KARPENTER_NAMESPACE}" --timeout=10m
+    kubectl rollout status "deployment/${KARPENTER_RELEASE_NAME}" -n "${KARPENTER_NAMESPACE}" --timeout=10m
 
   run_step "applying Karpenter EC2NodeClass" \
     retry_command 5 5 kubectl apply -f "${KARPENTER_NODECLASS_MANIFEST}"
@@ -315,10 +247,10 @@ install_test_app() {
   run_step "applying test app ingress" retry_command 5 5 kubectl apply -f "${TEST_APP_INGRESS_MANIFEST}"
 }
 
-cluster_name=$(terraform -chdir="${TF_DIR}" output -raw cluster_name)
-aws_region=$(terraform -chdir="${TF_DIR}" output -raw aws_region)
-vpc_id=$(terraform -chdir="${TF_DIR}" output -raw vpc_id)
-aws_load_balancer_controller_role_arn=$(terraform -chdir="${TF_DIR}" output -raw aws_load_balancer_controller_role_arn)
+cluster_name=$(terraform_output_required "${TF_DIR}" cluster_name)
+aws_region=$(terraform_output_required "${TF_DIR}" aws_region)
+vpc_id=$(terraform_output_required "${TF_DIR}" vpc_id)
+aws_load_balancer_controller_role_arn=$(terraform_output_required "${TF_DIR}" aws_load_balancer_controller_role_arn)
 
 run_step "updating kubeconfig" aws eks update-kubeconfig --name "${cluster_name}" --region "${aws_region}"
 run_step "verifying cluster connectivity" kubectl cluster-info
@@ -327,6 +259,6 @@ install_aws_load_balancer_controller
 run_step "installing metrics server" install_metrics_server
 run_step "installing Karpenter" install_karpenter
 run_step "installing NVIDIA device plugin" retry_command 5 5 kubectl apply -f "${NVIDIA_DEVICE_PLUGIN_MANIFEST_PATH}"
-run_step "waiting for NVIDIA device plugin rollout" kubectl rollout status daemonset/nvidia-device-plugin-daemonset -n kube-system --timeout=10m
+run_step "waiting for NVIDIA device plugin rollout" kubectl rollout status "daemonset/${NVIDIA_DEVICE_PLUGIN_DAEMONSET_NAME}" -n kube-system --timeout=10m
 run_step "ensuring app namespace exists" ensure_namespace "${APP_NAMESPACE}"
 install_test_app

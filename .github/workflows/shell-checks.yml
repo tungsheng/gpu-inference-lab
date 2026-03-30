@@ -1,0 +1,33 @@
+name: Shell Checks
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shell tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Bash syntax
+        run: |
+          chmod +x scripts/dev scripts/*.sh test/*.sh
+          bash -n scripts/dev scripts/*.sh scripts/lib/*.sh test/*.sh test/helpers/*.sh
+
+      - name: Shellcheck
+        run: |
+          shellcheck scripts/dev scripts/*.sh scripts/lib/*.sh test/*.sh test/helpers/*.sh
+
+      - name: Shell tests
+        run: ./test/run.sh
