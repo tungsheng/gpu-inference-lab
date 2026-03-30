@@ -86,6 +86,7 @@ Useful companion commands:
 ```bash
 ./scripts/dev doctor
 ./scripts/dev status
+./scripts/dev status --verbose
 ```
 
 ## Manual GPU checks

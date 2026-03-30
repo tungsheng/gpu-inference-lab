@@ -132,6 +132,7 @@ Inspect readiness or current cluster state:
 ```bash
 ./scripts/dev doctor
 ./scripts/dev status
+./scripts/dev status --verbose
 ```
 
 Run the local shell checks:
@@ -184,10 +185,10 @@ kubectl delete -f platform/inference/vllm-openai.yaml
   Terraform-managed infrastructure.
 - `./scripts/dev doctor`
   Verifies local prerequisites, Terraform outputs, and core cluster resources
-  needed for the dynamic GPU path.
+  needed for the dynamic GPU path. Use `--json` for machine-readable output.
 - `./scripts/dev status`
-  Prints a compact cluster snapshot for nodes, platform controllers, ingress,
-  and app workloads.
+  Prints a compact readiness-oriented cluster snapshot. Use `--verbose` for the
+  detailed kubectl tables or `--json` for machine-readable output.
 
 ## Docs
 

@@ -9,7 +9,7 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "${SCRIPT_DIR}/dev-environment-common.sh"
 # shellcheck disable=SC2034
 SCRIPT_NAME="apply-dev"
-TF_DIR="${TF_DIR_DEFAULT}"
+TF_DIR="${TF_DIR:-${TF_DIR_DEFAULT}}"
 
 usage() {
   cat <<EOF

@@ -26,6 +26,14 @@ run_and_capture /bin/bash "${REPO_ROOT}/scripts/dev" down --help
 assert_status 0 "${COMMAND_STATUS}" "scripts/dev down --help should succeed"
 assert_contains "${COMMAND_OUTPUT}" "terraform destroy args" "destroy help should mention terraform args"
 
+run_and_capture /bin/bash "${REPO_ROOT}/scripts/dev" doctor --help
+assert_status 0 "${COMMAND_STATUS}" "scripts/dev doctor --help should succeed"
+assert_contains "${COMMAND_OUTPUT}" "--json" "doctor help should mention JSON output"
+
+run_and_capture /bin/bash "${REPO_ROOT}/scripts/dev" status --help
+assert_status 0 "${COMMAND_STATUS}" "scripts/dev status --help should succeed"
+assert_contains "${COMMAND_OUTPUT}" "--verbose" "status help should mention verbose output"
+
 run_and_capture /bin/bash "${REPO_ROOT}/scripts/dev" nope
 assert_status 1 "${COMMAND_STATUS}" "unknown scripts/dev command should fail"
 assert_contains "${COMMAND_OUTPUT}" "unknown command: nope" "unknown command error should be clear"
@@ -37,4 +45,4 @@ assert_contains "${COMMAND_OUTPUT}" "unknown option: --bogus" "unknown measureme
 link_system_command dirname
 run_and_capture env PATH="${TEST_BIN}" /bin/bash "${REPO_ROOT}/scripts/dev" doctor
 assert_status 1 "${COMMAND_STATUS}" "doctor should fail when core tools are missing"
-assert_contains "${COMMAND_OUTPUT}" "missing command: terraform" "doctor should report missing terraform"
+assert_contains "${COMMAND_OUTPUT}" "terraform: missing from PATH" "doctor should report missing terraform"

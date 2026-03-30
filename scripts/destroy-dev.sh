@@ -15,7 +15,7 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "${SCRIPT_DIR}/lib/diagnostics.sh"
 # shellcheck disable=SC2034
 SCRIPT_NAME="destroy-dev"
-TF_DIR="${TF_DIR_DEFAULT}"
+TF_DIR="${TF_DIR:-${TF_DIR_DEFAULT}}"
 SKIP_K8S_CLEANUP=${SKIP_K8S_CLEANUP:-0}
 
 current_step="validating prerequisites"
