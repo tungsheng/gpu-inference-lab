@@ -2,54 +2,103 @@
 
 ## Current state
 
-The current repository still does not run a real ML inference server, but it
-now does include the baseline GPU platform prerequisites.
+The repository now includes a **real GPU inference service** instead of a
+placeholder GPU pod.
 
-What is already in place:
+What is in place:
 
-- a dedicated managed GPU node group (`g4dn.xlarge`)
-- a checked-in NVIDIA device plugin manifest applied by `./scripts/apply-dev.sh`
-- a smoke-test pod at `platform/tests/gpu-test.yaml`
-- a placeholder GPU-bound deployment at `platform/inference/gpu-inference.yaml`
+- a Karpenter-managed GPU `NodePool`
+- the NVIDIA device plugin
+- a real vLLM deployment at `platform/inference/vllm-openai.yaml`
+- a `ClusterIP` service that exposes an OpenAI-compatible API
+- an HPA and a load-test job that can drive scale-out
 
-What is still missing before this becomes a real inference stack:
+## Serving stack
 
-- A real inference container
-- A stable service and ingress path for that container
-- Request/response validation beyond `nvidia-smi`
-- Operational validation beyond simple HTTP reachability
+The current serving runtime is:
 
-## Milestone 11 target
+- image: `vllm/vllm-openai:v0.9.0`
+- model: `Qwen/Qwen2.5-0.5B-Instruct`
+- served model name: `qwen2.5-0.5b`
 
-Milestone 11 introduces the first real inference service. Candidate runtimes include:
+Why this stack:
 
-- vLLM
-- Triton Inference Server
-- TorchServe
+- vLLM is representative of current GPU LLM serving patterns
+- it exposes a stable HTTP API instead of a shell command or sleep loop
+- the model is small enough to fit on the single-GPU node types used in this lab
 
-The choice should be made based on the kind of model the lab wants to demonstrate:
+## Scheduling contract
 
-- vLLM is a strong fit for large language model serving.
-- Triton is a strong fit for mixed framework support and production inference patterns.
-- TorchServe is simpler but less representative of current high-demand GPU serving stacks.
+The deployment depends on the same explicit scheduling rules the rest of the
+platform is built around:
 
-## Minimum requirements for the first inference service
+- `nodeSelector: workload=gpu`
+- `gpu=true:NoSchedule` toleration
+- `requests.nvidia.com/gpu: 1`
+- `limits.nvidia.com/gpu: 1`
 
-- A container image that exposes a stable API.
-- A deployment manifest under `platform/inference/`.
-- A service and ingress path that can be exercised through the ALB.
-- GPU requests and scheduling constraints that match the current GPU node policy.
-- A smoke test that confirms the path from client request to model response.
+That means the workload will stay pending until:
 
-The repository now includes an initial GPU-bound placeholder deployment at
-`platform/inference/gpu-inference.yaml` to validate taints, tolerations, and
-`nvidia.com/gpu` requests before a real inference server is introduced.
+1. Karpenter creates a matching `NodeClaim`
+2. the EC2 GPU node joins the cluster
+3. the NVIDIA device plugin advertises `nvidia.com/gpu`
 
-## Relationship to other milestones
+## Manual validation
 
-- Milestone 4 provides optional elastic node provisioning.
-- Milestone 5 provides the current fixed GPU scheduling baseline.
-- Milestone 11 provides the real inference workload.
-- Milestone 12 adds autoscaling behavior tied to inference demand.
+Apply the serving manifest:
 
-Until those pieces exist together, this project should be described as a platform foundation for GPU inference rather than a completed GPU inference platform.
+```bash
+kubectl apply -f platform/inference/vllm-openai.yaml
+```
+
+Watch scheduling:
+
+```bash
+kubectl get pods -n app -w
+kubectl get nodeclaims -w
+kubectl get nodes -L workload,node.kubernetes.io/instance-type -w
+```
+
+Once the pod is Ready, test the API from inside the cluster:
+
+```bash
+kubectl run curl -n app --rm -it --restart=Never \
+  --image=curlimages/curl:8.8.0 -- \
+  curl http://vllm-openai/v1/completions \
+    -H 'Content-Type: application/json' \
+    -d '{"model":"qwen2.5-0.5b","prompt":"Say hello from vLLM.","max_tokens":32,"temperature":0}'
+```
+
+## Load-triggered scale-out
+
+Apply the checked-in load test:
+
+```bash
+kubectl apply -f platform/tests/gpu-load-test.yaml
+```
+
+The checked-in k6 job is intentionally a little aggressive because the demo model
+is small and the HPA scales on CPU utilization.
+
+Then watch:
+
+```bash
+kubectl get hpa -n app -w
+kubectl get pods -n app -w
+kubectl get nodeclaims -w
+```
+
+When the HPA requests a second replica, Karpenter should provision a second GPU
+node because each vLLM pod requests one full GPU.
+
+## Scale-down behavior
+
+Delete the load test:
+
+```bash
+kubectl delete -f platform/tests/gpu-load-test.yaml
+```
+
+After the HPA settles back to one replica and the extra node empties, Karpenter
+should terminate the second GPU node. Deleting the inference manifest should
+return the cluster to zero GPU nodes.

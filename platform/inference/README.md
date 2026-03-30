@@ -9,8 +9,15 @@ This directory contains inference workload manifests, including:
 
 Current checked-in examples:
 
-- `gpu-inference.yaml` for the first tainted GPU deployment path
+- `vllm-openai.yaml` for the real GPU-backed serving path
 
-This placeholder deployment is intentionally simple. It validates GPU
-scheduling, taints, tolerations, and `nvidia.com/gpu` requests before a real
-inference server is introduced.
+The current serving stack uses the official `vllm/vllm-openai` image to expose
+an OpenAI-compatible API backed by the small public model
+`Qwen/Qwen2.5-0.5B-Instruct`.
+
+The manifest includes:
+
+- a GPU-bound `Deployment`
+- a `ClusterIP` service
+- a CPU-based `HorizontalPodAutoscaler` that can request a second GPU replica
+  under load once metrics-server is installed

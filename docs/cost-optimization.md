@@ -2,24 +2,55 @@
 
 ## Why this matters
 
-GPU capacity is usually the most expensive part of an inference platform. Cost work in this project is not optional cleanup. It is a core part of the design.
+GPU capacity is the most expensive part of this platform. The point of the
+dynamic serving path is not just nicer autoscaling behavior. It is removing the
+default cost of an always-on GPU node when nobody is using the model.
 
-## Milestone 7 target
+## Baseline comparison
 
-Milestone 7 adds a mixed provisioning strategy:
+Using the official AWS us-west-2 EC2 on-demand price sheet fetched on
+`2026-03-23`:
+
+- `g4dn.xlarge`: `$0.526/hour`
+- `g5.xlarge`: `$1.006/hour`
+- `m7i-flex.large`: `$0.09576/hour`
+
+The previous baseline kept one managed `g4dn.xlarge` GPU node available all the
+time. The current baseline keeps that node count at zero until the inference
+deployment requests a GPU.
+
+That means:
+
+- fixed baseline cost = `24 * GPU hourly price`
+- dynamic baseline cost = `active GPU hours * GPU hourly price`
+
+The system-node baseline still exists in both cases, so the meaningful delta is
+the GPU line item.
+
+## Fixed vs dynamic note
+
+Use the measurement report from `./scripts/measure-gpu-serving-path.sh` to plug
+in the actual active GPU time for your run.
+
+Worked example if Karpenter lands on `g4dn.xlarge` and the service is active
+for one hour in a day:
+
+- fixed GPU baseline: `24 * $0.526 = $12.62/day`
+- dynamic GPU baseline: `1 * $0.526 = $0.53/day`
+- savings: about `$12.10/day`, or roughly `96%` of the fixed GPU idle spend
+
+If Karpenter has to use `g5.xlarge` instead, the per-active-hour GPU price is
+higher, but the same dynamic-vs-fixed principle still holds: the platform pays
+for **used GPU hours**, not for a permanently idling node.
+
+In practice, the dynamic path trades lower idle cost for a longer first-request
+latency because the first GPU node has to be launched and initialized.
+
+## Next cost milestone
+
+Milestone 7 should add a mixed provisioning strategy:
 
 - `gpu-spot` for cheaper interruptible capacity
 - `gpu-ondemand` for fallback and baseline reliability
 
-This split should make the platform able to keep serving when spot capacity is reclaimed or temporarily unavailable.
-
-## Decisions to document when Milestone 7 is implemented
-
-- Which workloads are allowed to use spot nodes
-- Which workloads require on-demand nodes
-- How interruption handling affects model warm-up and request retries
-- Whether fallback behavior is automatic or capacity is partitioned intentionally
-
-## Relationship to warm pools
-
-Warm pools reduce latency but increase idle cost. Spot capacity reduces cost but increases interruption risk. The platform should eventually balance both instead of optimizing only one dimension.
+That will let the platform optimize both **idle cost** and **active-hour cost**.

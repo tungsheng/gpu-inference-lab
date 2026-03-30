@@ -1,6 +1,6 @@
 # gpu-inference-lab Roadmap
 
-## Project Objective
+## Project objective
 
 Build a production-style GPU inference platform on AWS using:
 
@@ -8,13 +8,9 @@ Build a production-style GPU inference platform on AWS using:
 - Amazon EKS
 - Karpenter
 - Application Load Balancer
-- GPU model serving infrastructure
+- real GPU model serving
 
-The platform should demonstrate real ML infrastructure patterns instead of a toy autoscaling demo.
-
-## Target Architecture
-
-Final system:
+## Target architecture
 
 ```text
                  Internet
@@ -38,370 +34,81 @@ Final system:
                  Karpenter
                     |
                     v
-             GPU Node Pools
-            /               \
-           /                 \
-    Spot GPU Nodes      On-Demand GPU Nodes
+             Dynamic GPU NodePool
 ```
 
-## Repository Structure
+## Implemented milestones
 
-Current structure:
-
-```text
-gpu-inference-lab/
-
-infra/
-  env/
-    dev/
-  modules/
-    eks/
-    karpenter/
-    vpc/
-
-platform/
-  controller/
-  inference/
-  karpenter/
-  system/
-  test-app/
-  tests/
-
-scripts/
-docs/
-```
-
-Key paths:
-
-- `infra/env/dev/` is the active Terraform environment
-- `platform/controller/` holds the AWS Load Balancer Controller service account
-- `platform/test-app/` holds the baseline ingress sample
-- `platform/system/` holds cluster-level runtime manifests such as the NVIDIA device plugin
-- `platform/tests/` holds manual smoke tests
-
-## Milestone 0 - Repository Foundation
+### Milestone 0 - Repository foundation
 
 Status: implemented.
 
-Objective:
-
-- Create a maintainable repository layout and initial documentation.
-
-Deliverables:
-
-- Terraform modules directory
-- Environment configuration
-- Documentation skeleton
-
-Documentation:
-
-- `docs/architecture.md`
-- `docs/roadmap.md`
-
-## Milestone 1 - AWS Networking Layer
+### Milestone 1 - AWS networking layer
 
 Status: implemented.
 
-Objective:
-
-- Deploy production-style VPC networking.
-
-Infrastructure:
-
-- VPC
-- Public subnets
-- Private subnets
-- Internet Gateway
-- NAT Gateway
-- Route tables
-
-Deliverables:
-
-- `infra/modules/vpc/`
-
-Documentation:
-
-- `docs/networking.md`
-
-## Milestone 2 - EKS Cluster Deployment
+### Milestone 2 - EKS cluster deployment
 
 Status: implemented.
 
-Objective:
-
-- Deploy the Kubernetes cluster.
-
-Infrastructure:
-
-- EKS control plane
-- Managed node groups for system and GPU capacity
-- IAM roles
-- OIDC provider
-
-Deliverables:
-
-- `infra/modules/eks/`
-
-Verification:
-
-- `kubectl get nodes`
-- Expected result: nodes are `Ready`
-
-Documentation:
-
-- `docs/architecture.md`
-
-## Milestone 3 - Ingress and Load Balancer
+### Milestone 3 - Ingress and load balancer
 
 Status: implemented.
 
-Objective:
+### Milestone 4 - Dynamic compute control plane
 
-- Expose workloads externally.
-
-Components:
-
-- AWS Load Balancer Controller
-- Kubernetes ingress
-- Application Load Balancer
+Status: implemented.
 
 Deliverables:
 
-- `platform/controller/`
-- `platform/test-app/`
+- Karpenter Terraform module
+- controller IAM roles
+- cluster-side Karpenter installation path
 
-Documentation:
+### Milestone 5 - GPU runtime prerequisites
 
-- `docs/networking.md`
-
-## Milestone 4 - Dynamic Compute Layer
-
-Status: experimental.
-
-Objective:
-
-- Introduce optional node autoscaling with Karpenter.
-
-Components:
-
-- Karpenter controller
-- `EC2NodeClass`
-- `NodePool`
-
-Demonstration:
-
-- A non-system pod remains pending
-- Karpenter launches a matching node
-- The node joins the cluster
-- The pod is scheduled
+Status: implemented.
 
 Deliverables:
 
-- `infra/modules/karpenter/`
-- `platform/karpenter/`
-
-Documentation:
-
-- `docs/scaling.md`
-
-## Milestone 5 - GPU Scheduling
-
-Status: implemented baseline.
-
-Objective:
-
-- Enable GPU workloads.
-
-Add:
-
-- Dedicated managed GPU capacity
-- Taints
-- Tolerations
-- GPU resource requests such as `nvidia.com/gpu: 1`
 - NVIDIA device plugin
-- GPU smoke test and placeholder deployment
+- GPU smoke test
+- taints, tolerations, and `nvidia.com/gpu` scheduling contract
 
-Documentation:
+### Milestone 6 - Dynamic GPU serving path
 
-- `docs/scaling.md`
-
-## Milestone 6 - Heterogeneous GPU Fleet
-
-Status: planned.
-
-Objective:
-
-- Allow multiple GPU instance types in the same provisioning strategy.
-
-Example instance families:
-
-- `g5.xlarge`
-- `g5.2xlarge`
-- `g5.4xlarge`
-- `g5.12xlarge`
-
-Why:
-
-- Capacity availability
-- Cheaper instance selection
-- Faster scheduling
-
-Documentation:
-
-- `docs/scaling.md`
-
-## Milestone 7 - Spot and On-Demand GPU Strategy
-
-Status: planned.
-
-Objective:
-
-- Reduce GPU cost while keeping fallback capacity.
-
-Node pools:
-
-- `gpu-spot`
-- `gpu-ondemand`
-
-Documentation:
-
-- `docs/cost-optimization.md`
-
-## Milestone 8 - AZ Distribution
-
-Status: planned.
-
-Objective:
-
-- Prevent GPU shortages by distributing capacity across availability zones.
-
-Key selector:
-
-- `topology.kubernetes.io/zone`
-
-Documentation:
-
-- `docs/scaling.md`
-
-## Milestone 9 - GPU Bin Packing
-
-Status: planned.
-
-Objective:
-
-- Improve GPU utilization.
-
-Desired outcome:
-
-- Pack multiple inference workers efficiently onto larger GPU nodes when that is the cost-effective placement.
-
-Documentation:
-
-- `docs/gpu-binpacking.md`
-
-## Milestone 10 - Warm GPU Pools
-
-Status: planned.
-
-Objective:
-
-- Reduce inference cold-start latency.
-
-Problem:
-
-- GPU node launch time can take several minutes.
-
-Solution:
-
-- Maintain a small minimum GPU pool for faster first-request latency.
-
-Documentation:
-
-- `docs/scaling.md`
-
-## Milestone 11 - Inference Service
-
-Status: planned.
-
-Objective:
-
-- Deploy a real ML inference service.
-
-Candidate runtimes:
-
-- vLLM
-- Triton
-- TorchServe
+Status: implemented.
 
 Deliverables:
 
-- `platform/inference/`
+- Karpenter-managed GPU `NodePool`
+- real vLLM inference deployment
+- load test that can trigger scale-out
+- measured cold-start and scale-down workflow
+- cost note comparing fixed and dynamic GPU baselines
 
-Documentation:
+## Planned next milestones
 
-- `docs/inference.md`
-
-## Milestone 12 - Autoscaling Inference
-
-Status: planned.
-
-Objective:
-
-- Autoscale the inference workload itself.
-
-Add:
-
-- Horizontal Pod Autoscaler
-- Queue or latency-driven metrics
-
-Documentation:
-
-- `docs/scaling.md`
-
-## Milestone 13 - Observability
+### Milestone 7 - Spot and on-demand GPU strategy
 
 Status: planned.
 
-Objective:
-
-- Monitor the inference platform.
-
-Add:
-
-- Prometheus
-- Grafana
-- GPU metrics
-
-Documentation:
-
-- `docs/operations.md`
-
-## Milestone 14 - Production Hardening
+### Milestone 8 - AZ distribution
 
 Status: planned.
 
-Objective:
+### Milestone 9 - GPU bin packing
 
-- Add the operational controls expected in a production-style platform.
+Status: planned.
 
-Add:
+### Milestone 10 - Warm GPU pools
 
-- Rate limiting
-- Health checks
-- PodDisruptionBudget
-- Security policies
+Status: planned.
 
-Documentation:
+### Milestone 11 - Observability
 
-- `docs/operations.md`
+Status: planned.
 
-## Final Outcome
+### Milestone 12 - Production hardening
 
-The finished project should demonstrate:
-
-- Cloud networking
-- Kubernetes scheduling
-- GPU autoscaling
-- Spot cost optimization
-- Model serving
-- Cluster observability
+Status: planned.

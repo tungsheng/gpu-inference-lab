@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-openai
+  namespace: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-openai
+  template:
+    metadata:
+      labels:
+        app: vllm-openai
+    spec:
+      terminationGracePeriodSeconds: 120
+      nodeSelector:
+        workload: gpu
+      tolerations:
+        - key: gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: server
+          image: vllm/vllm-openai:v0.9.0
+          args:
+            - --model
+            - Qwen/Qwen2.5-0.5B-Instruct
+            - --served-model-name
+            - qwen2.5-0.5b
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --dtype
+            - float16
+            - --max-model-len
+            - "2048"
+            - --gpu-memory-utilization
+            - "0.85"
+          env:
+            - name: HF_HOME
+              value: /cache/huggingface
+            - name: HF_HUB_DISABLE_TELEMETRY
+              value: "1"
+          ports:
+            - containerPort: 8000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "2000m"
+              memory: 10Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "3500m"
+              memory: 14Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /cache/huggingface
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: model-cache
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-openai
+  namespace: app
+spec:
+  selector:
+    app: vllm-openai
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vllm-openai
+  namespace: app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-openai
+  minReplicas: 1
+  maxReplicas: 2
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 180
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # The demo model is small, so the scale signal needs to react to modest CPU pressure.
+          averageUtilization: 15

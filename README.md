@@ -1,57 +1,88 @@
 # GPU Inference Lab
 
-**gpu-inference-lab** is a hands-on project that builds a production-style
-machine learning inference platform on AWS.
+**gpu-inference-lab** is a hands-on AWS project for building a production-style
+GPU inference platform on Amazon EKS with:
 
-The target platform combines **Terraform**, **Amazon EKS**, **Karpenter**,
-**Application Load Balancer**, and GPU-serving workloads. The current
-repository now includes the baseline platform split: VPC networking, an EKS
-cluster, ALB-backed ingress, separate system and GPU managed node groups, a
-checked-in NVIDIA device plugin path, and sample validation workloads.
+- Terraform
+- Karpenter
+- Application Load Balancer
+- vLLM model serving
+- dynamic GPU worker nodes
 
-The project focuses on the **infrastructure foundations required for ML platforms**, including:
+The current repo default is an **elastic GPU serving path**:
 
-- VPC networking with public/private subnets and NAT routing
-- Kubernetes ingress and ALB integration
-- IAM roles and IRSA for secure service access
-- Elastic compute patterns for inference workloads
-- Containerized serving infrastructure
+- managed CPU nodes keep the cluster and ingress components alive
+- GPU nodes stay at `0` when idle
+- Karpenter launches GPU capacity only when a workload requests
+  `nvidia.com/gpu`
 
-This repository is structured as a **learning lab and reference architecture** for building scalable ML inference systems.
+## What Is Implemented
 
-## Current status
-
-The repository currently covers the platform foundation milestones:
+Milestones completed so far:
 
 - Milestone 1: AWS networking layer
 - Milestone 2: EKS cluster deployment
 - Milestone 3: ingress and load balancer integration
-- Milestone 5: fixed GPU scheduling baseline
+- Milestone 4: Karpenter control-plane integration
+- Milestone 5: GPU runtime prerequisites
+- Milestone 6: dynamic GPU serving path
 
-The next major milestone is making GPU compute dynamic with Karpenter instead
-of relying on a fixed managed GPU node count.
+Milestone 6 adds:
 
-## Docs
+- a Karpenter-managed GPU `EC2NodeClass` and `NodePool`
+- a real vLLM inference deployment
+- an HPA and checked-in load test for scale-out
+- a measurement script for cold start, scheduling, and scale-down timing
+- a cost note comparing fixed GPU capacity with dynamic GPU capacity
 
-- [Roadmap](docs/roadmap.md)
-- [Architecture](docs/architecture.md)
-- [Networking](docs/networking.md)
-- [Scaling](docs/scaling.md)
-- [Inference](docs/inference.md)
-- [Cost optimization](docs/cost-optimization.md)
-- [GPU bin packing](docs/gpu-binpacking.md)
-- [Operations](docs/operations.md)
-- [Dev environment workflow](docs/dev-environment.md)
+## Architecture At A Glance
 
-## Key Paths
+```text
+Internet
+   |
+   v
+ALB
+   |
+   v
+Ingress
+   |
+   +--> sample echo app on managed CPU nodes
+   |
+   +--> vLLM on Karpenter GPU nodes
 
-- `infra/env/dev/` contains the active Terraform environment
-- `platform/system/` contains cluster-level runtime manifests
-- `platform/test-app/` contains the baseline ingress sample
-- `platform/tests/` contains manual validation manifests
-- `platform/karpenter/` contains the optional dynamic-compute path
+EKS cluster
+   |
+   +--> managed system node group (m7i-flex.large)
+   |
+   +--> Karpenter GPU NodePool (g4dn.xlarge / g5.xlarge)
+          |
+          +--> workload=gpu
+          +--> gpu=true:NoSchedule
+          +--> NVIDIA device plugin
+```
 
-## Quick start
+## Repository Map
+
+- `infra/env/dev/`: active Terraform environment
+- `infra/modules/`: reusable Terraform modules
+- `platform/karpenter/`: GPU `EC2NodeClass`, `NodePool`, and service account
+- `platform/inference/`: real vLLM serving manifest
+- `platform/system/`: cluster-level runtime manifests such as the NVIDIA device plugin
+- `platform/test-app/`: sample ALB-backed echo app
+- `platform/tests/`: smoke test and load test manifests
+- `scripts/`: apply, measurement, and destroy helpers
+- `docs/`: architecture, operations, scaling, cost, and workflow notes
+
+## Prerequisites
+
+- Terraform
+- AWS CLI
+- `kubectl`
+- `helm`
+- AWS credentials for the target account
+- region set up for `us-west-2`
+
+## Quick Start
 
 Initialize Terraform:
 
@@ -59,24 +90,95 @@ Initialize Terraform:
 terraform -chdir=infra/env/dev init
 ```
 
-Apply the baseline infra, GPU prerequisites, and ingress resources:
+Apply the dev environment:
 
 ```bash
 ./scripts/apply-dev.sh
 ```
 
-Destroy the full dev environment:
+Expected post-apply state:
+
+- system nodes are present
+- Karpenter is installed
+- the GPU `NodePool` exists
+- the NVIDIA device plugin is installed
+- the sample ingress app is present
+- **GPU worker node count is still zero**
+
+That last point is intentional. `./scripts/apply-dev.sh` makes the cluster
+**GPU-ready**, but it does not apply the GPU inference workload. The first GPU
+node should appear only after a GPU pod is created.
+
+Run the dynamic GPU serving validation flow:
+
+```bash
+./scripts/measure-gpu-serving-path.sh
+```
+
+Optional custom report path:
+
+```bash
+./scripts/measure-gpu-serving-path.sh docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
+```
+
+Destroy the environment:
 
 ```bash
 ./scripts/destroy-dev.sh
 ```
 
-## Useful checks
+## Manual Checks
+
+Verify the cluster after apply:
 
 ```bash
-kubectl get pods -n kube-system
-kubectl get daemonset nvidia-device-plugin-daemonset -n kube-system
-kubectl get all -n app
-kubectl get ingress -n app -o wide
 kubectl get nodes -L workload,node.kubernetes.io/instance-type -o wide
+kubectl get deployment metrics-server -n kube-system
+kubectl get deployment karpenter -n karpenter
+kubectl get nodepools
+kubectl get daemonset nvidia-device-plugin-daemonset -n kube-system
+kubectl get ingress -n app -o wide
 ```
+
+Run a quick GPU smoke test:
+
+```bash
+kubectl apply -f platform/tests/gpu-test.yaml
+kubectl logs -n app gpu-test
+kubectl delete -f platform/tests/gpu-test.yaml
+```
+
+Apply the real inference workload manually:
+
+```bash
+kubectl apply -f platform/inference/vllm-openai.yaml
+kubectl get pods -n app -w
+kubectl get nodeclaims -w
+kubectl get nodes -L workload,node.kubernetes.io/instance-type -w
+kubectl delete -f platform/inference/vllm-openai.yaml
+```
+
+## Key Scripts
+
+- `./scripts/apply-dev.sh`
+  Applies Terraform, updates kubeconfig, installs controllers, applies the GPU
+  `EC2NodeClass` and `NodePool`, and deploys the sample echo app.
+- `./scripts/measure-gpu-serving-path.sh`
+  Applies the vLLM workload, drives load, records scale-up and scale-down
+  milestones, and writes a Markdown report.
+- `./scripts/destroy-dev.sh`
+  Removes Kubernetes-side resources in teardown-safe order, then destroys the
+  Terraform-managed infrastructure.
+
+## Docs
+
+- [Architecture](docs/architecture.md)
+- [Dev environment workflow](docs/dev-environment.md)
+- [Dynamic GPU serving](docs/dynamic-gpu-serving.md)
+- [Operations](docs/operations.md)
+- [Scaling](docs/scaling.md)
+- [Inference](docs/inference.md)
+- [Cost optimization](docs/cost-optimization.md)
+- [Networking](docs/networking.md)
+- [GPU bin packing](docs/gpu-binpacking.md)
+- [Roadmap](docs/roadmap.md)

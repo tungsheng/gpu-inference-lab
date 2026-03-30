@@ -2,10 +2,8 @@
 
 ## Goal
 
-This project is building toward a production-style GPU inference platform on
-AWS. The current repository now includes the first strict compute split:
-separate CPU system nodes and GPU inference nodes, plus the cluster-side GPU
-runtime wiring needed to validate scheduling.
+This project demonstrates a production-style GPU inference platform on AWS that
+keeps GPU cost elastic instead of paying for idle accelerator capacity.
 
 ## Current implemented architecture
 
@@ -18,79 +16,50 @@ ALB
    v
 Kubernetes Ingress
    |
-   v
-Service
+   +-----------------------> sample HTTP pods on managed system nodes
    |
-   +-----------------------> sample HTTP pods on system nodes
-   |
-   +-----------------------> GPU validation/inference pods on GPU nodes
+   +-----------------------> vLLM service on Karpenter GPU nodes
 
 EKS cluster
    |
    +--> system managed node group -> m7i-flex.large -> workload=system
    |
-   +--> gpu managed node group -> g4dn.xlarge -> workload=gpu + gpu=true:NoSchedule
-                                  |
-                                  v
-                        NVIDIA device plugin daemonset
+   +--> Karpenter controller -> GPU NodePool -> g4dn.xlarge / g5.xlarge
+                                      |
+                                      +--> workload=gpu
+                                      +--> gpu=true:NoSchedule
+                                      +--> NVIDIA device plugin daemonset
 ```
 
 Current implementation details:
 
-- The VPC and EKS cluster are provisioned with Terraform.
-- Worker nodes run in private subnets.
-- The AWS Load Balancer Controller installs after Terraform apply and manages
-  the ALB created by the ingress resource.
-- The baseline helper also installs a checked-in NVIDIA device plugin manifest
-  that targets only tainted GPU nodes.
-- The sample workload is still `hashicorp/http-echo`, which validates ingress
-  and cluster plumbing.
-- GPU validation happens separately through `platform/tests/gpu-test.yaml` and
-  the placeholder deployment at `platform/inference/gpu-inference.yaml`.
+- Terraform provisions the VPC, EKS cluster, and Karpenter IAM roles.
+- `./scripts/apply-dev.sh` installs the AWS Load Balancer Controller,
+  metrics-server, Karpenter, the GPU `EC2NodeClass`/`NodePool`, and the NVIDIA
+  device plugin.
+- The cluster always keeps system capacity on managed CPU nodes.
+- The cluster starts with zero GPU worker nodes.
+- Applying the vLLM deployment creates a pending GPU pod, which Karpenter
+  converts into a `NodeClaim` and then an EC2 GPU instance.
+- Under load, the HPA can request a second vLLM replica, which triggers a
+  second GPU node.
+- When load disappears and the pods scale down, Karpenter consolidates empty
+  GPU nodes away.
 
-## Target architecture
+## Operational characteristics
 
-```text
-Internet
-   |
-   v
-ALB
-   |
-   v
-Ingress
-   |
-   v
-Inference Service
-   |
-   v
-Inference Pods
-   |
-   v
-Kubernetes Scheduler
-   |
-   v
-Karpenter
-   |
-   v
-GPU Node Pools
-```
-
-Target operational characteristics:
-
-- GPU nodes scale from pending workloads instead of staying permanently provisioned.
-- Multiple GPU instance types can satisfy the same workload requirements.
-- Spot and on-demand capacity can coexist.
-- Observability and hardening are part of the platform design, not follow-on cleanup.
+- Idle GPU cost is zero because there is no fixed GPU node group.
+- The GPU fleet is constrained but flexible: `g4dn.xlarge` and `g5.xlarge`
+  are both allowed.
+- GPU scheduling stays explicit through `workload=gpu`,
+  `gpu=true:NoSchedule`, and `nvidia.com/gpu: 1`.
+- The serving path is now a real inference API instead of a `sleep` container.
 
 ## Implemented milestones
 
 - Milestone 1: AWS networking layer
 - Milestone 2: EKS cluster deployment
 - Milestone 3: ingress and load balancer integration
-- Milestone 5: fixed GPU scheduling baseline
-
-## Next architecture change
-
-The next material change is optional dynamic compute with Karpenter. That work
-would replace the current fixed GPU desired size with a pending-pod-to-new-node
-lifecycle, while keeping the existing system/GPU separation intact.
+- Milestone 4: Karpenter control-plane integration
+- Milestone 5: GPU runtime prerequisites
+- Milestone 6: dynamic GPU serving path

@@ -62,28 +62,5 @@ module "eks" {
       min_size     = 2
       max_size     = 3
     }
-
-    gpu = {
-      instance_types             = ["g4dn.xlarge"]
-      ami_type                   = "AL2023_x86_64_NVIDIA"
-      ami_release_version        = "1.35.2-20260304"
-      iam_role_attach_cni_policy = false
-
-      desired_size = 1
-      min_size     = 0
-      max_size     = 2
-
-      labels = {
-        workload = "gpu"
-      }
-
-      taints = {
-        gpu = {
-          key    = "gpu"
-          value  = "true"
-          effect = "NO_SCHEDULE"
-        }
-      }
-    }
   }
 }

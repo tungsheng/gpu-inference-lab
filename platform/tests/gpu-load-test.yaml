@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-load-test
+  namespace: app
+data:
+  load-test.js: |
+    import http from "k6/http";
+    import { check } from "k6";
+
+    export const options = {
+      scenarios: {
+        inference_burst: {
+          // Keep sustained pressure on the first replica long enough for CPU-based HPA scale-out.
+          executor: "ramping-vus",
+          startVUs: 0,
+          gracefulRampDown: "30s",
+          stages: [
+            { duration: "2m", target: 12 },
+            { duration: "11m", target: 12 },
+            { duration: "2m", target: 0 },
+          ],
+        },
+      },
+      thresholds: {
+        http_req_failed: ["rate<0.05"],
+      },
+    };
+
+    const targetUrl = __ENV.TARGET_URL || "http://vllm-openai.app.svc.cluster.local/v1/completions";
+    const payload = JSON.stringify({
+      model: "qwen2.5-0.5b",
+      prompt: "Explain why elastic GPU nodes help an inference platform in one short paragraph.",
+      max_tokens: 256,
+      temperature: 0,
+    });
+
+    export default function () {
+      const response = http.post(targetUrl, payload, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        timeout: "180s",
+      });
+
+      check(response, {
+        "completion request succeeded": (res) => res.status === 200,
+      });
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpu-load-test
+  namespace: app
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:0.49.0
+          args:
+            - run
+            - /scripts/load-test.js
+          env:
+            - name: TARGET_URL
+              value: http://vllm-openai.app.svc.cluster.local/v1/completions
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: gpu-load-test

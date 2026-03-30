@@ -1,17 +1,19 @@
 # platform/karpenter
 
 This directory contains the Kubernetes manifests used for the optional
-Karpenter dynamic-compute milestone:
+Karpenter-managed GPU serving path:
 
 - `serviceaccount.yaml`
-- `nodeclass-default.yaml`
-- `nodepool-default.yaml`
+- `nodeclass-gpu-serving.yaml`
+- `nodepool-gpu-serving.yaml`
 
 These manifests assume the current dev cluster name `gpu-inference` and the
 Terraform-created Karpenter node role `gpu-inference-karpenter-node`.
 
-The default `EC2NodeClass` is pinned to the EKS AL2023 alias `al2023@v20260304`
-for Kubernetes `1.35`.
+The GPU `EC2NodeClass` is pinned to the Amazon EKS AL2023 NVIDIA AMI release
+`amazon-eks-node-al2023-x86_64-nvidia-1.35-v20260304` so the dynamic path
+stays reproducible instead of drifting to the latest GPU image automatically.
 
-This path is separate from the default managed GPU baseline documented in
-`docs/scaling.md`.
+The paired `NodePool` launches `g4dn.xlarge` or `g5.xlarge` on-demand nodes,
+applies `workload=gpu`, taints them with `gpu=true:NoSchedule`, and
+consolidates them away after they empty.
