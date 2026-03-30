@@ -17,6 +17,7 @@ assert_contains "${COMMAND_OUTPUT}" "status" "scripts/dev help should list statu
 run_and_capture /bin/bash "${REPO_ROOT}/scripts/dev" measure --help
 assert_status 0 "${COMMAND_STATUS}" "scripts/dev measure --help should succeed"
 assert_contains "${COMMAND_OUTPUT}" "--report" "measure help should describe report flag"
+assert_contains "${COMMAND_OUTPUT}" "--json-report" "measure help should describe JSON report flag"
 
 run_and_capture /bin/bash "${REPO_ROOT}/scripts/dev" up --help
 assert_status 0 "${COMMAND_STATUS}" "scripts/dev up --help should succeed"
@@ -41,6 +42,10 @@ assert_contains "${COMMAND_OUTPUT}" "unknown command: nope" "unknown command err
 run_and_capture /bin/bash "${REPO_ROOT}/scripts/measure-gpu-serving-path.sh" --bogus
 assert_status 1 "${COMMAND_STATUS}" "unknown measurement option should fail"
 assert_contains "${COMMAND_OUTPUT}" "unknown option: --bogus" "unknown measurement option should be surfaced"
+
+run_and_capture /bin/bash "${REPO_ROOT}/scripts/measure-gpu-serving-path.sh" --json-report
+assert_status 1 "${COMMAND_STATUS}" "measurement JSON report flag should require a value"
+assert_contains "${COMMAND_OUTPUT}" "--json-report requires a value" "measurement JSON report flag should fail clearly without a path"
 
 link_system_command dirname
 run_and_capture env PATH="${TEST_BIN}" /bin/bash "${REPO_ROOT}/scripts/dev" doctor

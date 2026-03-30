@@ -81,6 +81,14 @@ Example:
 ./scripts/dev measure --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
 ```
 
+Optional Markdown + JSON outputs:
+
+```bash
+./scripts/dev measure \
+  --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md \
+  --json-report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).json
+```
+
 Useful companion commands:
 
 ```bash

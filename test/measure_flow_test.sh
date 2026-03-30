@@ -16,9 +16,10 @@ write_stub kubectl \
 'exit 0'
 
 FLOW_REPORT="${TEST_TMPDIR}/reports/flow.md"
+FLOW_JSON_REPORT="${TEST_TMPDIR}/reports/flow.json"
 
 # shellcheck disable=SC2016
-run_and_capture env PATH="${TEST_BIN}:/usr/bin:/bin" REPO_ROOT="${REPO_ROOT}" FLOW_REPORT="${FLOW_REPORT}" TEST_TMPDIR="${TEST_TMPDIR}" /bin/bash -c '
+run_and_capture env PATH="${TEST_BIN}:/usr/bin:/bin" REPO_ROOT="${REPO_ROOT}" FLOW_REPORT="${FLOW_REPORT}" FLOW_JSON_REPORT="${FLOW_JSON_REPORT}" TEST_TMPDIR="${TEST_TMPDIR}" /bin/bash -c '
   set -euo pipefail
   source "${REPO_ROOT}/scripts/measure-gpu-serving-path.sh"
 
@@ -80,11 +81,13 @@ run_and_capture env PATH="${TEST_BIN}:/usr/bin:/bin" REPO_ROOT="${REPO_ROOT}" FL
     fi
   }
 
-  main --report "${FLOW_REPORT}" --no-spinner
+  main --report "${FLOW_REPORT}" --json-report "${FLOW_JSON_REPORT}" --no-spinner
 
   cat "${ACTION_LOG}"
   printf "%s\n" "---REPORT---"
   cat "${FLOW_REPORT}"
+  printf "%s\n" "---JSON---"
+  cat "${FLOW_JSON_REPORT}"
 '
 
 assert_status 0 "${COMMAND_STATUS}" "measure flow should complete successfully with stubbed cluster interactions"
@@ -117,3 +120,6 @@ assert_contains "${COMMAND_OUTPUT}" "---REPORT---" "measure flow should generate
 assert_contains "${COMMAND_OUTPUT}" "# Dynamic GPU Serving Report" "generated report should include the title"
 assert_contains "${COMMAND_OUTPUT}" "- Cold start to first Ready replica: 50s" "generated report should summarize cold-start timing"
 assert_contains "${COMMAND_OUTPUT}" "- Load-triggered scale-out to two Ready replicas: 40s" "generated report should summarize scale-out timing"
+assert_contains "${COMMAND_OUTPUT}" "---JSON---" "measure flow should generate a JSON report when requested"
+assert_contains "${COMMAND_OUTPUT}" "\"load_test_applied\"" "JSON report should include timeline event names"
+assert_contains "${COMMAND_OUTPUT}" "\"scale_out_ready_seconds\": 40" "JSON report should expose numeric scale-out timing"

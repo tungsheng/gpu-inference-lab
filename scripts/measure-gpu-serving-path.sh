@@ -38,6 +38,7 @@ WAIT_TIMEOUT_SCALE_SECONDS=${WAIT_TIMEOUT_SCALE_SECONDS:-720}
 WAIT_TIMEOUT_SCALE_DOWN_SECONDS=${WAIT_TIMEOUT_SCALE_DOWN_SECONDS:-900}
 DISABLE_SPINNER=${DISABLE_SPINNER:-0}
 REPORT_PATH=""
+JSON_REPORT_PATH=${JSON_REPORT_PATH:-""}
 REPORT_PATH_DEFAULT="/tmp/gpu-serving-report-$(date +%Y%m%d-%H%M%S).md"
 
 SPINNER_FRAMES=("/" "-" "\\" "|")
@@ -130,6 +131,7 @@ Usage:
 
 Options:
   --report <path>            Write the Markdown report to a specific path
+  --json-report <path>       Write an additional structured JSON report
   --namespace <name>         Application namespace (default: ${APP_NAMESPACE})
   --deployment <name>        Inference deployment name (default: ${DEPLOYMENT_NAME})
   --nodepool <name>          Karpenter NodePool name (default: ${NODEPOOL_NAME})
@@ -141,37 +143,56 @@ Options:
 Examples:
   ./scripts/measure-gpu-serving-path.sh
   ./scripts/measure-gpu-serving-path.sh --report docs/reports/latest.md
+  ./scripts/measure-gpu-serving-path.sh --report docs/reports/latest.md --json-report docs/reports/latest.json
   ./scripts/measure-gpu-serving-path.sh --poll-interval 5 docs/reports/latest.md
 EOF
 }
 
+require_option_value() {
+  local option_name=$1
+  local option_value=${2-}
+
+  if [[ -z "${option_value}" || "${option_value}" == -* ]]; then
+    log_error "${option_name} requires a value"
+    usage >&2
+    exit 1
+  fi
+
+  printf '%s\n' "${option_value}"
+}
+
 parse_args() {
   local report_override=""
+  local json_report_override=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --report)
-        report_override=${2:-}
+        report_override=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --json-report)
+        json_report_override=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       --namespace)
-        APP_NAMESPACE=${2:-}
+        APP_NAMESPACE=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       --deployment)
-        DEPLOYMENT_NAME=${2:-}
+        DEPLOYMENT_NAME=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       --nodepool)
-        NODEPOOL_NAME=${2:-}
+        NODEPOOL_NAME=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       --nodeclass)
-        NODECLASS_NAME=${2:-}
+        NODECLASS_NAME=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       --poll-interval)
-        POLL_INTERVAL_SECONDS=${2:-}
+        POLL_INTERVAL_SECONDS=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       --no-spinner)
@@ -210,6 +231,7 @@ parse_args() {
   fi
 
   REPORT_PATH=${report_override:-${REPORT_PATH_DEFAULT}}
+  JSON_REPORT_PATH=${json_report_override:-${JSON_REPORT_PATH}}
 }
 
 log_stage() {
@@ -326,7 +348,10 @@ measure_full_scale_down() {
 write_measurement_report_stage() {
   log_stage 8 "write the measurement report"
   render_report
-  log_success "report written to ${REPORT_PATH}"
+  log_success "Markdown report written to ${REPORT_PATH}"
+  if [[ -n "${JSON_REPORT_PATH}" ]]; then
+    log_success "JSON report written to ${JSON_REPORT_PATH}"
+  fi
 }
 
 main() {

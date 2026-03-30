@@ -121,6 +121,14 @@ Optional custom report path:
 ./scripts/dev measure --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
 ```
 
+Optional Markdown + JSON outputs:
+
+```bash
+./scripts/dev measure \
+  --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md \
+  --json-report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).json
+```
+
 Destroy the environment:
 
 ```bash
@@ -179,7 +187,7 @@ kubectl delete -f platform/inference/vllm-openai.yaml
   `EC2NodeClass` and `NodePool`, and deploys the sample echo app.
 - `./scripts/dev measure`
   Applies the vLLM workload, drives load, records scale-up and scale-down
-  milestones, and writes a Markdown report.
+  milestones, and writes a Markdown report with an optional JSON artifact.
 - `./scripts/dev down`
   Removes Kubernetes-side resources in teardown-safe order, then destroys the
   Terraform-managed infrastructure.

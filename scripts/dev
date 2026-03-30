@@ -10,6 +10,8 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/lib/kube.sh"
 # shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/json.sh"
+# shellcheck disable=SC1091
 . "${SCRIPT_DIR}/lib/terraform.sh"
 # shellcheck disable=SC2034
 SCRIPT_NAME="dev"
@@ -50,7 +52,7 @@ Commands:
 
 Examples:
   ./scripts/dev up -auto-approve
-  ./scripts/dev measure --report docs/reports/latest.md
+  ./scripts/dev measure --report docs/reports/latest.md --json-report docs/reports/latest.json
   ./scripts/dev down -auto-approve
   ./scripts/dev doctor
   ./scripts/dev doctor --json
@@ -119,53 +121,6 @@ all_checks_passed() {
   done
 
   return 0
-}
-
-json_escape() {
-  local value=${1-}
-
-  value=${value//\\/\\\\}
-  value=${value//\"/\\\"}
-  value=${value//$'\n'/\\n}
-  value=${value//$'\r'/\\r}
-  value=${value//$'\t'/\\t}
-  printf '%s' "${value}"
-}
-
-json_string() {
-  printf '"%s"' "$(json_escape "${1-}")"
-}
-
-json_nullable_string() {
-  if [[ -n "${1-}" ]]; then
-    json_string "${1}"
-    return 0
-  fi
-
-  printf 'null'
-}
-
-json_nullable_number() {
-  if [[ -n "${1-}" ]]; then
-    printf '%s' "${1}"
-    return 0
-  fi
-
-  printf 'null'
-}
-
-json_nullable_bool() {
-  case "${1-}" in
-    1|true|True)
-      printf 'true'
-      ;;
-    0|false|False)
-      printf 'false'
-      ;;
-    *)
-      printf 'null'
-      ;;
-  esac
 }
 
 describe_bool() {

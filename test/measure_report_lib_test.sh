@@ -10,9 +10,10 @@ setup_test_tmpdir
 trap teardown_test_tmpdir EXIT
 
 REPORT_PATH="${TEST_TMPDIR}/reports/measurement.md"
+JSON_REPORT_PATH="${TEST_TMPDIR}/reports/measurement.json"
 
 # shellcheck disable=SC2016
-run_and_capture env REPO_ROOT="${REPO_ROOT}" REPORT_PATH="${REPORT_PATH}" /bin/bash -c '
+run_and_capture env REPO_ROOT="${REPO_ROOT}" REPORT_PATH="${REPORT_PATH}" JSON_REPORT_PATH="${JSON_REPORT_PATH}" /bin/bash -c '
   set -euo pipefail
   source "${REPO_ROOT}/scripts/lib/measure-report.sh"
 
@@ -25,6 +26,7 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" REPORT_PATH="${REPORT_PATH}" /bin/b
   NODEPOOL_NAME="gpu-serving"
   POLL_INTERVAL_SECONDS=2
   REPORT_PATH=${REPORT_PATH}
+  JSON_REPORT_PATH=${JSON_REPORT_PATH}
 
   EVENT_NAMES=(start_time first_ready_seen second_ready_seen load_test_applied load_test_deleted scale_in_node_seen inference_deleted all_gpu_nodes_removed)
   TIMELINE_EVENT_LABELS=(
@@ -58,6 +60,8 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" REPORT_PATH="${REPORT_PATH}" /bin/b
 
   render_report
   cat "${REPORT_PATH}"
+  printf "%s\n" "---JSON---"
+  cat "${JSON_REPORT_PATH}"
 '
 
 assert_status 0 "${COMMAND_STATUS}" "measure report helper should render a report"
@@ -66,3 +70,6 @@ assert_contains "${COMMAND_OUTPUT}" "- Namespace: app" "report should include th
 assert_contains "${COMMAND_OUTPUT}" "| First serving pod Ready | 2026-03-30T07:01:00Z | 60s |" "timeline rows should include computed deltas"
 assert_contains "${COMMAND_OUTPUT}" "- Cold start to first Ready replica: 60s" "summary should include cold-start duration"
 assert_contains "${COMMAND_OUTPUT}" "- Full scale-down to zero GPU nodes after inference deletion: 240s" "summary should include scale-down duration"
+assert_contains "${COMMAND_OUTPUT}" "---JSON---" "report helper should also emit the JSON artifact when requested"
+assert_contains "${COMMAND_OUTPUT}" "\"generated_at\": \"2026-03-30T07:00:00Z\"" "JSON report should include generation metadata"
+assert_contains "${COMMAND_OUTPUT}" "\"cold_start_ready_seconds\": 60" "JSON report should expose numeric summary durations"
