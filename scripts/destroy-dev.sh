@@ -19,6 +19,8 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "${SCRIPT_DIR}/lib/platform-destroy.sh"
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/lib/diagnostics.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/terraform-wrapper.sh"
 # shellcheck disable=SC2034
 SCRIPT_NAME="destroy-dev"
 TF_DIR="${TF_DIR:-${TF_DIR_DEFAULT}}"
@@ -42,21 +44,6 @@ Notes:
 EOF
 }
 
-require_command terraform
-
-reject_unsupported_destroy_args() {
-  local arg
-
-  for arg in "$@"; do
-    case "${arg}" in
-      -target|-target=*)
-        log_error "scripts/destroy-dev.sh only supports full environment teardown. Use terraform -chdir=${TF_DIR} destroy directly for targeted destroys."
-        exit 1
-        ;;
-    esac
-  done
-}
-
 destroy_should_collect_diagnostics() {
   [[ "${SKIP_K8S_CLEANUP}" != "1" ]]
 }
@@ -67,9 +54,8 @@ main() {
     return 0
   fi
 
-  require_command terraform
-  require_directory "${TF_DIR}" "Terraform directory"
-  reject_unsupported_destroy_args "$@"
+  validate_terraform_wrapper_prereqs "${TF_DIR}"
+  reject_unsupported_terraform_wrapper_args destroy "${TF_DIR}" "$@"
   # shellcheck disable=SC2034
   current_step="reading Terraform outputs"
   install_step_error_trap print_destroy_diagnostics destroy_should_collect_diagnostics

@@ -7,6 +7,8 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "${SCRIPT_DIR}/dev-environment-paths.sh"
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/dev-environment-common.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/terraform-wrapper.sh"
 # shellcheck disable=SC2034
 SCRIPT_NAME="apply-dev"
 TF_DIR="${TF_DIR:-${TF_DIR_DEFAULT}}"
@@ -27,34 +29,22 @@ Notes:
 EOF
 }
 
-reject_unsupported_apply_args() {
-  local arg
+main() {
+  if terraform_wrapper_help_requested "${1:-}"; then
+    usage
+    return 0
+  fi
 
-  for arg in "$@"; do
-    case "${arg}" in
-      -destroy)
-        log_error "scripts/apply-dev.sh does not support terraform apply -destroy. Use ./scripts/destroy-dev.sh or terraform -chdir=${TF_DIR} destroy directly."
-        exit 1
-        ;;
-      -target|-target=*|-refresh-only|-refresh-only=*)
-        log_error "scripts/apply-dev.sh only supports full environment apply. Use terraform -chdir=${TF_DIR} apply directly for targeted or refresh-only operations."
-        exit 1
-        ;;
-    esac
-  done
+  validate_terraform_wrapper_prereqs "${TF_DIR}"
+  reject_unsupported_terraform_wrapper_args apply "${TF_DIR}" "$@"
+
+  log_section "running terraform apply"
+  terraform -chdir="${TF_DIR}" apply "$@"
+  log_section "running cluster post-apply setup"
+  "${SCRIPT_DIR}/post-terraform-apply.sh" "${TF_DIR}"
+  log_success "environment apply complete"
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-
-require_command terraform
-require_directory "${TF_DIR}" "Terraform directory"
-reject_unsupported_apply_args "$@"
-
-log_section "running terraform apply"
-terraform -chdir="${TF_DIR}" apply "$@"
-log_section "running cluster post-apply setup"
-"${SCRIPT_DIR}/post-terraform-apply.sh" "${TF_DIR}"
-log_success "environment apply complete"
