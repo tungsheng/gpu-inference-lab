@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
 
-# Shared with the measurement script's runtime configuration and cache state.
-: "${CURRENT_MEASUREMENT_CACHE_KEY-}" "${MEASUREMENT_STATE_REFRESHED_AT-}"
-: "${STATE_GPU_NODE_LINES-}" "${STATE_GPU_NODE_NAMES-}" "${STATE_GPU_NODE_COUNT-}" "${STATE_NODECLAIM_COUNT-}"
-: "${STATE_DEPLOYMENT_READY_REPLICAS-}" "${STATE_DEPLOYMENT_DESIRED_REPLICAS-}" "${STATE_HPA_CURRENT_REPLICAS-}" "${STATE_HPA_DESIRED_REPLICAS-}"
-: "${STATE_FIRST_POD_NAME-}" "${STATE_FIRST_POD_PHASE-}" "${STATE_FIRST_POD_NODE_NAME-}" "${STATE_FIRST_POD_WAITING_REASON-}" "${STATE_FIRST_POD_TERMINATED_REASON-}" "${STATE_FIRST_POD_SCHEDULING_REASON-}"
-: "${STATE_LOAD_TEST_EXISTS-}" "${STATE_LOAD_TEST_ACTIVE-}" "${STATE_LOAD_TEST_SUCCEEDED-}" "${STATE_LOAD_TEST_FAILED-}" "${STATE_LOAD_TEST_POD_NAME-}" "${STATE_LOAD_TEST_POD_PHASE-}" "${STATE_LOAD_TEST_POD_REASON-}"
-: "${STATE_NVIDIA_READY_COUNT-}" "${STATE_NVIDIA_DESIRED_COUNT-}"
+MEASURE_STATE_LIB_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${MEASURE_STATE_LIB_DIR}/measure-context.sh"
 
 trim_spaces() {
   local text=$1
@@ -84,7 +80,12 @@ refresh_measurement_state() {
 }
 
 ensure_measurement_state_current() {
-  local cache_key=${CURRENT_MEASUREMENT_CACHE_KEY:-$(now_epoch)}
+  local cache_key
+
+  cache_key=$(measurement_state_cache_key)
+  if [[ -z "${cache_key}" ]]; then
+    cache_key=$(now_epoch)
+  fi
 
   if [[ "${MEASUREMENT_STATE_REFRESHED_AT:-}" == "${cache_key}" ]]; then
     return 0

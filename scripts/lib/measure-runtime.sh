@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-# Shared with the measurement wait library during failure cleanup.
-: "${LAST_PROGRESS_LOG_AT-}"
+MEASURE_RUNTIME_LIB_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${MEASURE_RUNTIME_LIB_DIR}/measure-context.sh"
 
 verify_prerequisites() {
   local missing=()
@@ -81,7 +82,6 @@ cleanup_on_exit() {
   fi
 
   stop_wait_progress
-  LAST_PROGRESS_LOG_AT=0
   log_warn "run failed; deleting load-test and inference workloads to avoid leaving GPU nodes behind"
   delete_manifest_quiet "${GPU_LOAD_TEST_MANIFEST}"
   delete_manifest_quiet "${GPU_INFERENCE_MANIFEST}"

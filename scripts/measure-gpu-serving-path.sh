@@ -10,6 +10,8 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/lib/kube.sh"
 # shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/measure-context.sh"
+# shellcheck disable=SC1091
 . "${SCRIPT_DIR}/lib/measure-wait.sh"
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/lib/measure-report.sh"
@@ -41,87 +43,7 @@ REPORT_PATH=""
 JSON_REPORT_PATH=${JSON_REPORT_PATH:-""}
 REPORT_PATH_DEFAULT="/tmp/gpu-serving-report-$(date +%Y%m%d-%H%M%S).md"
 
-SPINNER_FRAMES=("/" "-" "\\" "|")
 TOTAL_STAGES=8
-LAST_PROGRESS_LOG_AT=0
-WAIT_PROGRESS_FILE=""
-WAIT_SPINNER_PID=""
-first_gpu_node_name=""
-second_gpu_node_name=""
-CURRENT_MEASUREMENT_CACHE_KEY=""
-MEASUREMENT_STATE_REFRESHED_AT=""
-STATE_GPU_NODE_LINES=""
-STATE_GPU_NODE_NAMES=""
-STATE_GPU_NODE_COUNT="0"
-STATE_NODECLAIM_COUNT="0"
-STATE_DEPLOYMENT_READY_REPLICAS=""
-STATE_DEPLOYMENT_DESIRED_REPLICAS=""
-STATE_HPA_CURRENT_REPLICAS=""
-STATE_HPA_DESIRED_REPLICAS=""
-STATE_FIRST_POD_NAME=""
-STATE_FIRST_POD_PHASE=""
-STATE_FIRST_POD_NODE_NAME=""
-STATE_FIRST_POD_WAITING_REASON=""
-STATE_FIRST_POD_TERMINATED_REASON=""
-STATE_FIRST_POD_SCHEDULING_REASON=""
-STATE_LOAD_TEST_EXISTS="0"
-STATE_LOAD_TEST_ACTIVE=""
-STATE_LOAD_TEST_SUCCEEDED=""
-STATE_LOAD_TEST_FAILED=""
-STATE_LOAD_TEST_POD_NAME=""
-STATE_LOAD_TEST_POD_PHASE=""
-STATE_LOAD_TEST_POD_REASON=""
-STATE_NVIDIA_READY_COUNT=""
-STATE_NVIDIA_DESIRED_COUNT=""
-
-# Timeline checkpoints recorded for the report.
-EVENT_NAMES=(
-  start_time
-  first_pod_seen
-  first_nodeclaim_seen
-  first_gpu_node_seen
-  first_gpu_allocatable_seen
-  first_ready_seen
-  load_test_applied
-  hpa_scale_out_seen
-  second_nodeclaim_seen
-  second_gpu_node_seen
-  second_ready_seen
-  load_test_deleted
-  scale_in_ready_seen
-  scale_in_node_seen
-  inference_deleted
-  all_gpu_nodes_removed
-)
-TIMELINE_EVENT_LABELS=(
-  "Inference manifest applied"
-  "First serving pod created"
-  "First NodeClaim observed"
-  "First GPU node observed"
-  "GPU allocatable advertised on first node"
-  "First serving pod Ready"
-  "Load test applied"
-  "HPA desired replicas reached 2"
-  "Second NodeClaim observed"
-  "Second GPU node observed"
-  "Two serving replicas Ready"
-  "Load test removed"
-  "Deployment scaled back to one Ready replica"
-  "Extra GPU node removed"
-  "Inference manifest deleted"
-  "All GPU nodes removed"
-)
-
-# Shared globals are consumed by sourced measurement libraries.
-: "${SPINNER_FRAMES[*]}" "${WAIT_PROGRESS_FILE}" "${WAIT_SPINNER_PID}"
-: "${EVENT_NAMES[*]}" "${TIMELINE_EVENT_LABELS[*]}" "${LAST_PROGRESS_LOG_AT}"
-: "${CURRENT_MEASUREMENT_CACHE_KEY}" "${MEASUREMENT_STATE_REFRESHED_AT}"
-: "${STATE_GPU_NODE_LINES}" "${STATE_GPU_NODE_NAMES}" "${STATE_GPU_NODE_COUNT}" "${STATE_NODECLAIM_COUNT}"
-: "${STATE_DEPLOYMENT_READY_REPLICAS}" "${STATE_DEPLOYMENT_DESIRED_REPLICAS}" "${STATE_HPA_CURRENT_REPLICAS}" "${STATE_HPA_DESIRED_REPLICAS}"
-: "${STATE_FIRST_POD_NAME}" "${STATE_FIRST_POD_PHASE}" "${STATE_FIRST_POD_NODE_NAME}" "${STATE_FIRST_POD_WAITING_REASON}" "${STATE_FIRST_POD_TERMINATED_REASON}" "${STATE_FIRST_POD_SCHEDULING_REASON}"
-: "${STATE_LOAD_TEST_EXISTS}" "${STATE_LOAD_TEST_ACTIVE}" "${STATE_LOAD_TEST_SUCCEEDED}" "${STATE_LOAD_TEST_FAILED}" "${STATE_LOAD_TEST_POD_NAME}" "${STATE_LOAD_TEST_POD_PHASE}" "${STATE_LOAD_TEST_POD_REASON}"
-: "${STATE_NVIDIA_READY_COUNT}" "${STATE_NVIDIA_DESIRED_COUNT}"
-
 require_command kubectl
 
 usage() {
@@ -356,6 +278,7 @@ write_measurement_report_stage() {
 
 main() {
   parse_args "$@"
+  initialize_measurement_context
   install_measurement_cleanup_trap
   initialize_event_state
   prepare_measurement_run

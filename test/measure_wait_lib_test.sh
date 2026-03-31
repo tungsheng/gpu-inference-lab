@@ -21,8 +21,7 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" /bin/bash -c '
   STATE_REFRESH_INTERVAL_SECONDS=1
   API_HEALTHCHECK_INTERVAL_SECONDS=10
   SPINNER_INTERVAL_TENTHS=1
-  LAST_PROGRESS_LOG_AT=0
-  CURRENT_MEASUREMENT_CACHE_KEY=""
+  initialize_measurement_context
   COUNTER_FILE=$(mktemp "${TMPDIR:-/tmp}/measure-wait-counter.XXXXXX")
   CLOCK_FILE=$(mktemp "${TMPDIR:-/tmp}/measure-wait-clock.XXXXXX")
   printf "%s\n" "0" > "${COUNTER_FILE}"
@@ -80,8 +79,7 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" /bin/bash -c '
   STATE_REFRESH_INTERVAL_SECONDS=1
   API_HEALTHCHECK_INTERVAL_SECONDS=10
   SPINNER_INTERVAL_TENTHS=1
-  LAST_PROGRESS_LOG_AT=0
-  CURRENT_MEASUREMENT_CACHE_KEY=""
+  initialize_measurement_context
   CLOCK_FILE=$(mktemp "${TMPDIR:-/tmp}/measure-wait-clock.XXXXXX")
   cat > "${CLOCK_FILE}" <<EOF
 200

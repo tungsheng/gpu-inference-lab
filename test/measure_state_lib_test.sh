@@ -20,7 +20,8 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" TEST_TMPDIR="${TEST_TMPDIR}" /bin/b
   LOAD_TEST_JOB_NAME="gpu-load-test"
   NODEPOOL_NAME="gpu-serving"
   NVIDIA_DEVICE_PLUGIN_DAEMONSET_NAME="nvidia-device-plugin-daemonset"
-  CURRENT_MEASUREMENT_CACHE_KEY="42"
+  initialize_measurement_context
+  set_measurement_state_cache_key "42"
   first_gpu_node_name="gpu-a"
   KUBECTL_LOG="${TEST_TMPDIR}/kubectl.log"
   : > "${KUBECTL_LOG}"

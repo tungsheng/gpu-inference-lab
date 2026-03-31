@@ -2,6 +2,8 @@
 
 MEASURE_REPORT_LIB_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
+. "${MEASURE_REPORT_LIB_DIR}/measure-context.sh"
+# shellcheck disable=SC1091
 . "${MEASURE_REPORT_LIB_DIR}/json.sh"
 
 initialize_event_state() {

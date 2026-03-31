@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-# Shared with the measurement script's cached state collector.
-: "${CURRENT_MEASUREMENT_CACHE_KEY-}"
+MEASURE_WAIT_LIB_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${MEASURE_WAIT_LIB_DIR}/measure-context.sh"
 
 format_duration() {
   local total_seconds=${1:-0}
@@ -174,9 +175,8 @@ stop_wait_progress() {
   local spinner_pid=${WAIT_SPINNER_PID:-}
   local progress_file=${WAIT_PROGRESS_FILE:-}
 
-  WAIT_SPINNER_PID=""
-  WAIT_PROGRESS_FILE=""
-  CURRENT_MEASUREMENT_CACHE_KEY=""
+  reset_measurement_wait_state
+  clear_measurement_state_cache_key
 
   if [[ -n "${progress_file}" ]]; then
     rm -f "${progress_file}" 2>/dev/null || true
@@ -245,7 +245,6 @@ finish_wait_progress() {
   local observed_value=${3:-n/a}
 
   stop_wait_progress
-  LAST_PROGRESS_LOG_AT=0
   log_success "${description} | $(format_duration "${elapsed_seconds}") | ${observed_value}"
 }
 
@@ -255,7 +254,6 @@ fail_wait_progress() {
   local observed_value=${3:-n/a}
 
   stop_wait_progress
-  LAST_PROGRESS_LOG_AT=0
   log_error "${description} | ${failure_reason}"
   log_error "state | ${observed_value}"
 }
@@ -393,7 +391,7 @@ wait_for_condition() {
 
   while true; do
     loop_started_at=$(now_epoch)
-    CURRENT_MEASUREMENT_CACHE_KEY=${loop_started_at}
+    set_measurement_state_cache_key "${loop_started_at}"
 
     if ! capture_command_output value "${value_command}" "${value_arg}"; then
       fail_wait_progress "${description}" "value command failed: ${value_command}" "${observed_value:-waiting}"
