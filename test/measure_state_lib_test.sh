@@ -17,6 +17,8 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" TEST_TMPDIR="${TEST_TMPDIR}" /bin/b
 
   APP_NAMESPACE="app"
   DEPLOYMENT_NAME="vllm-openai"
+  GPU_INFERENCE_INGRESS_NAME="vllm-openai-ingress"
+  GPU_INFERENCE_EDGE_PATH="/v1/completions"
   LOAD_TEST_JOB_NAME="gpu-load-test"
   NODEPOOL_NAME="gpu-serving"
   NVIDIA_DEVICE_PLUGIN_DAEMONSET_NAME="nvidia-device-plugin-daemonset"
@@ -39,6 +41,9 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" TEST_TMPDIR="${TEST_TMPDIR}" /bin/b
     case "$*" in
       *"get deployment vllm-openai -n app"*)
         printf "%s\n" "1|2"
+        ;;
+      *"get ingress vllm-openai-ingress -n app"*)
+        printf "%s\n" "edge.example.com"
         ;;
       *"get hpa vllm-openai -n app"*)
         printf "%s\n" "1|2"
@@ -73,12 +78,16 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" TEST_TMPDIR="${TEST_TMPDIR}" /bin/b
   summary=$(serving_state_snapshot)
   load_summary=$(serving_and_load_state_snapshot)
   gpu_summary=$(first_gpu_capacity_snapshot)
+  edge_summary=$(edge_state_snapshot)
+  edge_url=$(inference_edge_url)
   ensure_measurement_state_current
   after_calls=$(wc -l < "${KUBECTL_LOG}" | tr -d " ")
 
   printf "summary=%s\n" "${summary}"
   printf "load_summary=%s\n" "${load_summary}"
   printf "gpu_summary=%s\n" "${gpu_summary}"
+  printf "edge_summary=%s\n" "${edge_summary}"
+  printf "edge_url=%s\n" "${edge_url}"
   printf "cache_calls=%s->%s\n" "${before_calls}" "${after_calls}"
 '
 
@@ -86,7 +95,9 @@ assert_status 0 "${COMMAND_STATUS}" "measure-state snapshot helpers should succe
 assert_contains "${COMMAND_OUTPUT}" "summary=pod Running (Unschedulable) on gpu-a | ready 1/2 | gpu 2 | claims 2 | hpa 1/2" "serving_state_snapshot should summarize cached state"
 assert_contains "${COMMAND_OUTPUT}" "load_summary=pod Running (Unschedulable) on gpu-a | ready 1/2 | gpu 2 | claims 2 | hpa 1/2 | load running" "serving_and_load_state_snapshot should include load state"
 assert_contains "${COMMAND_OUTPUT}" "gpu_summary=node gpu-a | alloc 1 | plugin 2/2 | pod Running (Unschedulable) on gpu-a | ready 1/2 | gpu 2 | claims 2 | hpa 1/2" "first_gpu_capacity_snapshot should include node and plugin details"
-assert_contains "${COMMAND_OUTPUT}" "cache_calls=8->8" "ensure_measurement_state_current should reuse the cached snapshot for the same key"
+assert_contains "${COMMAND_OUTPUT}" "edge_summary=edge http://edge.example.com/v1/completions | pod Running (Unschedulable) on gpu-a | ready 1/2 | gpu 2 | claims 2 | hpa 1/2" "edge_state_snapshot should include the public inference URL"
+assert_contains "${COMMAND_OUTPUT}" "edge_url=http://edge.example.com/v1/completions" "inference_edge_url should render the public inference URL"
+assert_contains "${COMMAND_OUTPUT}" "cache_calls=9->9" "ensure_measurement_state_current should reuse the cached snapshot for the same key"
 
 # shellcheck disable=SC2016
 run_and_capture env REPO_ROOT="${REPO_ROOT}" /bin/bash -c '

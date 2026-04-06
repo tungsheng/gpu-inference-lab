@@ -91,6 +91,12 @@ write_stub kubectl \
 '  "get daemonset nvidia-device-plugin-daemonset -n kube-system")' \
 '    printf "%s\n" "daemonset.apps/nvidia-device-plugin-daemonset"' \
 '    ;;' \
+'  "get service vllm-openai -n app")' \
+'    printf "%s\n" "service/vllm-openai"' \
+'    ;;' \
+'  "get ingress vllm-openai-ingress -n app")' \
+'    printf "%s\n" "ingress.networking.k8s.io/vllm-openai-ingress"' \
+'    ;;' \
 '  "get nodes -o name")' \
 '    printf "%s\n" "node/cpu-1" "node/gpu-1"' \
 '    ;;' \
@@ -104,13 +110,19 @@ write_stub kubectl \
 '    printf "%s\n" "deployment.apps/echo" "deployment.apps/vllm-openai"' \
 '    ;;' \
 '  "get service -o name -n app")' \
-'    printf "%s\n" "service/echo"' \
+'    printf "%s\n" "service/echo" "service/vllm-openai"' \
 '    ;;' \
 '  "get ingress -o name -n app")' \
-'    printf "%s\n" "ingress.networking.k8s.io/echo-ingress"' \
+'    printf "%s\n" "ingress.networking.k8s.io/echo-ingress" "ingress.networking.k8s.io/vllm-openai-ingress"' \
 '    ;;' \
 '  "get hpa -o name -n app")' \
-'    printf "%s\n" "horizontalpodautoscaler.autoscaling/echo"' \
+'    printf "%s\n" "horizontalpodautoscaler.autoscaling/vllm-openai"' \
+'    ;;' \
+'  "get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}")' \
+'    printf "%s\n" "public-edge.example.com"' \
+'    ;;' \
+'  "get ingress echo-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}")' \
+'    printf "%s\n" "public-edge.example.com"' \
 '    ;;' \
 '  "get nodes -L workload,node.kubernetes.io/instance-type -o wide")' \
 '    printf "%s\n" "NAME STATUS" "gpu-1 Ready"' \
@@ -151,11 +163,13 @@ assert_contains "${COMMAND_OUTPUT}" '"ok": true' "doctor JSON should report succ
 assert_contains "${COMMAND_OUTPUT}" '"summary": "environment ready for measurements"' "doctor JSON should include a readable summary"
 assert_contains "${COMMAND_OUTPUT}" '"cluster_name": "gpu-inference"' "doctor JSON should include the Terraform cluster name"
 assert_contains "${COMMAND_OUTPUT}" '"nvidia_device_plugin": true' "doctor JSON should include platform readiness details"
+assert_contains "${COMMAND_OUTPUT}" '"inference_ingress": true' "doctor JSON should include the inference edge readiness"
 
 run_and_capture env "${TEST_ENV[@]}" /bin/bash "${REPO_ROOT}/scripts/dev" status
 assert_status 0 "${COMMAND_STATUS}" "status should succeed when the cluster is reachable"
 assert_contains "${COMMAND_OUTPUT}" 'measurement readiness: yes' "status should surface measurement readiness in text output"
 assert_contains "${COMMAND_OUTPUT}" 'nodes: 2' "status should include node counts in text output"
+assert_contains "${COMMAND_OUTPUT}" 'public inference URL: http://public-edge.example.com/v1/completions' "status should surface the public inference URL"
 
 run_and_capture env "${TEST_ENV[@]}" /bin/bash "${REPO_ROOT}/scripts/dev" status --json
 assert_status 0 "${COMMAND_STATUS}" "status --json should succeed when the cluster is reachable"
@@ -163,6 +177,9 @@ assert_contains "${COMMAND_OUTPUT}" '"ok": true' "status JSON should report clus
 assert_contains "${COMMAND_OUTPUT}" '"ready_for_measurement": true' "status JSON should include measurement readiness"
 assert_contains "${COMMAND_OUTPUT}" '"nodes": 2' "status JSON should include node counts"
 assert_contains "${COMMAND_OUTPUT}" '"app_deployments": 2' "status JSON should include app deployment counts"
+assert_contains "${COMMAND_OUTPUT}" '"app_services": 2' "status JSON should include both the sample app and inference service"
+assert_contains "${COMMAND_OUTPUT}" '"app_ingresses": 2' "status JSON should include both public ingresses"
+assert_contains "${COMMAND_OUTPUT}" '"url": "http://public-edge.example.com/v1/completions"' "status JSON should include the public inference URL"
 
 run_and_capture env "${TEST_ENV[@]}" /bin/bash "${REPO_ROOT}/scripts/dev" status --json --verbose
 assert_status 1 "${COMMAND_STATUS}" "status should reject combining JSON and verbose modes"

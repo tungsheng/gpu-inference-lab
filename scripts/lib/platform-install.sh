@@ -208,6 +208,11 @@ install_test_app() {
   run_step "applying test app ingress" retry_command 5 5 kubectl apply -f "${TEST_APP_INGRESS_MANIFEST}"
 }
 
+install_inference_edge() {
+  run_step "applying inference service" retry_command 5 5 kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}"
+  run_step "applying inference ingress" retry_command 5 5 kubectl apply -f "${GPU_INFERENCE_INGRESS_MANIFEST}"
+}
+
 run_post_apply_flow() {
   install_aws_load_balancer_controller
   run_step "installing metrics server" install_metrics_server
@@ -215,5 +220,6 @@ run_post_apply_flow() {
   run_step "installing NVIDIA device plugin" retry_command 5 5 kubectl apply -f "${NVIDIA_DEVICE_PLUGIN_MANIFEST_PATH}"
   run_step "waiting for NVIDIA device plugin rollout" kubectl rollout status "daemonset/${NVIDIA_DEVICE_PLUGIN_DAEMONSET_NAME}" -n kube-system --timeout=10m
   run_step "ensuring app namespace exists" ensure_namespace "${APP_NAMESPACE}"
+  install_inference_edge
   install_test_app
 }

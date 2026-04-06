@@ -40,7 +40,8 @@ What `./scripts/dev up` does:
 5. Installs Karpenter and applies the GPU `EC2NodeClass`/`NodePool`
 6. Applies the NVIDIA device plugin
 7. Ensures the `app` namespace exists
-8. Applies the sample ALB-backed echo app
+8. Applies the dedicated inference service and public ingress
+9. Applies the sample ALB-backed echo app
 
 The apply helper is intentionally strict. It still rejects `-target`,
 `-refresh-only`, and `-destroy` so it does not run the post-apply Kubernetes
@@ -61,6 +62,7 @@ Expected result:
 - system nodes are present
 - Karpenter is Ready
 - the ALB ingress is present
+- the public inference edge is present
 - there are zero GPU worker nodes until a GPU pod is applied
 
 ## Run the milestone flow
@@ -71,7 +73,8 @@ The easiest end-to-end validation is:
 ./scripts/dev measure
 ```
 
-That script applies the real vLLM serving manifest, runs the checked-in load
+That script applies the real vLLM serving manifest, waits for the first
+successful external completion through the public edge, runs the checked-in load
 test, waits for scale-out and scale-down, and writes a Markdown report to
 `/tmp/` unless you pass a different output path.
 
@@ -115,6 +118,15 @@ kubectl get pods -n app -w
 kubectl delete -f platform/inference/vllm-openai.yaml
 ```
 
+Public inference edge:
+
+```bash
+EDGE_HOST=$(kubectl get ingress vllm-openai-ingress -n app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+curl "http://${EDGE_HOST}/v1/completions" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen2.5-0.5b","prompt":"Hello from the public edge.","max_tokens":32,"temperature":0}'
+```
+
 ## Destroy Infra + Platform
 
 Destroy the environment with:
@@ -131,8 +143,8 @@ Common variant:
 
 The destroy helper:
 
-1. Deletes the sample ingress so the ALB can be removed cleanly
-2. Deletes the sample app workload
+1. Deletes the inference ingress and sample ingress so the ALB can be removed cleanly
+2. Deletes the inference service and sample app workload
 3. Deletes the GPU smoke test, load test, and inference workload if present
 4. Deletes the Karpenter `NodePool`/`EC2NodeClass`
 5. Waits for Karpenter-managed GPU nodes to terminate

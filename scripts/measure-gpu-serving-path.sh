@@ -38,6 +38,7 @@ WAIT_TIMEOUT_QUICK_SECONDS=${WAIT_TIMEOUT_QUICK_SECONDS:-300}
 WAIT_TIMEOUT_STANDARD_SECONDS=${WAIT_TIMEOUT_STANDARD_SECONDS:-480}
 WAIT_TIMEOUT_SCALE_SECONDS=${WAIT_TIMEOUT_SCALE_SECONDS:-720}
 WAIT_TIMEOUT_SCALE_DOWN_SECONDS=${WAIT_TIMEOUT_SCALE_DOWN_SECONDS:-900}
+EXTERNAL_INFERENCE_REQUEST_TIMEOUT_SECONDS=${EXTERNAL_INFERENCE_REQUEST_TIMEOUT_SECONDS:-180}
 DISABLE_SPINNER=${DISABLE_SPINNER:-0}
 REPORT_PATH=""
 JSON_REPORT_PATH=${JSON_REPORT_PATH:-""}
@@ -45,6 +46,7 @@ REPORT_PATH_DEFAULT="/tmp/gpu-serving-report-$(date +%Y%m%d-%H%M%S).md"
 
 TOTAL_STAGES=8
 require_command kubectl
+require_command curl
 
 usage() {
   cat <<EOF
@@ -163,13 +165,42 @@ log_stage() {
   log_section "stage ${stage_number}/${TOTAL_STAGES}: ${stage_name}"
 }
 
+external_inference_completion() {
+  local target_url
+  local response_code
+
+  target_url=$(inference_edge_url)
+  if [[ -z "${target_url}" ]]; then
+    return 0
+  fi
+
+  response_code=$(curl -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout 10 \
+    --max-time "${EXTERNAL_INFERENCE_REQUEST_TIMEOUT_SECONDS}" \
+    -H 'Content-Type: application/json' \
+    -X POST \
+    --data '{"model":"qwen2.5-0.5b","prompt":"Say hello from the external inference edge.","max_tokens":32,"temperature":0}' \
+    "${target_url}" || true)
+
+  if [[ "${response_code}" == "200" ]]; then
+    printf '%s\n' "${target_url}"
+  fi
+}
+
 prepare_measurement_run() {
   cleanup_existing_workloads
 
   log_stage 2 "verify cluster prerequisites for the dynamic GPU path"
   verify_prerequisites
   ensure_namespace "${APP_NAMESPACE}"
+  log "ensuring the inference service and ingress edge are present"
+  apply_manifest_quiet "${GPU_INFERENCE_SERVICE_MANIFEST}"
+  apply_manifest_quiet "${GPU_INFERENCE_INGRESS_MANIFEST}"
   record_event start_time
+
+  log "waiting for the inference ingress hostname to appear"
+  wait_for_value "the inference ingress hostname to appear" "${WAIT_TIMEOUT_STANDARD_SECONDS}" inference_ingress_hostname edge_state_snapshot >/dev/null
+  record_event edge_hostname_seen
 }
 
 measure_first_cold_start() {
@@ -202,6 +233,10 @@ measure_first_cold_start() {
   log "waiting for the first vLLM replica to become Ready"
   wait_for_numeric_at_least "the first Ready serving replica" "${WAIT_TIMEOUT_SCALE_SECONDS}" 1 deployment_ready_replicas serving_state_snapshot fatal_serving_state >/dev/null
   record_event first_ready_seen
+
+  log "waiting for the first successful external completion through the public edge"
+  wait_for_value "the first successful external completion" "${WAIT_TIMEOUT_SCALE_SECONDS}" external_inference_completion edge_state_snapshot fatal_serving_state >/dev/null
+  record_event first_external_completion_seen
 }
 
 confirm_steady_state_before_scale_out() {

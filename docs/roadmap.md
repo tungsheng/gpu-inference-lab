@@ -87,28 +87,39 @@ Deliverables:
 - measured cold-start and scale-down workflow
 - cost note comparing fixed and dynamic GPU baselines
 
+### Milestone 7 - External inference edge
+
+Status: implemented.
+
+Deliverables:
+
+- dedicated `vllm-openai` service and ingress manifests
+- shared public ALB path for `/v1` inference traffic
+- public endpoint reporting in `doctor`, `status`, and the measurement report
+- first-successful-external-completion timing in the measurement flow
+
 ## Planned next milestones
 
-### Milestone 7 - Spot and on-demand GPU strategy
+### Milestone 8 - Spot and on-demand GPU strategy
 
 Status: planned.
 
-### Milestone 8 - AZ distribution
+### Milestone 9 - AZ distribution
 
 Status: planned.
 
-### Milestone 9 - GPU bin packing
+### Milestone 10 - GPU bin packing
 
 Status: planned.
 
-### Milestone 10 - Warm GPU pools
+### Milestone 11 - Warm GPU pools
 
 Status: planned.
 
-### Milestone 11 - Observability
+### Milestone 12 - Observability
 
 Status: planned.
 
-### Milestone 12 - Production hardening
+### Milestone 13 - Production hardening
 
 Status: planned.

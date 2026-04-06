@@ -8,6 +8,7 @@ readonly DOCTOR_REQUIRED_CHECKS=(
   DOCTOR_CMD_AWS_OK
   DOCTOR_CMD_KUBECTL_OK
   DOCTOR_CMD_HELM_OK
+  DOCTOR_CMD_CURL_OK
   DOCTOR_CLUSTER_NAME_OK
   DOCTOR_AWS_REGION_OK
   DOCTOR_CLUSTER_REACHABLE
@@ -20,6 +21,8 @@ readonly DOCTOR_REQUIRED_CHECKS=(
   DOCTOR_GPU_NODEPOOL_OK
   DOCTOR_GPU_NODECLASS_OK
   DOCTOR_NVIDIA_DEVICE_PLUGIN_OK
+  DOCTOR_INFERENCE_SERVICE_OK
+  DOCTOR_INFERENCE_INGRESS_OK
 )
 
 command_available() {
@@ -83,6 +86,7 @@ collect_doctor_state() {
   DOCTOR_CMD_AWS_OK=$(check_result command_available aws)
   DOCTOR_CMD_KUBECTL_OK=$(check_result command_available kubectl)
   DOCTOR_CMD_HELM_OK=$(check_result command_available helm)
+  DOCTOR_CMD_CURL_OK=$(check_result command_available curl)
 
   if [[ "${DOCTOR_TF_DIR_OK}" == "1" && "${DOCTOR_CMD_TERRAFORM_OK}" == "1" ]]; then
     DOCTOR_CLUSTER_NAME=$(terraform_output_optional "${TF_DIR}" cluster_name)
@@ -106,6 +110,8 @@ collect_doctor_state() {
     DOCTOR_GPU_NODEPOOL_OK=$(check_result resource_exists nodepool "${KARPENTER_NODEPOOL_NAME}")
     DOCTOR_GPU_NODECLASS_OK=$(check_result resource_exists ec2nodeclass "${KARPENTER_NODECLASS_NAME}")
     DOCTOR_NVIDIA_DEVICE_PLUGIN_OK=$(check_result resource_exists daemonset "${NVIDIA_DEVICE_PLUGIN_DAEMONSET_NAME}" kube-system)
+    DOCTOR_INFERENCE_SERVICE_OK=$(check_result resource_exists service "${GPU_INFERENCE_SERVICE_NAME}" "${APP_NAMESPACE}")
+    DOCTOR_INFERENCE_INGRESS_OK=$(check_result resource_exists ingress "${GPU_INFERENCE_INGRESS_NAME}" "${APP_NAMESPACE}")
   fi
 
   DOCTOR_PASSED_CHECKS=$(count_true_checks "${DOCTOR_REQUIRED_CHECKS[@]}")
@@ -120,6 +126,11 @@ doctor_summary() {
 
   if [[ "${DOCTOR_CMD_KUBECTL_OK:-}" == "0" ]]; then
     printf 'kubectl is unavailable on this machine'
+    return 0
+  fi
+
+  if [[ "${DOCTOR_CMD_CURL_OK:-}" == "0" ]]; then
+    printf 'curl is unavailable on this machine'
     return 0
   fi
 
@@ -139,6 +150,8 @@ reset_status_state() {
   STATUS_APP_SERVICE_COUNT=""
   STATUS_APP_INGRESS_COUNT=""
   STATUS_APP_HPA_COUNT=""
+  STATUS_PUBLIC_EDGE_HOSTNAME=""
+  STATUS_PUBLIC_EDGE_URL=""
   STATUS_OK=0
 }
 
@@ -155,6 +168,15 @@ collect_status_state() {
   STATUS_APP_SERVICE_COUNT=$(kubectl_name_count service "${APP_NAMESPACE}")
   STATUS_APP_INGRESS_COUNT=$(kubectl_name_count ingress "${APP_NAMESPACE}")
   STATUS_APP_HPA_COUNT=$(kubectl_name_count hpa "${APP_NAMESPACE}")
+  STATUS_PUBLIC_EDGE_HOSTNAME=$(ingress_hostname "${GPU_INFERENCE_INGRESS_NAME}" "${APP_NAMESPACE}")
+
+  if [[ -z "${STATUS_PUBLIC_EDGE_HOSTNAME}" ]]; then
+    STATUS_PUBLIC_EDGE_HOSTNAME=$(ingress_hostname "${TEST_APP_INGRESS_NAME}" "${APP_NAMESPACE}")
+  fi
+
+  if [[ -n "${STATUS_PUBLIC_EDGE_HOSTNAME}" ]]; then
+    STATUS_PUBLIC_EDGE_URL="http://${STATUS_PUBLIC_EDGE_HOSTNAME}${GPU_INFERENCE_EDGE_PATH}"
+  fi
 
   if api_resource_exists "nodepools.karpenter.sh"; then
     STATUS_NODEPOOL_COUNT=$(kubectl_name_count nodepools)

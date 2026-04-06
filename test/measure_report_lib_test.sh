@@ -27,11 +27,14 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" REPORT_PATH="${REPORT_PATH}" JSON_R
   POLL_INTERVAL_SECONDS=2
   REPORT_PATH=${REPORT_PATH}
   JSON_REPORT_PATH=${JSON_REPORT_PATH}
+  inference_edge_url() { printf "%s\n" "http://public-edge.example.com/v1/completions"; }
 
-  EVENT_NAMES=(start_time first_ready_seen second_ready_seen load_test_applied load_test_deleted scale_in_node_seen inference_deleted all_gpu_nodes_removed)
+  EVENT_NAMES=(start_time edge_hostname_seen first_ready_seen first_external_completion_seen second_ready_seen load_test_applied load_test_deleted scale_in_node_seen inference_deleted all_gpu_nodes_removed)
   TIMELINE_EVENT_LABELS=(
     "Inference manifest applied"
+    "Inference edge hostname available"
     "First serving pod Ready"
+    "First successful external completion"
     "Two serving replicas Ready"
     "Load test applied"
     "Load test removed"
@@ -43,8 +46,12 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" REPORT_PATH="${REPORT_PATH}" JSON_R
   initialize_event_state
   start_time=100
   start_time_human="2026-03-30T07:00:00Z"
+  edge_hostname_seen=120
+  edge_hostname_seen_human="2026-03-30T07:00:20Z"
   first_ready_seen=160
   first_ready_seen_human="2026-03-30T07:01:00Z"
+  first_external_completion_seen=170
+  first_external_completion_seen_human="2026-03-30T07:01:10Z"
   load_test_applied=220
   load_test_applied_human="2026-03-30T07:02:00Z"
   second_ready_seen=340
@@ -67,9 +74,12 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" REPORT_PATH="${REPORT_PATH}" JSON_R
 assert_status 0 "${COMMAND_STATUS}" "measure report helper should render a report"
 assert_contains "${COMMAND_OUTPUT}" "# Dynamic GPU Serving Report" "report should include the main title"
 assert_contains "${COMMAND_OUTPUT}" "- Namespace: app" "report should include the namespace"
+assert_contains "${COMMAND_OUTPUT}" "- Public endpoint: http://public-edge.example.com/v1/completions" "report should include the public endpoint"
 assert_contains "${COMMAND_OUTPUT}" "| First serving pod Ready | 2026-03-30T07:01:00Z | 60s |" "timeline rows should include computed deltas"
 assert_contains "${COMMAND_OUTPUT}" "- Cold start to first Ready replica: 60s" "summary should include cold-start duration"
+assert_contains "${COMMAND_OUTPUT}" "- Cold start to first successful external completion: 70s" "summary should include the first external completion timing"
 assert_contains "${COMMAND_OUTPUT}" "- Full scale-down to zero GPU nodes after inference deletion: 240s" "summary should include scale-down duration"
 assert_contains "${COMMAND_OUTPUT}" "---JSON---" "report helper should also emit the JSON artifact when requested"
 assert_contains "${COMMAND_OUTPUT}" "\"generated_at\": \"2026-03-30T07:00:00Z\"" "JSON report should include generation metadata"
 assert_contains "${COMMAND_OUTPUT}" "\"cold_start_ready_seconds\": 60" "JSON report should expose numeric summary durations"
+assert_contains "${COMMAND_OUTPUT}" "\"cold_start_external_success_seconds\": 70" "JSON report should include the first external completion timing"

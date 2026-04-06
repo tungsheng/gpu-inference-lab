@@ -35,6 +35,14 @@ kubectl_name_count() {
   kubectl "${args[@]}" 2>/dev/null | sed '/^$/d' | wc -l | tr -d ' '
 }
 
+ingress_hostname() {
+  local ingress_name=$1
+  local ingress_namespace=$2
+
+  kubectl get ingress "${ingress_name}" -n "${ingress_namespace}" \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true
+}
+
 wait_for_status_condition() {
   local resource_kind=$1
   local resource_name=$2

@@ -169,6 +169,15 @@ render_timeline_json_rows() {
 }
 
 render_markdown_report() {
+  local public_edge_url="n/a"
+
+  if declare -F inference_edge_url >/dev/null 2>&1; then
+    public_edge_url=$(inference_edge_url)
+    if [[ -z "${public_edge_url}" ]]; then
+      public_edge_url="n/a"
+    fi
+  fi
+
   mkdir -p "$(dirname "${REPORT_PATH}")"
 
   cat > "${REPORT_PATH}" <<EOF
@@ -179,6 +188,7 @@ render_markdown_report() {
 - Deployment: ${DEPLOYMENT_NAME}
 - NodeClass: ${NODECLASS_NAME}
 - NodePool: ${NODEPOOL_NAME}
+- Public endpoint: ${public_edge_url}
 - Poll interval: ${POLL_INTERVAL_SECONDS}s
 
 ## Timeline
@@ -190,6 +200,7 @@ $(render_timeline_rows)
 ## Summary
 
 - Cold start to first Ready replica: $(seconds_since_start "${first_ready_seen:-}")
+- Cold start to first successful external completion: $(seconds_since_start "${first_external_completion_seen:-}")
 - Load-triggered scale-out to two Ready replicas: $(seconds_between "${load_test_applied:-}" "${second_ready_seen:-}")
 - Scale-down after load removal to one GPU node: $(seconds_between "${load_test_deleted:-}" "${scale_in_node_seen:-}")
 - Full scale-down to zero GPU nodes after inference deletion: $(seconds_between "${inference_deleted:-}" "${all_gpu_nodes_removed:-}")
@@ -201,8 +212,14 @@ EOF
 }
 
 render_json_report() {
+  local public_edge_url=""
+
   if [[ -z "${JSON_REPORT_PATH:-}" ]]; then
     return 0
+  fi
+
+  if declare -F inference_edge_url >/dev/null 2>&1; then
+    public_edge_url=$(inference_edge_url)
   fi
 
   mkdir -p "$(dirname "${JSON_REPORT_PATH}")"
@@ -214,12 +231,14 @@ render_json_report() {
   "deployment": $(json_string "${DEPLOYMENT_NAME}"),
   "nodeclass": $(json_string "${NODECLASS_NAME}"),
   "nodepool": $(json_string "${NODEPOOL_NAME}"),
+  "public_endpoint": $(json_nullable_string "${public_edge_url}"),
   "poll_interval_seconds": $(json_nullable_number "${POLL_INTERVAL_SECONDS}"),
   "timeline": [
 $(render_timeline_json_rows)
   ],
   "summary": {
     "cold_start_ready_seconds": $(json_nullable_number "$(seconds_since_start_value "${first_ready_seen:-}")"),
+    "cold_start_external_success_seconds": $(json_nullable_number "$(seconds_since_start_value "${first_external_completion_seen:-}")"),
     "scale_out_ready_seconds": $(json_nullable_number "$(seconds_between_value "${load_test_applied:-}" "${second_ready_seen:-}")"),
     "scale_down_to_one_gpu_node_seconds": $(json_nullable_number "$(seconds_between_value "${load_test_deleted:-}" "${scale_in_node_seen:-}")"),
     "scale_down_to_zero_gpu_nodes_seconds": $(json_nullable_number "$(seconds_between_value "${inference_deleted:-}" "${all_gpu_nodes_removed:-}")")

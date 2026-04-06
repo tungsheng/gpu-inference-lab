@@ -29,7 +29,7 @@ the GPU line item.
 
 ## Fixed vs dynamic note
 
-Use the measurement report from `./scripts/measure-gpu-serving-path.sh` to plug
+Use the measurement report from `./scripts/dev measure` to plug
 in the actual active GPU time for your run.
 
 Worked example if Karpenter lands on `g4dn.xlarge` and the service is active
@@ -48,7 +48,7 @@ latency because the first GPU node has to be launched and initialized.
 
 ## Next cost milestone
 
-Milestone 7 should add a mixed provisioning strategy:
+Milestone 8 should add a mixed provisioning strategy:
 
 - `gpu-spot` for cheaper interruptible capacity
 - `gpu-ondemand` for fallback and baseline reliability

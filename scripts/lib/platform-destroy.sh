@@ -43,17 +43,34 @@ wait_for_alb_deletion() {
   done
 }
 
+resolve_public_edge_hostname() {
+  local hostname
+
+  hostname=$(kubectl get ingress "${GPU_INFERENCE_INGRESS_NAME}" -n "${APP_NAMESPACE}" \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+  if [[ -n "${hostname}" ]]; then
+    printf '%s\n' "${hostname}"
+    return 0
+  fi
+
+  kubectl get ingress "${TEST_APP_INGRESS_NAME}" -n "${APP_NAMESPACE}" \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true
+}
+
 delete_test_app() {
   local ingress_hostname=$1
   local aws_region=$2
 
+  run_step "deleting inference ingress" kubectl delete -f "${GPU_INFERENCE_INGRESS_MANIFEST}" --ignore-not-found=true
   run_step "deleting test app ingress" kubectl delete -f "${TEST_APP_INGRESS_MANIFEST}" --ignore-not-found=true
+  run_step "waiting for inference ingress deletion" wait_for_resource_deletion ingress "${GPU_INFERENCE_INGRESS_NAME}" "${APP_NAMESPACE}" 600
   run_step "waiting for test app ingress deletion" wait_for_resource_deletion ingress "${TEST_APP_INGRESS_NAME}" "${APP_NAMESPACE}" 600
 
   if [[ -n "${ingress_hostname}" ]]; then
     run_step "waiting for ALB deletion" wait_for_alb_deletion "${ingress_hostname}" "${aws_region}" 900
   fi
 
+  run_step "deleting inference service" kubectl delete -f "${GPU_INFERENCE_SERVICE_MANIFEST}" --ignore-not-found=true
   run_step "deleting test app service" kubectl delete -f "${TEST_APP_SERVICE_MANIFEST}" --ignore-not-found=true
   run_step "deleting test app deployment" kubectl delete -f "${TEST_APP_DEPLOYMENT_MANIFEST}" --ignore-not-found=true
 }
@@ -152,7 +169,7 @@ delete_aws_load_balancer_controller() {
 run_destroy_cleanup_flow() {
   local ingress_hostname
 
-  ingress_hostname=$(kubectl get ingress "${TEST_APP_INGRESS_NAME}" -n "${APP_NAMESPACE}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+  ingress_hostname=$(resolve_public_edge_hostname)
 
   delete_test_app "${ingress_hostname}" "${CLUSTER_CONTEXT_AWS_REGION}"
   delete_gpu_workloads

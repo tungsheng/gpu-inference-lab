@@ -5,11 +5,13 @@
 SPINNER_FRAMES=("/" "-" "\\" "|")
 EVENT_NAMES=(
   start_time
+  edge_hostname_seen
   first_pod_seen
   first_nodeclaim_seen
   first_gpu_node_seen
   first_gpu_allocatable_seen
   first_ready_seen
+  first_external_completion_seen
   load_test_applied
   hpa_scale_out_seen
   second_nodeclaim_seen
@@ -23,11 +25,13 @@ EVENT_NAMES=(
 )
 TIMELINE_EVENT_LABELS=(
   "Inference manifest applied"
+  "Inference edge hostname available"
   "First serving pod created"
   "First NodeClaim observed"
   "First GPU node observed"
   "GPU allocatable advertised on first node"
   "First serving pod Ready"
+  "First successful external completion"
   "Load test applied"
   "HPA desired replicas reached 2"
   "Second NodeClaim observed"
@@ -54,6 +58,7 @@ reset_measurement_node_tracking() {
 reset_measurement_state_snapshot() {
   MEASUREMENT_STATE_CACHE_KEY=""
   MEASUREMENT_STATE_REFRESHED_AT=""
+  STATE_INFERENCE_INGRESS_HOSTNAME=""
   STATE_GPU_NODE_LINES=""
   STATE_GPU_NODE_NAMES=""
   STATE_GPU_NODE_COUNT="0"

@@ -26,14 +26,14 @@ Milestones completed so far:
 - Milestone 4: Karpenter control-plane integration
 - Milestone 5: GPU runtime prerequisites
 - Milestone 6: dynamic GPU serving path
+- Milestone 7: external inference edge
 
-Milestone 6 adds:
+Milestone 7 adds:
 
-- a Karpenter-managed GPU `EC2NodeClass` and `NodePool`
-- a real vLLM inference deployment
-- an HPA and checked-in load test for scale-out
-- a measurement script for cold start, scheduling, and scale-down timing
-- a cost note comparing fixed GPU capacity with dynamic GPU capacity
+- a shared public ALB edge for both the sample app and the real inference path
+- a dedicated `vllm-openai` service and ingress that exist before GPU pods are launched
+- external-endpoint reporting in `doctor`, `status`, and the measurement report
+- first-successful-external-completion timing in the measurement flow
 
 ## Architecture At A Glance
 
@@ -43,12 +43,9 @@ Internet
    v
 ALB
    |
-   v
-Ingress
+   +--> /        -> sample echo app on managed CPU nodes
    |
-   +--> sample echo app on managed CPU nodes
-   |
-   +--> vLLM on Karpenter GPU nodes
+   +--> /v1/...  -> vLLM on Karpenter GPU nodes
 
 EKS cluster
    |
@@ -67,6 +64,8 @@ EKS cluster
 - `infra/modules/`: reusable Terraform modules
 - `platform/karpenter/`: GPU `EC2NodeClass`, `NodePool`, and service account
 - `platform/inference/`: real vLLM serving manifest
+- `platform/inference/service.yaml`: stable `ClusterIP` service for the public inference edge
+- `platform/inference/ingress.yaml`: ALB-backed ingress for `/v1` inference traffic
 - `platform/system/`: cluster-level runtime manifests such as the NVIDIA device plugin
 - `platform/test-app/`: sample ALB-backed echo app
 - `platform/tests/`: smoke test and load test manifests
@@ -103,6 +102,7 @@ Expected post-apply state:
 - the GPU `NodePool` exists
 - the NVIDIA device plugin is installed
 - the sample ingress app is present
+- the public inference edge is present
 - **GPU worker node count is still zero**
 
 That last point is intentional. `./scripts/dev up` makes the cluster
@@ -184,10 +184,11 @@ kubectl delete -f platform/inference/vllm-openai.yaml
 
 - `./scripts/dev up`
   Applies Terraform, updates kubeconfig, installs controllers, applies the GPU
-  `EC2NodeClass` and `NodePool`, and deploys the sample echo app.
+  `EC2NodeClass` and `NodePool`, installs the public inference edge, and deploys the sample echo app.
 - `./scripts/dev measure`
-  Applies the vLLM workload, drives load, records scale-up and scale-down
-  milestones, and writes a Markdown report with an optional JSON artifact.
+  Applies the vLLM workload, drives load, records scale-up, first external
+  completion, and scale-down milestones, and writes a Markdown report with an
+  optional JSON artifact.
 - `./scripts/dev down`
   Removes Kubernetes-side resources in teardown-safe order, then destroys the
   Terraform-managed infrastructure.

@@ -57,7 +57,7 @@ Behavior:
 
 Script:
 
-- `scripts/measure-gpu-serving-path.sh`
+- `./scripts/dev measure`
 
 Outputs:
 
@@ -75,14 +75,14 @@ Outputs:
 
 ```bash
 terraform -chdir=infra/env/dev init
-./scripts/apply-dev.sh
-./scripts/measure-gpu-serving-path.sh
+./scripts/dev up
+./scripts/dev measure
 ```
 
 Optional custom report path:
 
 ```bash
-./scripts/measure-gpu-serving-path.sh docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
+./scripts/dev measure --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
 ```
 
 ## What success looks like

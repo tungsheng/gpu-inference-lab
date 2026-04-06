@@ -55,6 +55,7 @@ render_doctor_text() {
   render_required_check "aws" "${DOCTOR_CMD_AWS_OK}" "installed" "missing from PATH"
   render_required_check "kubectl" "${DOCTOR_CMD_KUBECTL_OK}" "installed" "missing from PATH"
   render_required_check "helm" "${DOCTOR_CMD_HELM_OK}" "installed" "missing from PATH"
+  render_required_check "curl" "${DOCTOR_CMD_CURL_OK}" "installed" "missing from PATH"
 
   log_section "checking Terraform context"
   render_required_check "cluster name" "${DOCTOR_CLUSTER_NAME_OK}" "${DOCTOR_CLUSTER_NAME}" "Terraform output unavailable"
@@ -73,6 +74,8 @@ render_doctor_text() {
   render_required_check "GPU NodePool" "${DOCTOR_GPU_NODEPOOL_OK}" "present" "missing"
   render_required_check "GPU EC2NodeClass" "${DOCTOR_GPU_NODECLASS_OK}" "present" "missing"
   render_required_check "NVIDIA device plugin" "${DOCTOR_NVIDIA_DEVICE_PLUGIN_OK}" "present" "missing"
+  render_required_check "inference service" "${DOCTOR_INFERENCE_SERVICE_OK}" "present" "missing"
+  render_required_check "inference ingress" "${DOCTOR_INFERENCE_INGRESS_OK}" "present" "missing"
 
   log_section "doctor summary"
   if [[ "${DOCTOR_READY}" == "1" ]]; then
@@ -104,7 +107,8 @@ render_doctor_json() {
     "terraform": $(json_nullable_bool "${DOCTOR_CMD_TERRAFORM_OK}"),
     "aws": $(json_nullable_bool "${DOCTOR_CMD_AWS_OK}"),
     "kubectl": $(json_nullable_bool "${DOCTOR_CMD_KUBECTL_OK}"),
-    "helm": $(json_nullable_bool "${DOCTOR_CMD_HELM_OK}")
+    "helm": $(json_nullable_bool "${DOCTOR_CMD_HELM_OK}"),
+    "curl": $(json_nullable_bool "${DOCTOR_CMD_CURL_OK}")
   },
   "kubernetes": {
     "reachable": $(json_nullable_bool "${DOCTOR_CLUSTER_REACHABLE}")
@@ -118,7 +122,9 @@ render_doctor_json() {
     "ec2nodeclass_crd": $(json_nullable_bool "${DOCTOR_EC2NODECLASS_CRD_OK}"),
     "gpu_nodepool": $(json_nullable_bool "${DOCTOR_GPU_NODEPOOL_OK}"),
     "gpu_nodeclass": $(json_nullable_bool "${DOCTOR_GPU_NODECLASS_OK}"),
-    "nvidia_device_plugin": $(json_nullable_bool "${DOCTOR_NVIDIA_DEVICE_PLUGIN_OK}")
+    "nvidia_device_plugin": $(json_nullable_bool "${DOCTOR_NVIDIA_DEVICE_PLUGIN_OK}"),
+    "inference_service": $(json_nullable_bool "${DOCTOR_INFERENCE_SERVICE_OK}"),
+    "inference_ingress": $(json_nullable_bool "${DOCTOR_INFERENCE_INGRESS_OK}")
   }
 }
 EOF
@@ -162,6 +168,7 @@ render_status_text() {
   log "app services: $(describe_value "${STATUS_APP_SERVICE_COUNT}")"
   log "app ingresses: $(describe_value "${STATUS_APP_INGRESS_COUNT}")"
   log "app hpas: $(describe_value "${STATUS_APP_HPA_COUNT}")"
+  log "public inference URL: $(describe_value "${STATUS_PUBLIC_EDGE_URL}")"
 
   log_section "platform"
   log "metrics-server: $(describe_bool "${DOCTOR_METRICS_SERVER_OK}")"
@@ -169,6 +176,8 @@ render_status_text() {
   log "GPU NodePool: $(describe_bool "${DOCTOR_GPU_NODEPOOL_OK}")"
   log "GPU EC2NodeClass: $(describe_bool "${DOCTOR_GPU_NODECLASS_OK}")"
   log "NVIDIA device plugin: $(describe_bool "${DOCTOR_NVIDIA_DEVICE_PLUGIN_OK}")"
+  log "inference service: $(describe_bool "${DOCTOR_INFERENCE_SERVICE_OK}")"
+  log "inference ingress: $(describe_bool "${DOCTOR_INFERENCE_INGRESS_OK}")"
 
   if [[ "${verbose_mode}" != "1" || "${STATUS_OK}" != "1" ]]; then
     return 0
@@ -202,12 +211,18 @@ render_status_json() {
     "app_ingresses": $(json_nullable_number "${STATUS_APP_INGRESS_COUNT}"),
     "app_hpas": $(json_nullable_number "${STATUS_APP_HPA_COUNT}")
   },
+  "public_edge": {
+    "hostname": $(json_nullable_string "${STATUS_PUBLIC_EDGE_HOSTNAME}"),
+    "url": $(json_nullable_string "${STATUS_PUBLIC_EDGE_URL}")
+  },
   "platform": {
     "metrics_server": $(json_nullable_bool "${DOCTOR_METRICS_SERVER_OK}"),
     "karpenter_deployment": $(json_nullable_bool "${DOCTOR_KARPENTER_DEPLOYMENT_OK}"),
     "gpu_nodepool": $(json_nullable_bool "${DOCTOR_GPU_NODEPOOL_OK}"),
     "gpu_nodeclass": $(json_nullable_bool "${DOCTOR_GPU_NODECLASS_OK}"),
-    "nvidia_device_plugin": $(json_nullable_bool "${DOCTOR_NVIDIA_DEVICE_PLUGIN_OK}")
+    "nvidia_device_plugin": $(json_nullable_bool "${DOCTOR_NVIDIA_DEVICE_PLUGIN_OK}"),
+    "inference_service": $(json_nullable_bool "${DOCTOR_INFERENCE_SERVICE_OK}"),
+    "inference_ingress": $(json_nullable_bool "${DOCTOR_INFERENCE_INGRESS_OK}")
   }
 }
 EOF

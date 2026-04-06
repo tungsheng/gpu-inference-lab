@@ -61,11 +61,15 @@ write_stub kubectl \
 '  "get nodepool gpu-serving") printf "%s\n" "nodepool.karpenter.sh/gpu-serving" ;;' \
 '  "get ec2nodeclass gpu-serving") printf "%s\n" "ec2nodeclass.karpenter.k8s.aws/gpu-serving" ;;' \
 '  "get daemonset nvidia-device-plugin-daemonset -n kube-system") printf "%s\n" "daemonset.apps/nvidia-device-plugin-daemonset" ;;' \
+'  "get service vllm-openai -n app") printf "%s\n" "service/vllm-openai" ;;' \
+'  "get ingress vllm-openai-ingress -n app") printf "%s\n" "ingress.networking.k8s.io/vllm-openai-ingress" ;;' \
 '  "get nodes -o name") printf "%s\n" "node/cpu-1" "node/gpu-1" ;;' \
 '  "get deployment -o name -n app") printf "%s\n" "deployment.apps/echo" "deployment.apps/vllm-openai" ;;' \
-'  "get service -o name -n app") printf "%s\n" "service/echo" ;;' \
-'  "get ingress -o name -n app") printf "%s\n" "ingress.networking.k8s.io/echo-ingress" ;;' \
-'  "get hpa -o name -n app") printf "%s\n" "horizontalpodautoscaler.autoscaling/echo" ;;' \
+'  "get service -o name -n app") printf "%s\n" "service/echo" "service/vllm-openai" ;;' \
+'  "get ingress -o name -n app") printf "%s\n" "ingress.networking.k8s.io/echo-ingress" "ingress.networking.k8s.io/vllm-openai-ingress" ;;' \
+'  "get hpa -o name -n app") printf "%s\n" "horizontalpodautoscaler.autoscaling/vllm-openai" ;;' \
+'  "get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}") printf "%s\n" "public-edge.example.com" ;;' \
+'  "get ingress echo-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}") printf "%s\n" "public-edge.example.com" ;;' \
 '  "api-resources -o name") printf "%s\n" "nodepools.karpenter.sh" "nodeclaims.karpenter.sh" "ec2nodeclasses.karpenter.k8s.aws" ;;' \
 '  "get nodepools -o name") printf "%s\n" "nodepool.karpenter.sh/gpu-serving" ;;' \
 '  "get nodeclaims -o name") printf "%s\n" "nodeclaim.karpenter.sh/gpu-serving-1" ;;' \
@@ -94,3 +98,4 @@ assert_contains "${COMMAND_OUTPUT}" 'doctor_ready=1' "sourced dev helpers should
 assert_contains "${COMMAND_OUTPUT}" 'status_ok=1' "sourced dev helpers should collect cluster counts"
 assert_contains "${COMMAND_OUTPUT}" 'status_summary=cluster reachable and ready for measurements' "sourced dev helpers should retain the readiness summary"
 assert_contains "${COMMAND_OUTPUT}" '"nodes": 2' "sourced dev helpers should render status JSON with node counts"
+assert_contains "${COMMAND_OUTPUT}" '"url": "http://public-edge.example.com/v1/completions"' "sourced dev helpers should render the public inference URL"

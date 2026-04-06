@@ -84,20 +84,6 @@ spec:
             medium: Memory
             sizeLimit: 1Gi
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: vllm-openai
-  namespace: app
-spec:
-  selector:
-    app: vllm-openai
-  ports:
-    - name: http
-      port: 80
-      targetPort: http
-  type: ClusterIP
----
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

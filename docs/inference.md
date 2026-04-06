@@ -10,7 +10,8 @@ What is in place:
 - a Karpenter-managed GPU `NodePool`
 - the NVIDIA device plugin
 - a real vLLM deployment at `platform/inference/vllm-openai.yaml`
-- a `ClusterIP` service that exposes an OpenAI-compatible API
+- a dedicated `ClusterIP` service at `platform/inference/service.yaml`
+- a public ALB ingress at `platform/inference/ingress.yaml`
 - an HPA and a load-test job that can drive scale-out
 
 ## Serving stack
@@ -67,6 +68,16 @@ kubectl run curl -n app --rm -it --restart=Never \
   curl http://vllm-openai/v1/completions \
     -H 'Content-Type: application/json' \
     -d '{"model":"qwen2.5-0.5b","prompt":"Say hello from vLLM.","max_tokens":32,"temperature":0}'
+```
+
+If the public ingress is already provisioned, you can also test the external
+edge from your machine:
+
+```bash
+EDGE_HOST=$(kubectl get ingress vllm-openai-ingress -n app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+curl "http://${EDGE_HOST}/v1/completions" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen2.5-0.5b","prompt":"Say hello from the public edge.","max_tokens":32,"temperature":0}'
 ```
 
 ## Load-triggered scale-out

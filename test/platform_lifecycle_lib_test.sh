@@ -29,6 +29,7 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" /bin/bash -c '
   retry_command() { shift 2; printf "call:retry:%s\n" "$*"; }
   kubectl() { printf "call:kubectl:%s\n" "$*"; }
   ensure_namespace() { printf "call:namespace:%s\n" "$1"; }
+  install_inference_edge() { printf "%s\n" "call:inference-edge"; }
   install_test_app() { printf "%s\n" "call:test-app"; }
   run_post_apply_flow
 '
@@ -36,7 +37,7 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" /bin/bash -c '
 assert_status 0 "${COMMAND_STATUS}" "platform install flow should orchestrate the extracted install helpers"
 assert_contains "${COMMAND_OUTPUT}" $'call:alb-controller\nstep:installing metrics server\ncall:metrics-server\nstep:installing Karpenter\ncall:karpenter' "platform install flow should run controller, metrics, and Karpenter setup in order"
 assert_contains "${COMMAND_OUTPUT}" $'step:installing NVIDIA device plugin\ncall:retry:kubectl apply -f '"${REPO_ROOT}"'/platform/system/nvidia-device-plugin.yaml' "platform install flow should apply the NVIDIA device plugin through the shared retry helper"
-assert_contains "${COMMAND_OUTPUT}" $'step:ensuring app namespace exists\ncall:namespace:app\ncall:test-app' "platform install flow should ensure the app namespace before installing the sample app"
+assert_contains "${COMMAND_OUTPUT}" $'step:ensuring app namespace exists\ncall:namespace:app\ncall:inference-edge\ncall:test-app' "platform install flow should ensure the app namespace before installing the inference edge and sample app"
 
 # shellcheck disable=SC2016
 run_and_capture env REPO_ROOT="${REPO_ROOT}" /bin/bash -c '

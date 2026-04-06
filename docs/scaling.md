@@ -46,7 +46,7 @@ terraform -chdir=infra/env/dev init
 Apply the environment:
 
 ```bash
-./scripts/apply-dev.sh
+./scripts/dev up
 ```
 
 That helper now:
@@ -64,7 +64,7 @@ should still be zero GPU worker nodes.
 
 ## Baseline verification
 
-After `./scripts/apply-dev.sh`, verify the control-plane and dynamic path:
+After `./scripts/dev up`, verify the control-plane, public edge, and dynamic path:
 
 ```bash
 kubectl get nodes -L workload,node.kubernetes.io/instance-type -o wide
@@ -79,6 +79,7 @@ Expected shape:
 - at least two `m7i-flex.large` nodes labeled `workload=system`
 - zero nodes labeled `karpenter.sh/nodepool=gpu-serving`
 - one `NodePool` named `gpu-serving`
+- a public inference ingress that resolves before GPU pods are launched
 
 ## GPU smoke test
 
@@ -119,19 +120,21 @@ The HPA path is intentional:
 Run the full milestone validation with:
 
 ```bash
-./scripts/measure-gpu-serving-path.sh
+./scripts/dev measure
 ```
 
 The script:
 
 1. Starts from zero GPU nodes
-2. Applies the real inference manifest
-3. Measures cold-start milestones until the first replica is Ready
-4. Applies the load-test job under `platform/tests/gpu-load-test.yaml`
-5. Waits for HPA-driven scale-out to two replicas and two GPU nodes
-6. Deletes the load test and waits for one GPU node to consolidate away
-7. Deletes the inference workload and waits for all GPU nodes to disappear
-8. Writes a Markdown report under `/tmp/` by default
+2. Waits for the public inference edge hostname
+3. Applies the real inference manifest
+4. Measures cold-start milestones until the first replica is Ready
+5. Waits for the first successful external completion through the ALB edge
+6. Applies the load-test job under `platform/tests/gpu-load-test.yaml`
+7. Waits for HPA-driven scale-out to two replicas and two GPU nodes
+8. Deletes the load test and waits for one GPU node to consolidate away
+9. Deletes the inference workload and waits for all GPU nodes to disappear
+10. Writes a Markdown report under `/tmp/` by default
 
 ## Version pins
 

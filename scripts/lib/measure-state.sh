@@ -28,6 +28,9 @@ refresh_measurement_state() {
   local load_test_reason_fields
   local nvidia_fields
 
+  STATE_INFERENCE_INGRESS_HOSTNAME=$(kubectl get ingress "${GPU_INFERENCE_INGRESS_NAME}" -n "${APP_NAMESPACE}" \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+
   deployment_fields=$(kubectl get deployment "${DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" \
     -o jsonpath='{.status.readyReplicas}{"|"}{.spec.replicas}' 2>/dev/null || true)
   IFS='|' read -r STATE_DEPLOYMENT_READY_REPLICAS STATE_DEPLOYMENT_DESIRED_REPLICAS <<<"${deployment_fields}"
@@ -106,6 +109,22 @@ delete_manifest_quiet() {
 
   kubectl delete -f "${manifest_path}" --ignore-not-found=true >/dev/null 2>&1 || true
   mark_measurement_state_stale
+}
+
+inference_ingress_hostname() {
+  ensure_measurement_state_current
+  printf '%s\n' "${STATE_INFERENCE_INGRESS_HOSTNAME}"
+}
+
+inference_edge_url() {
+  local hostname
+
+  hostname=$(inference_ingress_hostname)
+  if [[ -z "${hostname}" ]]; then
+    return 0
+  fi
+
+  printf 'http://%s%s\n' "${hostname}" "${GPU_INFERENCE_EDGE_PATH}"
 }
 
 gpu_node_names() {
@@ -293,6 +312,18 @@ serving_state_snapshot() {
 
 serving_and_load_state_snapshot() {
   printf '%s | %s\n' "$(serving_state_snapshot)" "$(load_test_job_summary)"
+}
+
+edge_state_snapshot() {
+  local target_url
+
+  target_url=$(inference_edge_url)
+  if [[ -n "${target_url}" ]]; then
+    printf 'edge %s | %s\n' "${target_url}" "$(serving_state_snapshot)"
+    return 0
+  fi
+
+  printf 'edge pending | %s\n' "$(serving_state_snapshot)"
 }
 
 first_gpu_capacity_snapshot() {

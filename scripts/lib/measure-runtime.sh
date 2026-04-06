@@ -11,7 +11,7 @@ verify_prerequisites() {
   if ! verify_cluster_connectivity; then
     current_context=$(kubectl config current-context 2>/dev/null || printf 'unknown')
     log_error "unable to reach the Kubernetes API using kubectl context: ${current_context}"
-    log_error "check cluster DNS/network access, confirm kubectl is pointed at the intended cluster, or refresh kubeconfig with ./scripts/apply-dev.sh."
+    log_error "check cluster DNS/network access, confirm kubectl is pointed at the intended cluster, or refresh kubeconfig with ./scripts/dev up."
     exit 1
   fi
 
@@ -58,7 +58,7 @@ verify_prerequisites() {
       log_error "missing prerequisite: ${missing_item}"
     done
     log_error "this cluster is not fully post-applied for the dynamic GPU path"
-    log_error "re-run ./scripts/apply-dev.sh and capture the first 'post-terraform-apply failed ... during step: ...' block, or verify kubectl is pointed at the intended cluster"
+    log_error "re-run ./scripts/dev up and capture the first 'post-terraform-apply failed ... during step: ...' block, or verify kubectl is pointed at the intended cluster"
     exit 1
   fi
 }

@@ -83,8 +83,16 @@ The current public entry path is implemented with:
 - Helm release `aws-load-balancer-controller` from the `eks` chart repository
 - `platform/test-app/service.yaml`
 - `platform/test-app/ingress.yaml`
+- `platform/inference/service.yaml`
+- `platform/inference/ingress.yaml`
 
-The sample ingress uses an internet-facing ALB and IP targets. This validates that Kubernetes ingress rules, controller permissions, subnet tagging, and service-to-pod routing are wired correctly.
+The current edge uses a shared internet-facing ALB and IP targets:
+
+- `/` routes to the sample echo app
+- `/v1` routes to the real `vllm-openai` inference service
+
+This validates not just controller permissions and subnet tagging, but also the
+real inference traffic path from ALB to the GPU-backed service.
 
 ## Roadmap impact
 
