@@ -150,9 +150,10 @@ The destroy helper:
 5. Waits for Karpenter-managed GPU nodes to terminate
 6. Uninstalls Karpenter
 7. Deletes the NVIDIA device plugin
-8. Deletes the app namespace
-9. Uninstalls the AWS Load Balancer Controller
-10. Runs `terraform -chdir=infra/env/dev destroy`
+8. Deletes metrics-server
+9. Deletes the app namespace
+10. Uninstalls the AWS Load Balancer Controller
+11. Runs `terraform -chdir=infra/env/dev destroy`
 
 ## Recovery / Partial Teardown
 

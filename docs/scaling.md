@@ -57,7 +57,9 @@ That helper now:
 4. Installs metrics-server so HPA has CPU metrics
 5. Installs Karpenter and applies the GPU `EC2NodeClass`/`NodePool`
 6. Applies the NVIDIA device plugin
-7. Applies the sample ingress workload on the system nodes
+7. Ensures the `app` namespace exists
+8. Applies the dedicated inference service and public ingress
+9. Applies the sample ingress workload on the system nodes
 
 At that point the cluster is ready for dynamic GPU provisioning, but there
 should still be zero GPU worker nodes.
@@ -95,7 +97,7 @@ pod, the Karpenter GPU node should scale back down.
 
 ## Real inference scaling path
 
-The real serving manifest lives at:
+The GPU workload manifest lives at:
 
 ```bash
 platform/inference/vllm-openai.yaml
@@ -104,8 +106,12 @@ platform/inference/vllm-openai.yaml
 That manifest adds:
 
 - a vLLM `Deployment`
-- a `ClusterIP` service
 - a CPU-based `HorizontalPodAutoscaler`
+
+The always-on inference edge lives separately in:
+
+- `platform/inference/service.yaml`
+- `platform/inference/ingress.yaml`
 
 The HPA path is intentional:
 
@@ -134,7 +140,7 @@ The script:
 7. Waits for HPA-driven scale-out to two replicas and two GPU nodes
 8. Deletes the load test and waits for one GPU node to consolidate away
 9. Deletes the inference workload and waits for all GPU nodes to disappear
-10. Writes a Markdown report under `/tmp/` by default
+10. Writes a Markdown report under `/tmp/` by default, with optional JSON output
 
 ## Version pins
 

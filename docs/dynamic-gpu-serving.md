@@ -37,7 +37,6 @@ Behavior:
 - runs the official vLLM OpenAI-compatible server
 - serves `Qwen/Qwen2.5-0.5B-Instruct`
 - requests one full GPU
-- exposes a stable HTTP API through a `ClusterIP` service
 - includes an HPA to request a second replica under sustained CPU load
 
 ### 3. Load test that triggers provisioning
@@ -67,6 +66,7 @@ Outputs:
   - first GPU node join
   - `nvidia.com/gpu` allocatable on the node
   - first Ready serving replica
+  - first successful external completion
   - HPA-driven scale-out
   - extra-node consolidation
   - full scale-down back to zero GPU nodes
@@ -92,6 +92,7 @@ Optional custom report path:
 - `kubectl get nodes -l karpenter.sh/nodepool=gpu-serving` grows from `0` to
   `1`
 - the first vLLM pod becomes `Ready`
+- the public inference edge returns the first successful completion
 - under load, the HPA requests `2` replicas and Karpenter adds a second GPU
   node
 - after load removal, the extra node disappears

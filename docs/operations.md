@@ -35,10 +35,11 @@ The measurement flow:
 The destroy flow:
 
 - removes the ingress first so the ALB can be deleted cleanly
-- removes the sample workload
+- removes the inference service and sample workload
 - removes GPU smoke-test, load-test, and inference workloads
 - removes Karpenter resources and waits for managed GPU nodes to terminate
 - removes the NVIDIA device plugin
+- removes metrics-server
 - removes the app namespace
 - uninstalls the AWS Load Balancer Controller
 - destroys Terraform-managed infrastructure
