@@ -20,5 +20,7 @@ an OpenAI-compatible API backed by the small public model
 The workload manifest includes:
 
 - a GPU-bound `Deployment`
-- a CPU-based `HorizontalPodAutoscaler` that can request a second GPU replica
-  under load once metrics-server is installed
+- a Prometheus-backed `HorizontalPodAutoscaler` that scales on
+  `vllm_requests_waiting`
+- a queue-depth target that can request a second GPU replica under load once
+  Prometheus Adapter is installed

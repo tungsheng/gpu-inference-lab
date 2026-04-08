@@ -46,9 +46,31 @@ for **used GPU hours**, not for a permanently idling node.
 In practice, the dynamic path trades lower idle cost for a longer first-request
 latency because the first GPU node has to be launched and initialized.
 
+## Current tradeoff milestone
+
+Milestone 8 now makes the cost/latency tradeoff measurable with two checked-in
+profiles:
+
+- `zero-idle`
+- `warm-1`
+
+Use two separate runs:
+
+```bash
+./scripts/dev measure --profile zero-idle
+./scripts/dev measure --profile warm-1
+```
+
+Compare:
+
+- first external completion latency
+- estimated idle cost per hour
+- estimated burst cost
+- scale-down time back to zero GPU nodes
+
 ## Next cost milestone
 
-Milestone 8 should add a mixed provisioning strategy:
+Milestone 9 should add a mixed provisioning strategy:
 
 - `gpu-spot` for cheaper interruptible capacity
 - `gpu-ondemand` for fallback and baseline reliability

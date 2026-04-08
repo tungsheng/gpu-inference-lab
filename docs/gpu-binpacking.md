@@ -24,4 +24,4 @@ Better outcome:
 
 ## Documentation checkpoint
 
-Milestone 10 is complete only when the repository can explain not just that nodes launch, but that the launched nodes are a sensible fit for the workload mix.
+Milestone 11 is complete only when the repository can explain not just that nodes launch, but that the launched nodes are a sensible fit for the workload mix.

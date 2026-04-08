@@ -24,21 +24,21 @@ EVENT_NAMES=(
   all_gpu_nodes_removed
 )
 TIMELINE_EVENT_LABELS=(
-  "Inference manifest applied"
+  "Measurement start"
   "Inference edge hostname available"
-  "First serving pod created"
+  "First serving pod present"
   "First NodeClaim observed"
   "First GPU node observed"
-  "GPU allocatable advertised on first node"
-  "First serving pod Ready"
+  "GPU allocatable available on first node"
+  "First serving pod ready"
   "First successful external completion"
   "Load test applied"
   "HPA desired replicas reached 2"
   "Second NodeClaim observed"
   "Second GPU node observed"
-  "Two serving replicas Ready"
+  "Two serving replicas ready"
   "Load test removed"
-  "Deployment scaled back to one Ready replica"
+  "Deployment scaled back to one ready replica"
   "Extra GPU node removed"
   "Inference manifest deleted"
   "All GPU nodes removed"
@@ -50,9 +50,20 @@ reset_measurement_wait_state() {
   WAIT_SPINNER_PID=""
 }
 
+reset_measurement_port_forward_state() {
+  PROMETHEUS_PORT_FORWARD_PID=""
+  PROMETHEUS_PORT_FORWARD_LOG=""
+  PROMETHEUS_LOCAL_PORT=""
+  PUSHGATEWAY_PORT_FORWARD_PID=""
+  PUSHGATEWAY_PORT_FORWARD_LOG=""
+  PUSHGATEWAY_LOCAL_PORT=""
+}
+
 reset_measurement_node_tracking() {
   first_gpu_node_name=""
+  first_gpu_node_instance_type=""
   second_gpu_node_name=""
+  second_gpu_node_instance_type=""
 }
 
 reset_measurement_state_snapshot() {
@@ -84,10 +95,32 @@ reset_measurement_state_snapshot() {
   STATE_NVIDIA_DESIRED_COUNT=""
 }
 
+reset_measurement_profile_state() {
+  MEASUREMENT_PROFILE="zero-idle"
+  MEASUREMENT_NODEPOOL_SELECTOR=""
+  MEASUREMENT_MANAGED_NODEPOOL_SELECTOR=""
+  MEASUREMENT_NODEPOOL_REGEX=""
+}
+
+reset_measurement_production_summary() {
+  PRODUCTION_P95_VLLM_REQUEST_LATENCY_SECONDS=""
+  PRODUCTION_P95_TTFT_SECONDS=""
+  PRODUCTION_PEAK_QUEUE_DEPTH=""
+  PRODUCTION_AVG_GENERATION_TOKENS_PER_SECOND=""
+  PRODUCTION_AVG_GPU_UTILIZATION_PERCENT=""
+  PRODUCTION_MAX_GPU_UTILIZATION_PERCENT=""
+  PRODUCTION_PEAK_NODECLAIMS=""
+  ESTIMATED_IDLE_COST_PER_HOUR=""
+  ESTIMATED_BURST_COST=""
+}
+
 initialize_measurement_context() {
   reset_measurement_wait_state
+  reset_measurement_port_forward_state
   reset_measurement_node_tracking
   reset_measurement_state_snapshot
+  reset_measurement_profile_state
+  reset_measurement_production_summary
 }
 
 measurement_state_cache_key() {

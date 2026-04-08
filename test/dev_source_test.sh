@@ -52,13 +52,25 @@ write_stub kubectl \
 'case "$*" in' \
 '  "config current-context") printf "%s\n" "arn:aws:eks:us-west-2:123456789012:cluster/dev" ;;' \
 '  "cluster-info") printf "%s\n" "Kubernetes control plane is running" ;;' \
+'  *"get nodes -o name -l workload=system"*) printf "%s\n" "node/cpu-1" ;;' \
+'  *"get nodes -o name -l workload=gpu"*) printf "%s\n" "node/gpu-1" ;;' \
 '  "get deployment metrics-server -n kube-system") printf "%s\n" "deployment.apps/metrics-server" ;;' \
+'  "get service kube-prometheus-stack-prometheus -n monitoring") printf "%s\n" "service/kube-prometheus-stack-prometheus" ;;' \
+'  "get deployment kube-prometheus-stack-grafana -n monitoring") printf "%s\n" "deployment.apps/kube-prometheus-stack-grafana" ;;' \
+'  "get deployment prometheus-adapter -n monitoring") printf "%s\n" "deployment.apps/prometheus-adapter" ;;' \
+'  *"get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath="*) printf "%s\n" "True" ;;' \
+'  "get service pushgateway -n monitoring") printf "%s\n" "service/pushgateway" ;;' \
+'  "get daemonset dcgm-exporter -n monitoring") printf "%s\n" "daemonset.apps/dcgm-exporter" ;;' \
+'  "get podmonitor vllm-metrics -n monitoring") printf "%s\n" "podmonitor.monitoring.coreos.com/vllm-metrics" ;;' \
+'  "get podmonitor karpenter-metrics -n monitoring") printf "%s\n" "podmonitor.monitoring.coreos.com/karpenter-metrics" ;;' \
 '  "get namespace karpenter") printf "%s\n" "namespace/karpenter" ;;' \
 '  "get deployment karpenter -n karpenter") printf "%s\n" "deployment.apps/karpenter" ;;' \
 '  "get crd nodepools.karpenter.sh") printf "%s\n" "customresourcedefinition.apiextensions.k8s.io/nodepools.karpenter.sh" ;;' \
 '  "get crd nodeclaims.karpenter.sh") printf "%s\n" "customresourcedefinition.apiextensions.k8s.io/nodeclaims.karpenter.sh" ;;' \
 '  "get crd ec2nodeclasses.karpenter.k8s.aws") printf "%s\n" "customresourcedefinition.apiextensions.k8s.io/ec2nodeclasses.karpenter.k8s.aws" ;;' \
 '  "get nodepool gpu-serving") printf "%s\n" "nodepool.karpenter.sh/gpu-serving" ;;' \
+'  *"get nodepool gpu-serving -o jsonpath="*) printf "%s\n" "True" ;;' \
+'  "get nodepool gpu-warm-1") exit 1 ;;' \
 '  "get ec2nodeclass gpu-serving") printf "%s\n" "ec2nodeclass.karpenter.k8s.aws/gpu-serving" ;;' \
 '  "get daemonset nvidia-device-plugin-daemonset -n kube-system") printf "%s\n" "daemonset.apps/nvidia-device-plugin-daemonset" ;;' \
 '  "get service vllm-openai -n app") printf "%s\n" "service/vllm-openai" ;;' \
@@ -96,6 +108,6 @@ run_and_capture env "${TEST_ENV[@]}" /bin/bash -c '
 assert_status 0 "${COMMAND_STATUS}" "sourcing scripts/dev should expose doctor and status helpers without auto-running the CLI"
 assert_contains "${COMMAND_OUTPUT}" 'doctor_ready=1' "sourced dev helpers should collect measurement readiness"
 assert_contains "${COMMAND_OUTPUT}" 'status_ok=1' "sourced dev helpers should collect cluster counts"
-assert_contains "${COMMAND_OUTPUT}" 'status_summary=cluster reachable and ready for measurements' "sourced dev helpers should retain the readiness summary"
+assert_contains "${COMMAND_OUTPUT}" 'status_summary=cluster reachable and ready for measurement' "sourced dev helpers should retain the readiness summary"
 assert_contains "${COMMAND_OUTPUT}" '"nodes": 2' "sourced dev helpers should render status JSON with node counts"
 assert_contains "${COMMAND_OUTPUT}" '"url": "http://public-edge.example.com/v1/completions"' "sourced dev helpers should render the public inference URL"

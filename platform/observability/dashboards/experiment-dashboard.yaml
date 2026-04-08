@@ -1,0 +1,233 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-experiment
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  experiment-dashboard.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "editable": true,
+      "graphTooltip": 0,
+      "panels": [
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (profile) (gpu_serving_measure_first_gpu_node_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Node Launch Latency",
+          "type": "stat"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 0
+          },
+          "id": 2,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (profile) (gpu_serving_measure_model_ready_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Model Readiness Time",
+          "type": "stat"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 0
+          },
+          "id": 3,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (profile) (gpu_serving_measure_first_external_completion_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}",
+              "refId": "A"
+            }
+          ],
+          "title": "First External Completion",
+          "type": "stat"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 0,
+            "y": 7
+          },
+          "id": 4,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (profile) (gpu_serving_measure_scale_down_to_zero_gpu_nodes_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Scale Down To Zero",
+          "type": "stat"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 7
+          },
+          "id": 5,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (profile) (gpu_serving_measure_estimated_idle_cost_per_hour{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Idle Cost Per Hour",
+          "type": "stat"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 7
+          },
+          "id": 6,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (profile) (gpu_serving_measure_estimated_burst_cost{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Burst Cost",
+          "type": "stat"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "style": "dark",
+      "tags": [
+        "gpu-inference",
+        "experiment"
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-30d",
+        "to": "now"
+      },
+      "timezone": "utc",
+      "title": "GPU Inference Experiment Summary",
+      "version": 1
+    }

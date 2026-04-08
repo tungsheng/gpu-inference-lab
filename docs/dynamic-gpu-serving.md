@@ -37,7 +37,7 @@ Behavior:
 - runs the official vLLM OpenAI-compatible server
 - serves `Qwen/Qwen2.5-0.5B-Instruct`
 - requests one full GPU
-- includes an HPA to request a second replica under sustained CPU load
+- includes an HPA that can request a second replica from queued inference work
 
 ### 3. Load test that triggers provisioning
 

@@ -54,12 +54,13 @@ That helper now:
 1. Applies Terraform for `infra/env/dev`
 2. Updates local kubeconfig
 3. Installs the AWS Load Balancer Controller
-4. Installs metrics-server so HPA has CPU metrics
-5. Installs Karpenter and applies the GPU `EC2NodeClass`/`NodePool`
-6. Applies the NVIDIA device plugin
-7. Ensures the `app` namespace exists
-8. Applies the dedicated inference service and public ingress
-9. Applies the sample ingress workload on the system nodes
+4. Installs metrics-server
+5. Installs Prometheus, Grafana, Prometheus Adapter, Pushgateway, and the GPU observability exporters/PodMonitors
+6. Installs Karpenter and applies the GPU `EC2NodeClass`/`NodePool`
+7. Applies the NVIDIA device plugin
+8. Ensures the `app` namespace exists
+9. Applies the dedicated inference service and public ingress
+10. Applies the sample ingress workload on the system nodes
 
 At that point the cluster is ready for dynamic GPU provisioning, but there
 should still be zero GPU worker nodes.
@@ -73,7 +74,11 @@ kubectl get nodes -L workload,node.kubernetes.io/instance-type -o wide
 kubectl get nodepools
 kubectl get daemonset nvidia-device-plugin-daemonset -n kube-system
 kubectl get deployment metrics-server -n kube-system
+kubectl get deployment kube-prometheus-stack-grafana -n monitoring
+kubectl get deployment prometheus-adapter -n monitoring
+kubectl get daemonset dcgm-exporter -n monitoring
 kubectl get deployment karpenter -n karpenter
+kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1 | head
 ```
 
 Expected shape:
@@ -106,18 +111,19 @@ platform/inference/vllm-openai.yaml
 That manifest adds:
 
 - a vLLM `Deployment`
-- a CPU-based `HorizontalPodAutoscaler`
+- a Prometheus-backed `HorizontalPodAutoscaler`
 
 The always-on inference edge lives separately in:
 
 - `platform/inference/service.yaml`
 - `platform/inference/ingress.yaml`
 
-The HPA path is intentional:
+The HPA path is now serving-oriented:
 
 - the first replica provisions the first GPU node
-- sustained inference traffic can push CPU utilization high enough for the HPA
-  to request a second replica
+- the vLLM `PodMonitor` exposes `vllm:num_requests_waiting`
+- Prometheus Adapter maps that metric to `vllm_requests_waiting`
+- sustained inference traffic raises queue depth enough for the HPA to request a second replica
 - the second replica requires another GPU, which makes Karpenter launch another
   GPU node
 
@@ -129,18 +135,25 @@ Run the full milestone validation with:
 ./scripts/dev measure
 ```
 
+Compare the default zero-idle baseline with the warm-node experiment:
+
+```bash
+./scripts/dev measure --profile zero-idle
+./scripts/dev measure --profile warm-1
+```
+
 The script:
 
 1. Starts from zero GPU nodes
-2. Waits for the public inference edge hostname
+2. Verifies the public inference edge and, for `warm-1`, creates a static one-node warm `NodePool`
 3. Applies the real inference manifest
 4. Measures cold-start milestones until the first replica is Ready
 5. Waits for the first successful external completion through the ALB edge
 6. Applies the load-test job under `platform/tests/gpu-load-test.yaml`
 7. Waits for HPA-driven scale-out to two replicas and two GPU nodes
 8. Deletes the load test and waits for one GPU node to consolidate away
-9. Deletes the inference workload and waits for all GPU nodes to disappear
-10. Writes a Markdown report under `/tmp/` by default, with optional JSON output
+9. Deletes the inference workload and, for `warm-1`, deletes the temporary warm `NodePool`
+10. Writes Markdown and optional JSON reports with production latency, queue depth, GPU utilization, and cost summaries
 
 ## Version pins
 

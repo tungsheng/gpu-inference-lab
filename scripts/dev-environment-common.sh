@@ -218,7 +218,7 @@ wait_for_resource_existence() {
     fi
 
     if (( $(date +%s) - start_time >= timeout_seconds )); then
-      log_error "timed out waiting for ${resource_kind}/${resource_name} to appear"
+      log_error "timed out waiting for ${resource_kind}/${resource_name} to be present"
       if [[ -n "${resource_namespace}" ]]; then
         kubectl get "${resource_kind}" -n "${resource_namespace}" >&2 || true
       else

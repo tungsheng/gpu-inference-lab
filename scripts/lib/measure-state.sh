@@ -17,6 +17,22 @@ mark_measurement_state_stale() {
   MEASUREMENT_STATE_REFRESHED_AT=""
 }
 
+measurement_gpu_node_selector() {
+  local selector="workload=gpu"
+
+  if [[ -n "${MEASUREMENT_MANAGED_NODEPOOL_SELECTOR:-}" ]]; then
+    printf '%s,%s\n' "${selector}" "${MEASUREMENT_MANAGED_NODEPOOL_SELECTOR}"
+    return 0
+  fi
+
+  if [[ -n "${MEASUREMENT_NODEPOOL_SELECTOR:-}" ]]; then
+    printf '%s,%s\n' "${selector}" "${MEASUREMENT_NODEPOOL_SELECTOR}"
+    return 0
+  fi
+
+  printf '%s\n' "${selector}"
+}
+
 refresh_measurement_state() {
   local cache_key=${1:-$(now_epoch)}
   local deployment_fields
@@ -43,10 +59,10 @@ refresh_measurement_state() {
     -o jsonpath='{.items[0].metadata.name}{"|"}{.items[0].status.phase}{"|"}{.items[0].spec.nodeName}{"|"}{.items[0].status.containerStatuses[0].state.waiting.reason}{"|"}{.items[0].status.containerStatuses[0].state.terminated.reason}{"|"}{.items[0].status.conditions[?(@.type=="PodScheduled")].reason}' 2>/dev/null || true)
   IFS='|' read -r STATE_FIRST_POD_NAME STATE_FIRST_POD_PHASE STATE_FIRST_POD_NODE_NAME STATE_FIRST_POD_WAITING_REASON STATE_FIRST_POD_TERMINATED_REASON STATE_FIRST_POD_SCHEDULING_REASON <<<"${pod_fields}"
 
-  STATE_NODECLAIM_COUNT=$(kubectl_name_count nodeclaims "" "karpenter.sh/nodepool=${NODEPOOL_NAME}")
+  STATE_NODECLAIM_COUNT=$(kubectl_name_count nodeclaims "" "${MEASUREMENT_NODEPOOL_SELECTOR}")
 
-  STATE_GPU_NODE_LINES=$(kubectl get nodes -l "karpenter.sh/nodepool=${NODEPOOL_NAME}" \
-    -o go-template='{{range .items}}{{.metadata.name}}{{"|" }}{{index .status.allocatable "nvidia.com/gpu"}}{{"\n"}}{{end}}' 2>/dev/null || true)
+  STATE_GPU_NODE_LINES=$(kubectl get nodes -l "$(measurement_gpu_node_selector)" \
+    -o go-template='{{range .items}}{{.metadata.name}}{{"|" }}{{index .status.allocatable "nvidia.com/gpu"}}{{"|" }}{{index .metadata.labels "node.kubernetes.io/instance-type"}}{{"\n"}}{{end}}' 2>/dev/null || true)
   STATE_GPU_NODE_NAMES=""
   while IFS= read -r node_line; do
     [[ -z "${node_line}" ]] && continue
@@ -225,7 +241,7 @@ first_pod_status_summary() {
   IFS='|' read -r pod_name pod_phase_value node_name waiting_reason terminated_reason scheduling_reason <<<"${pod_fields}"
 
   if [[ -z "${pod_name}" ]]; then
-    printf '%s\n' "pod none"
+    printf '%s\n' "pod missing"
     return 0
   fi
 
@@ -252,12 +268,12 @@ load_test_job_summary() {
   ensure_measurement_state_current
 
   if [[ "${STATE_LOAD_TEST_EXISTS}" != "1" ]]; then
-    printf '%s\n' "load idle"
+    printf '%s\n' "load missing"
     return 0
   fi
 
   if [[ -n "${STATE_LOAD_TEST_FAILED}" && "${STATE_LOAD_TEST_FAILED}" != "0" ]]; then
-    printf 'load failed(%s)\n' "${STATE_LOAD_TEST_FAILED}"
+    printf 'load failed (%s)\n' "${STATE_LOAD_TEST_FAILED}"
     return 0
   fi
 
@@ -267,7 +283,7 @@ load_test_job_summary() {
   fi
 
   if [[ -n "${STATE_LOAD_TEST_SUCCEEDED}" && "${STATE_LOAD_TEST_SUCCEEDED}" != "0" ]]; then
-    printf '%s\n' "load done"
+    printf '%s\n' "load complete"
     return 0
   fi
 
@@ -296,15 +312,15 @@ serving_state_snapshot() {
   gpu_nodes=$(gpu_node_count)
   pod_summary=$(first_pod_status_summary)
 
-  printf '%s | ready %s/%s | gpu %s' \
-    "${pod_summary:-pod none}" "${ready_replicas:-0}" "${desired_replicas:-0}" "${gpu_nodes:-0}"
+  printf '%s | replicas ready %s/%s | gpu nodes %s' \
+    "${pod_summary:-pod missing}" "${ready_replicas:-0}" "${desired_replicas:-0}" "${gpu_nodes:-0}"
 
   if [[ "${nodeclaims:-0}" != "0" ]]; then
-    printf ' | claims %s' "${nodeclaims:-0}"
+    printf ' | nodeclaims %s' "${nodeclaims:-0}"
   fi
 
   if [[ -n "${hpa_current}" || -n "${hpa_desired}" ]]; then
-    printf ' | hpa %s/%s' "${hpa_current:-0}" "${hpa_desired:-0}"
+    printf ' | hpa current/desired %s/%s' "${hpa_current:-0}" "${hpa_desired:-0}"
   fi
 
   printf '\n'
@@ -323,7 +339,7 @@ edge_state_snapshot() {
     return 0
   fi
 
-  printf 'edge pending | %s\n' "$(serving_state_snapshot)"
+  printf 'edge unavailable | %s\n' "$(serving_state_snapshot)"
 }
 
 first_gpu_capacity_snapshot() {
@@ -332,7 +348,7 @@ first_gpu_capacity_snapshot() {
 
   current_node_name=$(resolve_gpu_node_name "${first_gpu_node_name:-}")
   allocatable_gpu=$(node_allocatable_gpu "${current_node_name}")
-  printf 'node %s | alloc %s | plugin %s | %s\n' \
+  printf 'node %s | gpu allocatable %s | device plugin %s | %s\n' \
     "${current_node_name:-pending}" "${allocatable_gpu:-0}" "$(nvidia_daemonset_status_summary)" "$(serving_state_snapshot)"
 }
 
@@ -342,7 +358,7 @@ second_gpu_capacity_snapshot() {
 
   current_node_name=$(resolve_gpu_node_name "${second_gpu_node_name:-}" "${first_gpu_node_name:-}")
   allocatable_gpu=$(node_allocatable_gpu "${current_node_name}")
-  printf 'node %s | alloc %s | plugin %s | %s\n' \
+  printf 'node %s | gpu allocatable %s | device plugin %s | %s\n' \
     "${current_node_name:-pending}" "${allocatable_gpu:-0}" "$(nvidia_daemonset_status_summary)" "$(serving_and_load_state_snapshot)"
 }
 
@@ -424,7 +440,8 @@ fatal_scale_out_state() {
 node_allocatable_gpu() {
   local node_name=$1
   local node_line
-  local gpu_count
+  local gpu_count=""
+  local instance_type=""
 
   if [[ -z "${node_name}" ]]; then
     return 0
@@ -436,7 +453,10 @@ node_allocatable_gpu() {
     [[ -z "${node_line}" ]] && continue
     if [[ "${node_line%%|*}" == "${node_name}" ]]; then
       gpu_count=${node_line#*|}
+      gpu_count=${gpu_count%%|*}
       gpu_count=$(trim_spaces "${gpu_count}")
+      instance_type=${node_line##*|}
+      instance_type=$(trim_spaces "${instance_type}")
       break
     fi
   done <<<"${STATE_GPU_NODE_LINES}"
@@ -448,6 +468,35 @@ node_allocatable_gpu() {
   esac
 
   printf '%s\n' "${gpu_count}"
+}
+
+node_instance_type() {
+  local node_name=$1
+  local node_line
+  local instance_type=""
+
+  if [[ -z "${node_name}" ]]; then
+    return 0
+  fi
+
+  ensure_measurement_state_current
+
+  while IFS= read -r node_line; do
+    [[ -z "${node_line}" ]] && continue
+    if [[ "${node_line%%|*}" == "${node_name}" ]]; then
+      instance_type=${node_line##*|}
+      instance_type=$(trim_spaces "${instance_type}")
+      break
+    fi
+  done <<<"${STATE_GPU_NODE_LINES}"
+
+  case "${instance_type}" in
+    ""|"<no value>"|"<nil>")
+      instance_type=""
+      ;;
+  esac
+
+  printf '%s\n' "${instance_type}"
 }
 
 first_gpu_node_allocatable() {
@@ -475,7 +524,7 @@ describe_gpu_node_timeout_context() {
   fi
 
   log_warn "no active GPU node is available to describe"
-  kubectl get nodes -l "karpenter.sh/nodepool=${NODEPOOL_NAME}" -o wide >&2 || true
+  kubectl get nodes -l "workload=gpu" -o wide >&2 || true
 }
 
 describe_first_gpu_timeout_context() {

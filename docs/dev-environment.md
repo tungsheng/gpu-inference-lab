@@ -37,11 +37,12 @@ What `./scripts/dev up` does:
 2. Updates local kubeconfig
 3. Installs the AWS Load Balancer Controller
 4. Installs metrics-server from the pinned upstream release
-5. Installs Karpenter and applies the GPU `EC2NodeClass`/`NodePool`
-6. Applies the NVIDIA device plugin
-7. Ensures the `app` namespace exists
-8. Applies the dedicated inference service and public ingress
-9. Applies the sample ALB-backed echo app
+5. Installs Prometheus, Grafana, Prometheus Adapter, Pushgateway, and the GPU observability exporters
+6. Installs Karpenter and applies the GPU `EC2NodeClass`/`NodePool`
+7. Applies the NVIDIA device plugin
+8. Ensures the `app` namespace exists
+9. Applies the dedicated inference service and public ingress
+10. Applies the sample ALB-backed echo app
 
 The apply helper is intentionally strict. It still rejects `-target`,
 `-refresh-only`, and `-destroy` so it does not run the post-apply Kubernetes
@@ -52,6 +53,8 @@ workflow after a partial Terraform operation.
 ```bash
 kubectl get nodes -L workload,node.kubernetes.io/instance-type -o wide
 kubectl get deployment metrics-server -n kube-system
+kubectl get deployment kube-prometheus-stack-grafana -n monitoring
+kubectl get deployment prometheus-adapter -n monitoring
 kubectl get deployment karpenter -n karpenter
 kubectl get nodepools
 kubectl get ingress -n app -o wide
@@ -92,12 +95,28 @@ Optional Markdown + JSON outputs:
   --json-report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).json
 ```
 
+Warm-capacity comparison:
+
+```bash
+./scripts/dev measure --profile zero-idle
+./scripts/dev measure --profile warm-1
+```
+
 Useful companion commands:
 
 ```bash
 ./scripts/dev doctor
+./scripts/dev doctor --json
 ./scripts/dev status
 ./scripts/dev status --verbose
+./scripts/dev status --json
+```
+
+Grafana stays internal-only in this milestone. Use a port-forward when you want
+the dashboards:
+
+```bash
+kubectl port-forward -n monitoring deployment/kube-prometheus-stack-grafana 3000:3000
 ```
 
 ## Manual GPU checks
@@ -146,14 +165,15 @@ The destroy helper:
 1. Deletes the inference ingress and sample ingress so the ALB can be removed cleanly
 2. Deletes the inference service and sample app workload
 3. Deletes the GPU smoke test, load test, and inference workload if present
-4. Deletes the Karpenter `NodePool`/`EC2NodeClass`
-5. Waits for Karpenter-managed GPU nodes to terminate
-6. Uninstalls Karpenter
-7. Deletes the NVIDIA device plugin
-8. Deletes metrics-server
-9. Deletes the app namespace
-10. Uninstalls the AWS Load Balancer Controller
-11. Runs `terraform -chdir=infra/env/dev destroy`
+4. Deletes the observability stack
+5. Deletes the Karpenter `NodePool`/`EC2NodeClass`
+6. Waits for Karpenter-managed GPU nodes to terminate
+7. Uninstalls Karpenter
+8. Deletes the NVIDIA device plugin
+9. Deletes metrics-server
+10. Deletes the app namespace
+11. Uninstalls the AWS Load Balancer Controller
+12. Runs `terraform -chdir=infra/env/dev destroy`
 
 ## Recovery / Partial Teardown
 

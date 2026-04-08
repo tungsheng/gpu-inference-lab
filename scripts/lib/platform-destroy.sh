@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+PLATFORM_DESTROY_LIB_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${PLATFORM_DESTROY_LIB_DIR}/observability.sh"
+
 delete_aws_load_balancer_controller_crds() {
   kubectl delete crd \
     targetgroupbindings.elbv2.k8s.aws \
@@ -91,6 +95,8 @@ delete_karpenter_stack() {
     run_step "deleting Karpenter CPU scale test pod" kubectl delete -f "${KARPENTER_CPU_SCALE_TEST_MANIFEST}" --ignore-not-found=true
     run_step "deleting Karpenter NodePool" kubectl delete -f "${KARPENTER_NODEPOOL_MANIFEST}" --ignore-not-found=true
     run_step "waiting for Karpenter NodePool deletion" wait_for_resource_deletion nodepool "${KARPENTER_NODEPOOL_NAME}" "" 300
+    run_step "deleting warm GPU NodePool" kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true
+    run_step "waiting for warm GPU NodePool deletion" wait_for_resource_deletion nodepool "${KARPENTER_WARM_NODEPOOL_NAME}" "" 300
   fi
 
   if crd_exists "nodeclaims.karpenter.sh"; then
@@ -173,6 +179,7 @@ run_destroy_cleanup_flow() {
 
   delete_test_app "${ingress_hostname}" "${CLUSTER_CONTEXT_AWS_REGION}"
   delete_gpu_workloads
+  delete_observability_stack
   delete_karpenter_stack
   run_step "deleting NVIDIA device plugin" delete_nvidia_device_plugin
   delete_metrics_server

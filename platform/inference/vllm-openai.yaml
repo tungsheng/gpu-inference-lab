@@ -112,10 +112,11 @@ spec:
           value: 1
           periodSeconds: 60
   metrics:
-    - type: Resource
-      resource:
-        name: cpu
+    - type: Pods
+      pods:
+        metric:
+          name: vllm_requests_waiting
         target:
-          type: Utilization
-          # The demo model is small, so the scale signal needs to react to modest CPU pressure.
-          averageUtilization: 15
+          type: AverageValue
+          # Scale from queued inference work instead of CPU so scale-out follows serving pressure.
+          averageValue: "2"

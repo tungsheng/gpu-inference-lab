@@ -1,0 +1,155 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-serving
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  serving-dashboard.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "editable": true,
+      "graphTooltip": 0,
+      "panels": [
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "targets": [
+            {
+              "expr": "sum(vllm:num_requests_waiting{namespace=\"app\"})",
+              "legendFormat": "waiting",
+              "refId": "A"
+            }
+          ],
+          "title": "Waiting Requests",
+          "type": "timeseries"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "id": 2,
+          "targets": [
+            {
+              "expr": "sum(vllm:num_requests_running{namespace=\"app\"})",
+              "legendFormat": "running",
+              "refId": "A"
+            }
+          ],
+          "title": "Running Requests",
+          "type": "timeseries"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 8
+          },
+          "id": 3,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(vllm:e2e_request_latency_seconds_bucket{namespace=\"app\"}[5m])) by (le))",
+              "legendFormat": "p95",
+              "refId": "A"
+            }
+          ],
+          "title": "P95 End-to-End Latency",
+          "type": "timeseries"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 8
+          },
+          "id": 4,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket{namespace=\"app\"}[5m])) by (le))",
+              "legendFormat": "p95 ttft",
+              "refId": "A"
+            }
+          ],
+          "title": "P95 Time To First Token",
+          "type": "timeseries"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 16
+          },
+          "id": 5,
+          "targets": [
+            {
+              "expr": "sum(rate(vllm:generation_tokens_total{namespace=\"app\"}[5m]))",
+              "legendFormat": "tokens/s",
+              "refId": "A"
+            }
+          ],
+          "title": "Generation Tokens Per Second",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "15s",
+      "schemaVersion": 39,
+      "style": "dark",
+      "tags": [
+        "gpu-inference",
+        "serving"
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-2h",
+        "to": "now"
+      },
+      "timezone": "utc",
+      "title": "GPU Inference Serving",
+      "version": 1
+    }

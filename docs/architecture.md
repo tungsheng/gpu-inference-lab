@@ -29,21 +29,27 @@ EKS cluster
                                       +--> workload=gpu
                                       +--> gpu=true:NoSchedule
                                       +--> NVIDIA device plugin daemonset
+   |
+   +--> monitoring namespace -> Prometheus / Grafana / Adapter / Pushgateway / DCGM exporter
 ```
 
 Current implementation details:
 
 - Terraform provisions the VPC, EKS cluster, and Karpenter IAM roles.
 - `./scripts/dev up` installs the AWS Load Balancer Controller,
-  metrics-server, Karpenter, the GPU `EC2NodeClass`/`NodePool`, the NVIDIA
-  device plugin, and the public inference edge.
+  metrics-server, the observability stack, Karpenter, the GPU
+  `EC2NodeClass`/`NodePool`, the NVIDIA device plugin, and the public
+  inference edge.
 - The cluster always keeps system capacity on managed CPU nodes.
 - The cluster starts with zero GPU worker nodes.
 - The public ALB edge exists even before GPU pods are launched.
 - Applying the vLLM deployment creates a pending GPU pod, which Karpenter
   converts into a `NodeClaim` and then an EC2 GPU instance.
-- Under load, the HPA can request a second vLLM replica, which triggers a
-  second GPU node.
+- Under load, the HPA scales from queued requests exposed through Prometheus
+  Adapter, which triggers a second GPU node when a second replica is needed.
+- `./scripts/dev measure --profile warm-1` temporarily adds a static warm
+  Karpenter `NodePool` so the repo can compare cold-start latency against a
+  zero-idle baseline.
 - When load disappears and the pods scale down, Karpenter consolidates empty
   GPU nodes away.
 
@@ -65,3 +71,4 @@ Current implementation details:
 - Milestone 5: GPU runtime prerequisites
 - Milestone 6: dynamic GPU serving path
 - Milestone 7: external inference edge
+- Milestone 8: production metrics and cold-start tradeoffs

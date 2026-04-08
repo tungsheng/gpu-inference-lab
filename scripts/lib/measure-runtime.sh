@@ -19,6 +19,34 @@ verify_prerequisites() {
     missing+=("${METRICS_SERVER_DEPLOYMENT_NAME} deployment in kube-system")
   fi
 
+  if ! namespace_exists "${MONITORING_NAMESPACE}"; then
+    missing+=("${MONITORING_NAMESPACE} namespace")
+  fi
+
+  if ! resource_exists service "${KUBE_PROMETHEUS_STACK_PROMETHEUS_SERVICE}" "${MONITORING_NAMESPACE}"; then
+    missing+=("${KUBE_PROMETHEUS_STACK_PROMETHEUS_SERVICE} service in ${MONITORING_NAMESPACE}")
+  fi
+
+  if ! resource_exists deployment "${KUBE_PROMETHEUS_STACK_GRAFANA_DEPLOYMENT}" "${MONITORING_NAMESPACE}"; then
+    missing+=("${KUBE_PROMETHEUS_STACK_GRAFANA_DEPLOYMENT} deployment in ${MONITORING_NAMESPACE}")
+  fi
+
+  if ! resource_exists deployment "${PROMETHEUS_ADAPTER_DEPLOYMENT_NAME}" "${MONITORING_NAMESPACE}"; then
+    missing+=("${PROMETHEUS_ADAPTER_DEPLOYMENT_NAME} deployment in ${MONITORING_NAMESPACE}")
+  fi
+
+  if ! resource_condition_is_status apiservice "${PROMETHEUS_ADAPTER_APISERVICE_NAME}" Available True; then
+    missing+=("custom metrics API ${PROMETHEUS_ADAPTER_APISERVICE_NAME}")
+  fi
+
+  if ! resource_exists service "${PUSHGATEWAY_SERVICE_NAME}" "${MONITORING_NAMESPACE}"; then
+    missing+=("${PUSHGATEWAY_SERVICE_NAME} service in ${MONITORING_NAMESPACE}")
+  fi
+
+  if ! resource_exists daemonset "${DCGM_EXPORTER_DAEMONSET_NAME}" "${MONITORING_NAMESPACE}"; then
+    missing+=("${DCGM_EXPORTER_DAEMONSET_NAME} daemonset in ${MONITORING_NAMESPACE}")
+  fi
+
   if ! namespace_exists "${KARPENTER_NAMESPACE}"; then
     missing+=("${KARPENTER_NAMESPACE} namespace")
   fi
@@ -51,6 +79,14 @@ verify_prerequisites() {
     missing+=("${NVIDIA_DEVICE_PLUGIN_DAEMONSET_NAME} daemonset")
   fi
 
+  if ! resource_exists podmonitor "${VLLM_PODMONITOR_NAME}" "${MONITORING_NAMESPACE}"; then
+    missing+=("${VLLM_PODMONITOR_NAME} podmonitor in ${MONITORING_NAMESPACE}")
+  fi
+
+  if ! resource_exists podmonitor "${KARPENTER_PODMONITOR_NAME}" "${MONITORING_NAMESPACE}"; then
+    missing+=("${KARPENTER_PODMONITOR_NAME} podmonitor in ${MONITORING_NAMESPACE}")
+  fi
+
   if (( ${#missing[@]} > 0 )); then
     local missing_item
     log_error "dynamic GPU serving prerequisites are missing"
@@ -68,14 +104,29 @@ cleanup_existing_workloads() {
   delete_manifest_quiet "${GPU_SMOKE_TEST_MANIFEST}"
   delete_manifest_quiet "${GPU_LOAD_TEST_MANIFEST}"
   delete_manifest_quiet "${GPU_INFERENCE_MANIFEST}"
+  if declare -F mark_measurement_state_stale >/dev/null 2>&1; then
+    mark_measurement_state_stale
+  fi
+  if declare -F delete_measurement_warm_nodepool >/dev/null 2>&1; then
+    delete_measurement_warm_nodepool >/dev/null 2>&1 || true
+  else
+    kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+  if declare -F delete_measurement_profile_capacity >/dev/null 2>&1; then
+    delete_measurement_profile_capacity >/dev/null 2>&1 || true
+  fi
 
-  wait_for_numeric_at_most "GPU nodes to scale back to zero before starting a fresh run" "${WAIT_TIMEOUT_STANDARD_SECONDS}" 0 gpu_node_count serving_state_snapshot >/dev/null
+  wait_for_numeric_at_most "managed GPU nodes to be removed before starting a fresh run" "${WAIT_TIMEOUT_STANDARD_SECONDS}" 0 gpu_node_count serving_state_snapshot >/dev/null
 }
 
 cleanup_on_exit() {
   local exit_code=$?
 
   trap - EXIT
+
+  if declare -F stop_measurement_port_forwards >/dev/null 2>&1; then
+    stop_measurement_port_forwards
+  fi
 
   if (( exit_code == 0 )); then
     return 0
@@ -85,7 +136,18 @@ cleanup_on_exit() {
   log_warn "run failed; deleting load-test and inference workloads to avoid leaving GPU nodes behind"
   delete_manifest_quiet "${GPU_LOAD_TEST_MANIFEST}"
   delete_manifest_quiet "${GPU_INFERENCE_MANIFEST}"
-  wait_for_numeric_at_most "GPU nodes to scale back to zero during cleanup" "${WAIT_TIMEOUT_STANDARD_SECONDS}" 0 gpu_node_count serving_state_snapshot >/dev/null || true
+  if declare -F mark_measurement_state_stale >/dev/null 2>&1; then
+    mark_measurement_state_stale
+  fi
+  if declare -F delete_measurement_warm_nodepool >/dev/null 2>&1; then
+    delete_measurement_warm_nodepool >/dev/null 2>&1 || true
+  else
+    kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+  if declare -F delete_measurement_profile_capacity >/dev/null 2>&1; then
+    delete_measurement_profile_capacity >/dev/null 2>&1 || true
+  fi
+  wait_for_numeric_at_most "managed GPU nodes to be removed during cleanup" "${WAIT_TIMEOUT_STANDARD_SECONDS}" 0 gpu_node_count serving_state_snapshot >/dev/null || true
 
   exit "${exit_code}"
 }

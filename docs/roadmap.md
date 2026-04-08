@@ -98,28 +98,31 @@ Deliverables:
 - public endpoint reporting in `doctor`, `status`, and the measurement report
 - first-successful-external-completion timing in the measurement flow
 
+### Milestone 8 - Production metrics and cold-start tradeoffs
+
+Status: implemented.
+
+Deliverables:
+
+- system-node-group and Karpenter-only GPU-capacity guardrails
+- Prometheus, Grafana, DCGM exporter, Pushgateway, and Prometheus Adapter
+- vLLM autoscaling from `vllm:num_requests_waiting` instead of CPU utilization
+- `measure --profile zero-idle|warm-1` with production-summary and cost reporting
+
 ## Planned next milestones
 
-### Milestone 8 - Spot and on-demand GPU strategy
+### Milestone 9 - Spot and on-demand GPU strategy
 
 Status: planned.
 
-### Milestone 9 - AZ distribution
+### Milestone 10 - AZ distribution
 
 Status: planned.
 
-### Milestone 10 - GPU bin packing
+### Milestone 11 - GPU bin packing
 
 Status: planned.
 
-### Milestone 11 - Warm GPU pools
-
-Status: planned.
-
-### Milestone 12 - Observability
-
-Status: planned.
-
-### Milestone 13 - Production hardening
+### Milestone 12 - Production hardening
 
 Status: planned.

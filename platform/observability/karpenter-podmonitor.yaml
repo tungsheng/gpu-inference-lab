@@ -1,0 +1,16 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: karpenter-metrics
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - karpenter
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: karpenter
+  podMetricsEndpoints:
+    - targetPort: 8080
+      path: /metrics
+      interval: 15s

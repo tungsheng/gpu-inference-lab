@@ -1,0 +1,184 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-capacity
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  capacity-dashboard.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "editable": true,
+      "graphTooltip": 0,
+      "panels": [
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "targets": [
+            {
+              "expr": "avg(DCGM_FI_DEV_GPU_UTIL{namespace=\"monitoring\"})",
+              "legendFormat": "avg gpu util",
+              "refId": "A"
+            }
+          ],
+          "title": "Average GPU Utilization",
+          "type": "timeseries"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "id": 2,
+          "targets": [
+            {
+              "expr": "max(DCGM_FI_DEV_GPU_UTIL{namespace=\"monitoring\"})",
+              "legendFormat": "max gpu util",
+              "refId": "A"
+            }
+          ],
+          "title": "Max GPU Utilization",
+          "type": "timeseries"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 8
+          },
+          "id": 3,
+          "targets": [
+            {
+              "expr": "sum(kube_deployment_status_replicas_available{namespace=\"app\",deployment=\"vllm-openai\"})",
+              "legendFormat": "available",
+              "refId": "A"
+            }
+          ],
+          "title": "Available Replicas",
+          "type": "timeseries"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 8
+          },
+          "id": 4,
+          "targets": [
+            {
+              "expr": "sum(kube_horizontalpodautoscaler_status_current_replicas{namespace=\"app\",horizontalpodautoscaler=\"vllm-openai\"})",
+              "legendFormat": "current",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"app\",horizontalpodautoscaler=\"vllm-openai\"})",
+              "legendFormat": "desired",
+              "refId": "B"
+            }
+          ],
+          "title": "HPA Replicas",
+          "type": "timeseries"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 8
+          },
+          "id": 5,
+          "targets": [
+            {
+              "expr": "count(kube_node_labels{label_workload=\"gpu\"})",
+              "legendFormat": "gpu nodes",
+              "refId": "A"
+            }
+          ],
+          "title": "GPU Node Count",
+          "type": "timeseries"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 16
+          },
+          "id": 6,
+          "targets": [
+            {
+              "expr": "sum(karpenter_nodeclaims_created_total{nodepool=~\"gpu-serving|gpu-warm-1\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=~\"gpu-serving|gpu-warm-1\"})",
+              "legendFormat": "active nodeclaims",
+              "refId": "A"
+            }
+          ],
+          "title": "Active NodeClaims",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "15s",
+      "schemaVersion": 39,
+      "style": "dark",
+      "tags": [
+        "gpu-inference",
+        "capacity"
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-2h",
+        "to": "now"
+      },
+      "timezone": "utc",
+      "title": "GPU Inference Capacity",
+      "version": 1
+    }

@@ -27,13 +27,14 @@ Milestones completed so far:
 - Milestone 5: GPU runtime prerequisites
 - Milestone 6: dynamic GPU serving path
 - Milestone 7: external inference edge
+- Milestone 8: production metrics and cold-start tradeoffs
 
-Milestone 7 adds:
+Milestone 8 adds:
 
-- a shared public ALB edge for both the sample app and the real inference path
-- a dedicated `vllm-openai` service and ingress that exist before GPU pods are launched
-- external-endpoint reporting in `doctor`, `status`, and the measurement report
-- first-successful-external-completion timing in the measurement flow
+- Prometheus, Grafana, DCGM exporter, Prometheus Adapter, and Pushgateway installed by `./scripts/dev up`
+- queue-depth-driven HPA scaling for `vllm-openai` instead of CPU-based scaling
+- `./scripts/dev measure --profile zero-idle|warm-1` for comparing zero-idle and one-warm-node GPU capacity
+- production-summary and cost fields in the Markdown and JSON measurement reports
 
 ## Architecture At A Glance
 
@@ -63,6 +64,7 @@ EKS cluster
 - `infra/env/dev/`: active Terraform environment
 - `infra/modules/`: reusable Terraform modules
 - `platform/karpenter/`: GPU `EC2NodeClass`, `NodePool`, and service account
+- `platform/observability/`: kube-prometheus-stack values, PodMonitors, exporters, Pushgateway, and Grafana dashboards
 - `platform/inference/`: real vLLM serving manifest
 - `platform/inference/service.yaml`: stable `ClusterIP` service for the public inference edge
 - `platform/inference/ingress.yaml`: ALB-backed ingress for `/v1` inference traffic
@@ -101,6 +103,7 @@ Expected post-apply state:
 - Karpenter is installed
 - the GPU `NodePool` exists
 - the NVIDIA device plugin is installed
+- Prometheus, Grafana, Prometheus Adapter, Pushgateway, and DCGM exporter are installed
 - the sample ingress app is present
 - the public inference edge is present
 - **GPU worker node count is still zero**
@@ -127,6 +130,13 @@ Optional Markdown + JSON outputs:
 ./scripts/dev measure \
   --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md \
   --json-report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).json
+```
+
+Compare zero-idle and warm-capacity profiles:
+
+```bash
+./scripts/dev measure --profile zero-idle
+./scripts/dev measure --profile warm-1
 ```
 
 Destroy the environment:
@@ -156,10 +166,14 @@ Verify the cluster after apply:
 ```bash
 kubectl get nodes -L workload,node.kubernetes.io/instance-type -o wide
 kubectl get deployment metrics-server -n kube-system
+kubectl get deployment kube-prometheus-stack-grafana -n monitoring
+kubectl get deployment prometheus-adapter -n monitoring
 kubectl get deployment karpenter -n karpenter
 kubectl get nodepools
 kubectl get daemonset nvidia-device-plugin-daemonset -n kube-system
+kubectl get daemonset dcgm-exporter -n monitoring
 kubectl get ingress -n app -o wide
+kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1 | head
 ```
 
 Run a quick GPU smoke test:
@@ -184,11 +198,12 @@ kubectl delete -f platform/inference/vllm-openai.yaml
 
 - `./scripts/dev up`
   Applies Terraform, updates kubeconfig, installs controllers, applies the GPU
-  `EC2NodeClass` and `NodePool`, installs the public inference edge, and deploys the sample echo app.
+  `EC2NodeClass` and `NodePool`, installs the observability stack and public
+  inference edge, and deploys the sample echo app.
 - `./scripts/dev measure`
   Applies the vLLM workload, drives load, records scale-up, first external
-  completion, and scale-down milestones, and writes a Markdown report with an
-  optional JSON artifact.
+  completion, and scale-down milestones, and writes Markdown and JSON reports
+  with production latency, GPU utilization, and cost summaries.
 - `./scripts/dev down`
   Removes Kubernetes-side resources in teardown-safe order, then destroys the
   Terraform-managed infrastructure.

@@ -25,6 +25,7 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" /bin/bash -c '
   }
   install_aws_load_balancer_controller() { printf "%s\n" "call:alb-controller"; }
   install_metrics_server() { printf "%s\n" "call:metrics-server"; }
+  install_observability_stack() { printf "%s\n" "call:observability"; }
   install_karpenter() { printf "%s\n" "call:karpenter"; }
   retry_command() { shift 2; printf "call:retry:%s\n" "$*"; }
   kubectl() { printf "call:kubectl:%s\n" "$*"; }
@@ -35,7 +36,7 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" /bin/bash -c '
 '
 
 assert_status 0 "${COMMAND_STATUS}" "platform install flow should orchestrate the extracted install helpers"
-assert_contains "${COMMAND_OUTPUT}" $'call:alb-controller\nstep:installing metrics server\ncall:metrics-server\nstep:installing Karpenter\ncall:karpenter' "platform install flow should run controller, metrics, and Karpenter setup in order"
+assert_contains "${COMMAND_OUTPUT}" $'call:alb-controller\nstep:installing metrics server\ncall:metrics-server\nstep:installing observability stack\ncall:observability\nstep:installing Karpenter\ncall:karpenter' "platform install flow should run controller, metrics, observability, and Karpenter setup in order"
 assert_contains "${COMMAND_OUTPUT}" $'step:installing NVIDIA device plugin\ncall:retry:kubectl apply -f '"${REPO_ROOT}"'/platform/system/nvidia-device-plugin.yaml' "platform install flow should apply the NVIDIA device plugin through the shared retry helper"
 assert_contains "${COMMAND_OUTPUT}" $'step:ensuring app namespace exists\ncall:namespace:app\ncall:inference-edge\ncall:test-app' "platform install flow should ensure the app namespace before installing the inference edge and sample app"
 
@@ -63,6 +64,7 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" /bin/bash -c '
   }
   delete_test_app() { printf "call:test-app:%s|%s\n" "$1" "$2"; }
   delete_gpu_workloads() { printf "%s\n" "call:gpu-workloads"; }
+  delete_observability_stack() { printf "%s\n" "call:observability"; }
   delete_karpenter_stack() { printf "%s\n" "call:karpenter-stack"; }
   delete_nvidia_device_plugin() { printf "%s\n" "call:nvidia-device-plugin"; }
   delete_metrics_server() { printf "%s\n" "call:metrics-server"; }
@@ -72,5 +74,5 @@ run_and_capture env REPO_ROOT="${REPO_ROOT}" /bin/bash -c '
 '
 
 assert_status 0 "${COMMAND_STATUS}" "platform destroy flow should orchestrate the extracted teardown helpers"
-assert_contains "${COMMAND_OUTPUT}" $'call:test-app:example-alb.us-west-2.elb.amazonaws.com|us-west-2\ncall:gpu-workloads\ncall:karpenter-stack' "platform destroy flow should begin with app, GPU workload, and Karpenter cleanup"
+assert_contains "${COMMAND_OUTPUT}" $'call:test-app:example-alb.us-west-2.elb.amazonaws.com|us-west-2\ncall:gpu-workloads\ncall:observability\ncall:karpenter-stack' "platform destroy flow should begin with app, GPU workload, observability, and Karpenter cleanup"
 assert_contains "${COMMAND_OUTPUT}" $'step:deleting NVIDIA device plugin\ncall:nvidia-device-plugin\ncall:metrics-server\nstep:deleting app namespace\ncall:app-namespace\ncall:alb-controller' "platform destroy flow should finish with NVIDIA, namespace, and controller cleanup in order"

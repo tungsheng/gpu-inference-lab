@@ -43,6 +43,34 @@ ingress_hostname() {
     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true
 }
 
+resource_condition_status() {
+  local resource_kind=$1
+  local resource_name=$2
+  local condition_type=$3
+  local resource_namespace=${4:-}
+
+  if [[ -n "${resource_namespace}" ]]; then
+    kubectl get "${resource_kind}" "${resource_name}" -n "${resource_namespace}" \
+      -o jsonpath="{.status.conditions[?(@.type=='${condition_type}')].status}" 2>/dev/null || true
+    return 0
+  fi
+
+  kubectl get "${resource_kind}" "${resource_name}" \
+    -o jsonpath="{.status.conditions[?(@.type=='${condition_type}')].status}" 2>/dev/null || true
+}
+
+resource_condition_is_status() {
+  local resource_kind=$1
+  local resource_name=$2
+  local condition_type=$3
+  local expected_status=${4:-True}
+  local resource_namespace=${5:-}
+  local actual_status
+
+  actual_status=$(resource_condition_status "${resource_kind}" "${resource_name}" "${condition_type}" "${resource_namespace}")
+  [[ "${actual_status}" == "${expected_status}" ]]
+}
+
 wait_for_status_condition() {
   local resource_kind=$1
   local resource_name=$2
@@ -75,6 +103,32 @@ wait_for_status_condition() {
       else
         kubectl get "${resource_kind}" "${resource_name}" -o yaml >&2 || true
       fi
+      return 1
+    fi
+
+    sleep 5
+  done
+}
+
+wait_for_apiservice_available() {
+  local apiservice_name=$1
+  local timeout_seconds=${2:-300}
+  local start_time
+  local available_status
+
+  start_time=$(date +%s)
+
+  while true; do
+    available_status=$(kubectl get apiservice "${apiservice_name}" \
+      -o jsonpath="{.status.conditions[?(@.type=='Available')].status}" 2>/dev/null || true)
+
+    if [[ "${available_status}" == "True" ]]; then
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      log_error "timed out waiting for APIService ${apiservice_name} to become available"
+      kubectl get apiservice "${apiservice_name}" -o yaml >&2 || true
       return 1
     fi
 

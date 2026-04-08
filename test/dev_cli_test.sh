@@ -18,6 +18,7 @@ run_and_capture /bin/bash "${REPO_ROOT}/scripts/dev" measure --help
 assert_status 0 "${COMMAND_STATUS}" "scripts/dev measure --help should succeed"
 assert_contains "${COMMAND_OUTPUT}" "--report" "measure help should describe report flag"
 assert_contains "${COMMAND_OUTPUT}" "--json-report" "measure help should describe JSON report flag"
+assert_contains "${COMMAND_OUTPUT}" "--profile" "measure help should describe capacity profiles"
 
 run_and_capture /bin/bash "${REPO_ROOT}/scripts/dev" up --help
 assert_status 0 "${COMMAND_STATUS}" "scripts/dev up --help should succeed"

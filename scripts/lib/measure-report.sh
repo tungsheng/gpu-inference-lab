@@ -30,6 +30,29 @@ format_duration_seconds() {
   printf '%s\n' "n/a"
 }
 
+format_decimal_value() {
+  local value=${1-}
+  local suffix=${2:-}
+
+  if [[ -z "${value}" ]]; then
+    printf '%s\n' "n/a"
+    return 0
+  fi
+
+  printf '%s%s\n' "${value}" "${suffix}"
+}
+
+format_currency_value() {
+  local value=${1-}
+
+  if [[ -z "${value}" ]]; then
+    printf '%s\n' "n/a"
+    return 0
+  fi
+
+  printf '$%s\n' "${value}"
+}
+
 seconds_since_start_value() {
   local timestamp=${1-}
   local started_at
@@ -126,6 +149,7 @@ render_timeline_rows() {
 render_notes_markdown() {
   cat <<EOF
 - Measurements are based on polling the Kubernetes API from this script, not on controller-internal trace timestamps.
+- Production summary metrics come from in-cluster vLLM, DCGM, and Karpenter metrics scraped by Prometheus; they do not include ALB or other network overhead.
 - The load test uses the checked-in \`platform/tests/gpu-load-test.yaml\` job and targets the in-cluster \`${DEPLOYMENT_NAME}\` service.
 - The run intentionally deletes the inference workload at the end to validate full GPU scale-down back to zero nodes.
 EOF
@@ -134,6 +158,7 @@ EOF
 render_notes_json() {
   cat <<EOF
     $(json_string "Measurements are based on polling the Kubernetes API from this script, not on controller-internal trace timestamps."),
+    $(json_string "Production summary metrics come from in-cluster vLLM, DCGM, and Karpenter metrics scraped by Prometheus; they do not include ALB or other network overhead."),
     $(json_string "The load test uses the checked-in platform/tests/gpu-load-test.yaml job and targets the in-cluster ${DEPLOYMENT_NAME} service."),
     $(json_string "The run intentionally deletes the inference workload at the end to validate full GPU scale-down back to zero nodes.")
 EOF
@@ -184,10 +209,13 @@ render_markdown_report() {
 # Dynamic GPU Serving Report
 
 - Generated at: $(timestamp_utc)
+- Profile: ${MEASUREMENT_PROFILE}
 - Namespace: ${APP_NAMESPACE}
 - Deployment: ${DEPLOYMENT_NAME}
 - NodeClass: ${NODECLASS_NAME}
 - NodePool: ${NODEPOOL_NAME}
+- First GPU instance type: ${first_gpu_node_instance_type:-n/a}
+- Second GPU instance type: ${second_gpu_node_instance_type:-n/a}
 - Public endpoint: ${public_edge_url}
 - Poll interval: ${POLL_INTERVAL_SECONDS}s
 
@@ -199,11 +227,26 @@ $(render_timeline_rows)
 
 ## Summary
 
-- Cold start to first Ready replica: $(seconds_since_start "${first_ready_seen:-}")
+- Cold start to first ready replica: $(seconds_since_start "${first_ready_seen:-}")
 - Cold start to first successful external completion: $(seconds_since_start "${first_external_completion_seen:-}")
-- Load-triggered scale-out to two Ready replicas: $(seconds_between "${load_test_applied:-}" "${second_ready_seen:-}")
+- Load-triggered scale-out to two ready replicas: $(seconds_between "${load_test_applied:-}" "${second_ready_seen:-}")
 - Scale-down after load removal to one GPU node: $(seconds_between "${load_test_deleted:-}" "${scale_in_node_seen:-}")
 - Full scale-down to zero GPU nodes after inference deletion: $(seconds_between "${inference_deleted:-}" "${all_gpu_nodes_removed:-}")
+
+## Production Summary
+
+- p95 vLLM request latency during burst: $(format_decimal_value "${PRODUCTION_P95_VLLM_REQUEST_LATENCY_SECONDS:-}" "s")
+- p95 time to first token during burst: $(format_decimal_value "${PRODUCTION_P95_TTFT_SECONDS:-}" "s")
+- Peak waiting requests during burst: $(format_decimal_value "${PRODUCTION_PEAK_QUEUE_DEPTH:-}")
+- Average generation tokens per second during burst: $(format_decimal_value "${PRODUCTION_AVG_GENERATION_TOKENS_PER_SECOND:-}")
+- Average GPU utilization during burst: $(format_decimal_value "${PRODUCTION_AVG_GPU_UTILIZATION_PERCENT:-}" "%")
+- Max GPU utilization during burst: $(format_decimal_value "${PRODUCTION_MAX_GPU_UTILIZATION_PERCENT:-}" "%")
+- Peak active NodeClaims during burst: $(format_decimal_value "${PRODUCTION_PEAK_NODECLAIMS:-}")
+
+## Cost Summary
+
+- Estimated idle cost per hour for profile: $(format_currency_value "${ESTIMATED_IDLE_COST_PER_HOUR:-}")
+- Estimated burst cost for this run: $(format_currency_value "${ESTIMATED_BURST_COST:-}")
 
 ## Notes
 
@@ -226,11 +269,15 @@ render_json_report() {
 
   cat > "${JSON_REPORT_PATH}" <<EOF
 {
+  "schema_version": 2,
   "generated_at": $(json_string "$(timestamp_utc)"),
   "namespace": $(json_string "${APP_NAMESPACE}"),
   "deployment": $(json_string "${DEPLOYMENT_NAME}"),
   "nodeclass": $(json_string "${NODECLASS_NAME}"),
   "nodepool": $(json_string "${NODEPOOL_NAME}"),
+  "profile": $(json_string "${MEASUREMENT_PROFILE}"),
+  "first_gpu_instance_type": $(json_nullable_string "${first_gpu_node_instance_type:-}"),
+  "second_gpu_instance_type": $(json_nullable_string "${second_gpu_node_instance_type:-}"),
   "public_endpoint": $(json_nullable_string "${public_edge_url}"),
   "poll_interval_seconds": $(json_nullable_number "${POLL_INTERVAL_SECONDS}"),
   "timeline": [
@@ -242,6 +289,19 @@ $(render_timeline_json_rows)
     "scale_out_ready_seconds": $(json_nullable_number "$(seconds_between_value "${load_test_applied:-}" "${second_ready_seen:-}")"),
     "scale_down_to_one_gpu_node_seconds": $(json_nullable_number "$(seconds_between_value "${load_test_deleted:-}" "${scale_in_node_seen:-}")"),
     "scale_down_to_zero_gpu_nodes_seconds": $(json_nullable_number "$(seconds_between_value "${inference_deleted:-}" "${all_gpu_nodes_removed:-}")")
+  },
+  "production": {
+    "p95_vllm_request_latency_seconds": $(json_nullable_number "${PRODUCTION_P95_VLLM_REQUEST_LATENCY_SECONDS:-}"),
+    "p95_ttft_seconds": $(json_nullable_number "${PRODUCTION_P95_TTFT_SECONDS:-}"),
+    "peak_queue_depth": $(json_nullable_number "${PRODUCTION_PEAK_QUEUE_DEPTH:-}"),
+    "average_generation_tokens_per_second": $(json_nullable_number "${PRODUCTION_AVG_GENERATION_TOKENS_PER_SECOND:-}"),
+    "average_gpu_utilization_percent": $(json_nullable_number "${PRODUCTION_AVG_GPU_UTILIZATION_PERCENT:-}"),
+    "max_gpu_utilization_percent": $(json_nullable_number "${PRODUCTION_MAX_GPU_UTILIZATION_PERCENT:-}"),
+    "peak_active_nodeclaims": $(json_nullable_number "${PRODUCTION_PEAK_NODECLAIMS:-}")
+  },
+  "cost": {
+    "estimated_idle_cost_per_hour": $(json_nullable_number "${ESTIMATED_IDLE_COST_PER_HOUR:-}"),
+    "estimated_burst_cost": $(json_nullable_number "${ESTIMATED_BURST_COST:-}")
   },
   "notes": [
 $(render_notes_json)

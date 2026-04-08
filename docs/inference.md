@@ -12,7 +12,8 @@ What is in place:
 - a real vLLM deployment at `platform/inference/vllm-openai.yaml`
 - a dedicated `ClusterIP` service at `platform/inference/service.yaml`
 - a public ALB ingress at `platform/inference/ingress.yaml`
-- an HPA and a load-test job that can drive scale-out
+- a Prometheus-backed HPA and a load-test job that can drive scale-out
+- PodMonitors plus dashboards for serving and GPU metrics
 
 ## Serving stack
 
@@ -89,7 +90,7 @@ kubectl apply -f platform/tests/gpu-load-test.yaml
 ```
 
 The checked-in k6 job is intentionally a little aggressive because the demo model
-is small and the HPA scales on CPU utilization.
+is small and the HPA now scales on queued requests.
 
 Then watch:
 
@@ -97,10 +98,12 @@ Then watch:
 kubectl get hpa -n app -w
 kubectl get pods -n app -w
 kubectl get nodeclaims -w
+kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1 | head
 ```
 
-When the HPA requests a second replica, Karpenter should provision a second GPU
-node because each vLLM pod requests one full GPU.
+When the `vllm_requests_waiting` custom metric rises high enough for the HPA to
+request a second replica, Karpenter should provision a second GPU node because
+each vLLM pod requests one full GPU.
 
 ## Scale-down behavior
 

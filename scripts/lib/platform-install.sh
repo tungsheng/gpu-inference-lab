@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+PLATFORM_INSTALL_LIB_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${PLATFORM_INSTALL_LIB_DIR}/observability.sh"
+
 wait_for_webhook_endpoints() {
   local namespace=$1
   local service_name=$2
@@ -86,7 +90,7 @@ install_metrics_server() {
   run_step "applying metrics server manifest" \
     retry_command 5 5 kubectl apply -f "${METRICS_SERVER_MANIFEST_URL}"
 
-  run_step "waiting for metrics-server deployment to appear" \
+  run_step "waiting for metrics-server deployment to be present" \
     wait_for_resource_existence deployment "${METRICS_SERVER_DEPLOYMENT_NAME}" kube-system 60
 
   run_step "patching metrics-server deployment args" \
@@ -216,6 +220,7 @@ install_inference_edge() {
 run_post_apply_flow() {
   install_aws_load_balancer_controller
   run_step "installing metrics server" install_metrics_server
+  run_step "installing observability stack" install_observability_stack
   run_step "installing Karpenter" install_karpenter
   run_step "installing NVIDIA device plugin" retry_command 5 5 kubectl apply -f "${NVIDIA_DEVICE_PLUGIN_MANIFEST_PATH}"
   run_step "waiting for NVIDIA device plugin rollout" kubectl rollout status "daemonset/${NVIDIA_DEVICE_PLUGIN_DAEMONSET_NAME}" -n kube-system --timeout=10m

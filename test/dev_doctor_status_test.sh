@@ -64,8 +64,41 @@ write_stub kubectl \
 '  "cluster-info")' \
 '    printf "%s\n" "Kubernetes control plane is running"' \
 '    ;;' \
+'  *"get nodes -o name -l workload=system"*)' \
+'    printf "%s\n" "node/cpu-1"' \
+'    ;;' \
+'  *"get nodes -o name -l workload=gpu"*)' \
+'    printf "%s\n" "node/gpu-1"' \
+'    ;;' \
+'  "get nodes -o name")' \
+'    printf "%s\n" "node/cpu-1" "node/gpu-1"' \
+'    ;;' \
 '  "get deployment metrics-server -n kube-system")' \
 '    printf "%s\n" "deployment.apps/metrics-server"' \
+'    ;;' \
+'  "get service kube-prometheus-stack-prometheus -n monitoring")' \
+'    printf "%s\n" "service/kube-prometheus-stack-prometheus"' \
+'    ;;' \
+'  "get deployment kube-prometheus-stack-grafana -n monitoring")' \
+'    printf "%s\n" "deployment.apps/kube-prometheus-stack-grafana"' \
+'    ;;' \
+'  "get deployment prometheus-adapter -n monitoring")' \
+'    printf "%s\n" "deployment.apps/prometheus-adapter"' \
+'    ;;' \
+'  *"get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath="*)' \
+'    printf "%s\n" "True"' \
+'    ;;' \
+'  "get service pushgateway -n monitoring")' \
+'    printf "%s\n" "service/pushgateway"' \
+'    ;;' \
+'  "get daemonset dcgm-exporter -n monitoring")' \
+'    printf "%s\n" "daemonset.apps/dcgm-exporter"' \
+'    ;;' \
+'  "get podmonitor vllm-metrics -n monitoring")' \
+'    printf "%s\n" "podmonitor.monitoring.coreos.com/vllm-metrics"' \
+'    ;;' \
+'  "get podmonitor karpenter-metrics -n monitoring")' \
+'    printf "%s\n" "podmonitor.monitoring.coreos.com/karpenter-metrics"' \
 '    ;;' \
 '  "get namespace karpenter")' \
 '    printf "%s\n" "namespace/karpenter"' \
@@ -85,6 +118,12 @@ write_stub kubectl \
 '  "get nodepool gpu-serving")' \
 '    printf "%s\n" "nodepool.karpenter.sh/gpu-serving"' \
 '    ;;' \
+'  *"get nodepool gpu-serving -o jsonpath="*)' \
+'    printf "%s\n" "True"' \
+'    ;;' \
+'  "get nodepool gpu-warm-1")' \
+'    exit 1' \
+'    ;;' \
 '  "get ec2nodeclass gpu-serving")' \
 '    printf "%s\n" "ec2nodeclass.karpenter.k8s.aws/gpu-serving"' \
 '    ;;' \
@@ -96,9 +135,6 @@ write_stub kubectl \
 '    ;;' \
 '  "get ingress vllm-openai-ingress -n app")' \
 '    printf "%s\n" "ingress.networking.k8s.io/vllm-openai-ingress"' \
-'    ;;' \
-'  "get nodes -o name")' \
-'    printf "%s\n" "node/cpu-1" "node/gpu-1"' \
 '    ;;' \
 '  "get nodepools -o name")' \
 '    printf "%s\n" "nodepool.karpenter.sh/gpu-serving"' \
@@ -160,26 +196,40 @@ TEST_ENV=(
 run_and_capture env "${TEST_ENV[@]}" /bin/bash "${REPO_ROOT}/scripts/dev" doctor --json
 assert_status 0 "${COMMAND_STATUS}" "doctor --json should succeed for a ready environment"
 assert_contains "${COMMAND_OUTPUT}" '"ok": true' "doctor JSON should report success"
-assert_contains "${COMMAND_OUTPUT}" '"summary": "environment ready for measurements"' "doctor JSON should include a readable summary"
+assert_contains "${COMMAND_OUTPUT}" '"schema_version": 2' "doctor JSON should include a schema version"
+assert_contains "${COMMAND_OUTPUT}" '"summary": "environment ready for measurement"' "doctor JSON should include a readable summary"
 assert_contains "${COMMAND_OUTPUT}" '"cluster_name": "gpu-inference"' "doctor JSON should include the Terraform cluster name"
-assert_contains "${COMMAND_OUTPUT}" '"nvidia_device_plugin": true' "doctor JSON should include platform readiness details"
-assert_contains "${COMMAND_OUTPUT}" '"inference_ingress": true' "doctor JSON should include the inference edge readiness"
+assert_contains "${COMMAND_OUTPUT}" '"nvidia_device_plugin_present": true' "doctor JSON should include platform presence details"
+assert_contains "${COMMAND_OUTPUT}" '"inference_ingress_present": true' "doctor JSON should include the inference edge presence"
+assert_contains "${COMMAND_OUTPUT}" '"prometheus_service_present": true' "doctor JSON should include observability presence"
+assert_contains "${COMMAND_OUTPUT}" '"inference_ingress": true' "doctor JSON should preserve the legacy inference ingress alias"
+assert_contains "${COMMAND_OUTPUT}" '"warm_gpu_nodepool_present": false' "doctor JSON should report that the warm profile is not active by default"
 
 run_and_capture env "${TEST_ENV[@]}" /bin/bash "${REPO_ROOT}/scripts/dev" status
 assert_status 0 "${COMMAND_STATUS}" "status should succeed when the cluster is reachable"
-assert_contains "${COMMAND_OUTPUT}" 'measurement readiness: yes' "status should surface measurement readiness in text output"
+assert_contains "${COMMAND_OUTPUT}" 'measurement: ready' "status should surface measurement readiness in text output"
 assert_contains "${COMMAND_OUTPUT}" 'nodes: 2' "status should include node counts in text output"
+assert_contains "${COMMAND_OUTPUT}" 'system nodes: 1' "status should include system node counts in text output"
+assert_contains "${COMMAND_OUTPUT}" 'gpu nodes: 1' "status should include GPU node counts in text output"
 assert_contains "${COMMAND_OUTPUT}" 'public inference URL: http://public-edge.example.com/v1/completions' "status should surface the public inference URL"
+assert_contains "${COMMAND_OUTPUT}" 'Prometheus service: present' "status should surface observability presence"
+assert_contains "${COMMAND_OUTPUT}" 'warm GPU NodePool: not present' "status should report the warm profile state"
 
 run_and_capture env "${TEST_ENV[@]}" /bin/bash "${REPO_ROOT}/scripts/dev" status --json
 assert_status 0 "${COMMAND_STATUS}" "status --json should succeed when the cluster is reachable"
 assert_contains "${COMMAND_OUTPUT}" '"ok": true' "status JSON should report cluster reachability"
+assert_contains "${COMMAND_OUTPUT}" '"schema_version": 2' "status JSON should include a schema version"
 assert_contains "${COMMAND_OUTPUT}" '"ready_for_measurement": true' "status JSON should include measurement readiness"
 assert_contains "${COMMAND_OUTPUT}" '"nodes": 2' "status JSON should include node counts"
+assert_contains "${COMMAND_OUTPUT}" '"system_nodes": 1' "status JSON should include system node counts"
+assert_contains "${COMMAND_OUTPUT}" '"gpu_nodes": 1' "status JSON should include GPU node counts"
 assert_contains "${COMMAND_OUTPUT}" '"app_deployments": 2' "status JSON should include app deployment counts"
 assert_contains "${COMMAND_OUTPUT}" '"app_services": 2' "status JSON should include both the sample app and inference service"
 assert_contains "${COMMAND_OUTPUT}" '"app_ingresses": 2' "status JSON should include both public ingresses"
 assert_contains "${COMMAND_OUTPUT}" '"url": "http://public-edge.example.com/v1/completions"' "status JSON should include the public inference URL"
+assert_contains "${COMMAND_OUTPUT}" '"prometheus_adapter_deployment_present": true' "status JSON should include the serving metrics adapter"
+assert_contains "${COMMAND_OUTPUT}" '"prometheus_adapter": true' "status JSON should preserve the legacy Prometheus adapter alias"
+assert_contains "${COMMAND_OUTPUT}" '"warm_gpu_nodepool_present": false' "status JSON should report the warm profile state"
 
 run_and_capture env "${TEST_ENV[@]}" /bin/bash "${REPO_ROOT}/scripts/dev" status --json --verbose
 assert_status 1 "${COMMAND_STATUS}" "status should reject combining JSON and verbose modes"
