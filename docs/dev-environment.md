@@ -1,127 +1,76 @@
 # Dev Environment Workflow
 
-This repository provisions the dev environment with Terraform and then layers
-the Kubernetes controllers and platform manifests on top with shell scripts.
+This repository now uses a minimal shell workflow around the single supported
+environment at `infra/env/dev`.
 
 ## Prerequisites
 
 - Terraform, AWS CLI, `kubectl`, and `helm`
 - AWS credentials for the target account
-- The dev environment Terraform at `infra/env/dev`
-- The current region `us-west-2`
+- the current region `us-west-2`
 
-## Apply Infra + Platform
-
-Initialize Terraform:
+## Bring The Environment Up
 
 ```bash
-terraform -chdir=infra/env/dev init
-```
-
-Apply the environment:
-
-```bash
-./scripts/dev up
+./scripts/up
 ```
 
 Common variants:
 
 ```bash
-./scripts/dev up -auto-approve
-./scripts/dev up -var-file=dev.tfvars
+./scripts/up -auto-approve
+./scripts/up -var-file=dev.tfvars
 ```
 
-What `./scripts/dev up` does:
+What `./scripts/up` does:
 
-1. Runs `terraform -chdir=infra/env/dev apply`
-2. Updates local kubeconfig
-3. Installs the AWS Load Balancer Controller
-4. Installs metrics-server from the pinned upstream release
-5. Installs Prometheus, Grafana, Prometheus Adapter, Pushgateway, and the GPU observability exporters
-6. Installs Karpenter and applies the GPU `EC2NodeClass`/`NodePool`
+1. Runs `terraform -chdir=infra/env/dev init -input=false`
+2. Runs `terraform -chdir=infra/env/dev apply`
+3. Updates local kubeconfig from Terraform outputs
+4. Installs the AWS Load Balancer Controller
+5. Installs Karpenter CRDs and controller
+6. Applies the GPU `EC2NodeClass` and `NodePool`
 7. Applies the NVIDIA device plugin
 8. Ensures the `app` namespace exists
-9. Applies the dedicated inference service and public ingress
-10. Applies the sample ALB-backed echo app
-
-The apply helper is intentionally strict. It still rejects `-target`,
-`-refresh-only`, and `-destroy` so it does not run the post-apply Kubernetes
-workflow after a partial Terraform operation.
-
-## Verify the ready state
-
-```bash
-kubectl get nodes -L workload,node.kubernetes.io/instance-type -o wide
-kubectl get deployment metrics-server -n kube-system
-kubectl get deployment kube-prometheus-stack-grafana -n monitoring
-kubectl get deployment prometheus-adapter -n monitoring
-kubectl get deployment karpenter -n karpenter
-kubectl get nodepools
-kubectl get ingress -n app -o wide
-```
+9. Applies the inference service and public ingress
+10. Waits for the ingress hostname and prints the public URL
 
 Expected result:
 
 - system nodes are present
 - Karpenter is Ready
-- the ALB ingress is present
-- the public inference edge is present
-- there are zero GPU worker nodes until a GPU pod is applied
+- the public inference ingress has a hostname
+- the cluster is GPU-ready
+- there are still zero GPU worker nodes until a GPU workload is applied
 
-## Run the milestone flow
-
-The easiest end-to-end validation is:
+## Run The Default Verification
 
 ```bash
-./scripts/dev measure
+./scripts/verify
 ```
 
-That script applies the real vLLM serving manifest, waits for the first
-successful external completion through the public edge, runs the checked-in load
-test, waits for scale-out and scale-down, and writes a Markdown report to
-`/tmp/` unless you pass a different output path.
+The verify flow:
 
-Example:
+1. Applies the deployment-only vLLM manifest
+2. Waits for one GPU node to appear
+3. Waits for the deployment to become Ready
+4. Repeats a public `/v1/completions` request until it gets a `200`
+5. Deletes the deployment
+6. Waits for the GPU node count to return to zero
+7. Prints a short timing summary
+
+## Manual Checks
+
+Watch the platform after `./scripts/up`:
 
 ```bash
-./scripts/dev measure --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
+kubectl get nodes -L workload,node.kubernetes.io/instance-type -o wide
+kubectl get deployment karpenter -n karpenter
+kubectl get nodepools
+kubectl get ingress -n app -o wide
 ```
 
-Optional Markdown + JSON outputs:
-
-```bash
-./scripts/dev measure \
-  --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md \
-  --json-report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).json
-```
-
-Warm-capacity comparison:
-
-```bash
-./scripts/dev measure --profile zero-idle
-./scripts/dev measure --profile warm-1
-```
-
-Useful companion commands:
-
-```bash
-./scripts/dev doctor
-./scripts/dev doctor --json
-./scripts/dev status
-./scripts/dev status --verbose
-./scripts/dev status --json
-```
-
-Grafana stays internal-only in this milestone. Use a port-forward when you want
-the dashboards:
-
-```bash
-kubectl port-forward -n monitoring deployment/kube-prometheus-stack-grafana 3000:3000
-```
-
-## Manual GPU checks
-
-Smoke-test pod:
+Run a manual GPU smoke test:
 
 ```bash
 kubectl apply -f platform/tests/gpu-test.yaml
@@ -129,59 +78,36 @@ kubectl logs -n app gpu-test
 kubectl delete -f platform/tests/gpu-test.yaml
 ```
 
-Real serving stack:
+Exercise the deployment manually:
 
 ```bash
 kubectl apply -f platform/inference/vllm-openai.yaml
 kubectl get pods -n app -w
+kubectl get nodes -L workload,node.kubernetes.io/instance-type -w
 kubectl delete -f platform/inference/vllm-openai.yaml
 ```
 
-Public inference edge:
+## Tear The Environment Down
 
 ```bash
-EDGE_HOST=$(kubectl get ingress vllm-openai-ingress -n app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-curl "http://${EDGE_HOST}/v1/completions" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"qwen2.5-0.5b","prompt":"Hello from the public edge.","max_tokens":32,"temperature":0}'
-```
-
-## Destroy Infra + Platform
-
-Destroy the environment with:
-
-```bash
-./scripts/dev down
+./scripts/down
 ```
 
 Common variant:
 
 ```bash
-./scripts/dev down -auto-approve
+./scripts/down -auto-approve
 ```
 
-The destroy helper:
+What `./scripts/down` does:
 
-1. Deletes the inference ingress and sample ingress so the ALB can be removed cleanly
-2. Deletes the inference service and sample app workload
-3. Deletes the GPU smoke test, load test, and inference workload if present
-4. Deletes the observability stack
-5. Deletes the Karpenter `NodePool`/`EC2NodeClass`
-6. Waits for Karpenter-managed GPU nodes to terminate
-7. Uninstalls Karpenter
-8. Deletes the NVIDIA device plugin
-9. Deletes metrics-server
-10. Deletes the app namespace
-11. Uninstalls the AWS Load Balancer Controller
-12. Runs `terraform -chdir=infra/env/dev destroy`
+1. Runs `terraform -chdir=infra/env/dev init -input=false`
+2. Reconnects to the cluster from Terraform outputs
+3. Deletes the inference ingress, service, and deployment
+4. Waits for the ALB to disappear
+5. Deletes the GPU `NodePool` and `EC2NodeClass`
+6. Uninstalls Karpenter and the NVIDIA device plugin
+7. Runs `terraform -chdir=infra/env/dev destroy`
 
-## Recovery / Partial Teardown
-
-If the EKS cluster is already gone or intentionally unreachable:
-
-```bash
-SKIP_K8S_CLEANUP=1 ./scripts/dev down
-```
-
-Use that only when the Kubernetes-managed resources are already removed or no
-longer need cleanup.
+If the script cannot reach the cluster, it stops before `terraform destroy` and
+prints the exact fallback destroy command to run manually.

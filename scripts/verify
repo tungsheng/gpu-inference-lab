@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/_common.sh"
+
+TOTAL_STAGES=6
+DEPLOYMENT_APPLIED=0
+
+cleanup_verify() {
+  if [[ "${DEPLOYMENT_APPLIED}" == "1" ]]; then
+    kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+}
+
+verify_prereqs() {
+  require_commands kubectl curl
+}
+
+apply_inference_deployment() {
+  kubectl apply -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}"
+  DEPLOYMENT_APPLIED=1
+  VERIFY_START_TIME=$(date +%s)
+}
+
+wait_for_gpu_node() {
+  wait_for_gpu_nodes_at_least 1 "${VERIFY_READY_TIMEOUT_SECONDS}" || return 1
+  FIRST_GPU_NODE_TIME=$(date +%s)
+}
+
+wait_for_ready_deployment() {
+  kubectl rollout status "deployment/${GPU_INFERENCE_DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" --timeout=20m || return 1
+  FIRST_READY_TIME=$(date +%s)
+}
+
+wait_for_first_response() {
+  local ingress_hostname
+  local url
+
+  ingress_hostname=$(wait_for_ingress_hostname "${VERIFY_RESPONSE_TIMEOUT_SECONDS}") || return 1
+  url=$(public_inference_url "${ingress_hostname}")
+  wait_for_http_200 "${url}" "${VERIFY_RESPONSE_TIMEOUT_SECONDS}" || return 1
+  FIRST_RESPONSE_TIME=$(date +%s)
+  PUBLIC_INFERENCE_URL=${url}
+}
+
+delete_deployment_and_wait_for_zero() {
+  kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_gpu_nodes_at_most 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  DEPLOYMENT_APPLIED=0
+  CLEANUP_FINISH_TIME=$(date +%s)
+}
+
+main() {
+  if (($# > 0)); then
+    printf 'Usage:\n  ./scripts/verify\n' >&2
+    exit 1
+  fi
+
+  trap cleanup_verify EXIT
+
+  set_failure_hints \
+    "command -v kubectl curl" \
+    "kubectl config current-context" \
+    "kubectl get ingress -n ${APP_NAMESPACE}"
+  run_stage 1 "${TOTAL_STAGES}" "checking prerequisites" verify_prereqs
+
+  set_failure_hints \
+    "kubectl get deployment -n ${APP_NAMESPACE}" \
+    "kubectl get service,ingress -n ${APP_NAMESPACE}" \
+    "kubectl describe ingress ${GPU_INFERENCE_INGRESS_NAME} -n ${APP_NAMESPACE}"
+  run_stage 2 "${TOTAL_STAGES}" "apply inference deployment" apply_inference_deployment
+
+  set_failure_hints \
+    "kubectl get pods -n ${APP_NAMESPACE} -o wide" \
+    "kubectl get nodepool,nodeclaim" \
+    "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
+  run_stage 3 "${TOTAL_STAGES}" "wait for first gpu node" wait_for_gpu_node
+
+  set_failure_hints \
+    "kubectl describe deployment ${GPU_INFERENCE_DEPLOYMENT_NAME} -n ${APP_NAMESPACE}" \
+    "kubectl get pods -n ${APP_NAMESPACE} -o wide" \
+    "kubectl logs -n ${APP_NAMESPACE} deployment/${GPU_INFERENCE_DEPLOYMENT_NAME} --tail=100"
+  run_stage 4 "${TOTAL_STAGES}" "wait for ready deployment" wait_for_ready_deployment
+
+  set_failure_hints \
+    "kubectl get ingress ${GPU_INFERENCE_INGRESS_NAME} -n ${APP_NAMESPACE} -o yaml" \
+    "kubectl get endpoints ${GPU_INFERENCE_DEPLOYMENT_NAME} -n ${APP_NAMESPACE} -o yaml" \
+    "curl -i http://<ingress-hostname>${GPU_INFERENCE_EDGE_PATH}"
+  run_stage 5 "${TOTAL_STAGES}" "wait for first successful response" wait_for_first_response
+
+  set_failure_hints \
+    "kubectl get deployment,pod -n ${APP_NAMESPACE}" \
+    "kubectl get nodes -L workload,node.kubernetes.io/instance-type" \
+    "kubectl get nodeclaim"
+  run_stage 6 "${TOTAL_STAGES}" "delete deployment and wait for zero gpu nodes" delete_deployment_and_wait_for_zero
+
+  printf '\nVerified:\n'
+  printf '  First GPU node: %s\n' "$(format_duration "$((FIRST_GPU_NODE_TIME - VERIFY_START_TIME))")"
+  printf '  Deployment ready: %s\n' "$(format_duration "$((FIRST_READY_TIME - VERIFY_START_TIME))")"
+  printf '  First successful response: %s\n' "$(format_duration "$((FIRST_RESPONSE_TIME - VERIFY_START_TIME))")"
+  printf '  Cleanup complete: %s\n' "$(format_duration "$((CLEANUP_FINISH_TIME - FIRST_RESPONSE_TIME))")"
+  printf '  Public inference URL: %s\n' "${PUBLIC_INFERENCE_URL}"
+}
+
+main "$@"

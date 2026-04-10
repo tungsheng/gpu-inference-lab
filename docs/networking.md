@@ -81,14 +81,11 @@ The current public entry path is implemented with:
 
 - `platform/controller/aws-load-balancer-controller/service-account.yaml`
 - Helm release `aws-load-balancer-controller` from the `eks` chart repository
-- `platform/test-app/service.yaml`
-- `platform/test-app/ingress.yaml`
 - `platform/inference/service.yaml`
 - `platform/inference/ingress.yaml`
 
-The current edge uses a shared internet-facing ALB and IP targets:
+The default edge uses an internet-facing ALB and IP targets:
 
-- `/` routes to the sample echo app
 - `/v1` routes to the real `vllm-openai` inference service
 
 This validates not just controller permissions and subnet tagging, but also the

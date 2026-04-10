@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/_common.sh"
+
+TOTAL_STAGES=7
+
+usage() {
+  cat <<EOF
+Usage:
+  ./scripts/up [terraform apply args]
+
+Examples:
+  ./scripts/up
+  ./scripts/up -auto-approve
+  ./scripts/up -var-file=dev.tfvars
+EOF
+}
+
+check_up_prereqs() {
+  require_commands aws helm kubectl terraform
+}
+
+run_terraform_init() {
+  terraform -chdir="${TF_DIR}" init -input=false
+}
+
+run_terraform_apply() {
+  terraform -chdir="${TF_DIR}" apply "$@"
+}
+
+connect_cluster() {
+  load_cluster_context || return 1
+  update_kubeconfig || return 1
+  kubectl cluster-info
+}
+
+install_aws_load_balancer_controller() {
+  kubectl apply -f "${ALB_CONTROLLER_SERVICE_ACCOUNT_MANIFEST}" || return 1
+  kubectl annotate serviceaccount \
+    -n kube-system \
+    "${ALB_CONTROLLER_SERVICE_ACCOUNT_NAME}" \
+    "eks.amazonaws.com/role-arn=${ALB_CONTROLLER_ROLE_ARN}" \
+    --overwrite || return 1
+  helm repo add "${ALB_CONTROLLER_HELM_REPO_NAME}" "${ALB_CONTROLLER_HELM_REPO_URL}" --force-update || return 1
+  helm repo update || return 1
+  apply_aws_load_balancer_controller_crds || return 1
+  helm upgrade --install "${ALB_CONTROLLER_RELEASE_NAME}" \
+    "${ALB_CONTROLLER_HELM_REPO_NAME}/aws-load-balancer-controller" \
+    -n kube-system \
+    --wait \
+    --timeout 10m \
+    --version "${ALB_CONTROLLER_CHART_VERSION}" \
+    --set clusterName="${CLUSTER_NAME}" \
+    --set serviceAccount.create=false \
+    --set serviceAccount.name="${ALB_CONTROLLER_SERVICE_ACCOUNT_NAME}" \
+    --set region="${AWS_REGION}" \
+    --set vpcId="${VPC_ID}" || return 1
+  kubectl rollout status "deployment/${ALB_CONTROLLER_RELEASE_NAME}" -n kube-system --timeout=10m || return 1
+  wait_for_service_endpoints kube-system "${ALB_CONTROLLER_WEBHOOK_SERVICE}" "${CONTROLLER_TIMEOUT_SECONDS}"
+}
+
+install_karpenter_stack() {
+  kubectl apply -f "${KARPENTER_SERVICE_ACCOUNT_MANIFEST}" || return 1
+  helm upgrade --install "${KARPENTER_CRD_RELEASE_NAME}" oci://public.ecr.aws/karpenter/karpenter-crd \
+    -n "${KARPENTER_NAMESPACE}" \
+    --create-namespace \
+    --version "${KARPENTER_CHART_VERSION}" \
+    --wait \
+    --timeout 10m || return 1
+  kubectl wait --for=condition=Established crd/nodepools.karpenter.sh --timeout=10m || return 1
+  kubectl wait --for=condition=Established crd/nodeclaims.karpenter.sh --timeout=10m || return 1
+  kubectl wait --for=condition=Established crd/ec2nodeclasses.karpenter.k8s.aws --timeout=10m || return 1
+  helm upgrade --install "${KARPENTER_RELEASE_NAME}" oci://public.ecr.aws/karpenter/karpenter \
+    -n "${KARPENTER_NAMESPACE}" \
+    --create-namespace \
+    --version "${KARPENTER_CHART_VERSION}" \
+    --wait \
+    --timeout 10m \
+    --set settings.clusterName="${CLUSTER_NAME}" \
+    --set serviceAccount.create=false \
+    --set serviceAccount.name="${KARPENTER_SERVICE_ACCOUNT_NAME}" || return 1
+  kubectl rollout status "deployment/${KARPENTER_RELEASE_NAME}" -n "${KARPENTER_NAMESPACE}" --timeout=10m || return 1
+  kubectl apply -f "${KARPENTER_NODECLASS_MANIFEST}" || return 1
+  kubectl wait --for=condition=Ready "ec2nodeclass/${KARPENTER_NODECLASS_NAME}" --timeout=10m || return 1
+  kubectl apply -f "${KARPENTER_NODEPOOL_MANIFEST}" || return 1
+  kubectl wait --for=condition=Ready "nodepool/${KARPENTER_NODEPOOL_NAME}" --timeout=10m || return 1
+  kubectl apply -f "${NVIDIA_DEVICE_PLUGIN_MANIFEST}" || return 1
+  kubectl rollout status daemonset/nvidia-device-plugin-daemonset -n kube-system --timeout=10m
+}
+
+apply_inference_edge() {
+  ensure_namespace || return 1
+  kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}" || return 1
+  kubectl apply -f "${GPU_INFERENCE_INGRESS_MANIFEST}" || return 1
+  INGRESS_HOSTNAME=$(wait_for_ingress_hostname "${INGRESS_HOSTNAME_TIMEOUT_SECONDS}") || return 1
+}
+
+main() {
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
+
+  set_failure_hints \
+    "command -v terraform aws kubectl helm" \
+    "terraform -chdir=${TF_DIR} version" \
+    "kubectl version --client"
+  run_stage 1 "${TOTAL_STAGES}" "checking prerequisites" check_up_prereqs
+
+  set_failure_hints \
+    "terraform -chdir=${TF_DIR} init -input=false" \
+    "terraform -chdir=${TF_DIR} providers" \
+    "terraform -chdir=${TF_DIR} validate"
+  run_stage 2 "${TOTAL_STAGES}" "terraform init" run_terraform_init
+
+  set_failure_hints \
+    "terraform -chdir=${TF_DIR} plan" \
+    "terraform -chdir=${TF_DIR} output" \
+    "terraform -chdir=${TF_DIR} state list"
+  run_stage 3 "${TOTAL_STAGES}" "terraform apply" run_terraform_apply "$@"
+
+  set_failure_hints \
+    "terraform -chdir=${TF_DIR} output" \
+    "aws eks update-kubeconfig --name gpu-inference --region us-west-2" \
+    "kubectl cluster-info"
+  run_stage 4 "${TOTAL_STAGES}" "connect cluster context" connect_cluster
+
+  set_failure_hints \
+    "kubectl get serviceaccount -n kube-system ${ALB_CONTROLLER_SERVICE_ACCOUNT_NAME} -o yaml" \
+    "helm list -n kube-system" \
+    "kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller"
+  run_stage 5 "${TOTAL_STAGES}" "install aws load balancer controller" install_aws_load_balancer_controller
+
+  set_failure_hints \
+    "helm list -n ${KARPENTER_NAMESPACE}" \
+    "kubectl get ec2nodeclass,nodepool" \
+    "kubectl get daemonset -n kube-system nvidia-device-plugin-daemonset -o wide"
+  run_stage 6 "${TOTAL_STAGES}" "install karpenter and gpu prerequisites" install_karpenter_stack
+
+  set_failure_hints \
+    "kubectl get service,ingress -n ${APP_NAMESPACE}" \
+    "kubectl describe ingress ${GPU_INFERENCE_INGRESS_NAME} -n ${APP_NAMESPACE}" \
+    "kubectl get events -n ${APP_NAMESPACE} --sort-by=.lastTimestamp | tail -n 40"
+  run_stage 7 "${TOTAL_STAGES}" "apply public inference edge" apply_inference_edge
+
+  printf '\nReady:\n'
+  printf '  Public inference URL: %s\n' "$(public_inference_url "${INGRESS_HOSTNAME}")"
+  printf '  Next step: ./scripts/verify\n'
+}
+
+main "$@"

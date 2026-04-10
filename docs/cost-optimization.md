@@ -1,78 +1,49 @@
 # Cost Optimization
 
-## Why this matters
+## Baseline Cost Posture
 
-GPU capacity is the most expensive part of this platform. The point of the
-dynamic serving path is not just nicer autoscaling behavior. It is removing the
-default cost of an always-on GPU node when nobody is using the model.
-
-## Baseline comparison
-
-Using the official AWS us-west-2 EC2 on-demand price sheet fetched on
-`2026-03-23`:
-
-- `g4dn.xlarge`: `$0.526/hour`
-- `g5.xlarge`: `$1.006/hour`
-- `m7i-flex.large`: `$0.09576/hour`
-
-The previous baseline kept one managed `g4dn.xlarge` GPU node available all the
-time. The current baseline keeps that node count at zero until the inference
-deployment requests a GPU.
+The repo defaults to an **elastic GPU baseline** instead of a fixed GPU node
+group.
 
 That means:
 
-- fixed baseline cost = `24 * GPU hourly price`
-- dynamic baseline cost = `active GPU hours * GPU hourly price`
+- system nodes stay up all the time
+- GPU nodes appear only when a workload requests `nvidia.com/gpu`
+- when the workload disappears, Karpenter can consolidate the empty GPU node
+  back down
 
-The system-node baseline still exists in both cases, so the meaningful delta is
-the GPU line item.
+The default tradeoff is simple:
 
-## Fixed vs dynamic note
+- you save idle GPU spend
+- you pay cold-start latency on the first request after scaling from zero
 
-Use the measurement report from `./scripts/dev measure` to plug
-in the actual active GPU time for your run.
+## What The Default Workflow Optimizes For
 
-Worked example if Karpenter lands on `g4dn.xlarge` and the service is active
-for one hour in a day:
+The current scripts optimize for:
 
-- fixed GPU baseline: `24 * $0.526 = $12.62/day`
-- dynamic GPU baseline: `1 * $0.526 = $0.53/day`
-- savings: about `$12.10/day`, or roughly `96%` of the fixed GPU idle spend
+- simple bring-up
+- a clear first-response validation
+- a clean return to zero GPU nodes
 
-If Karpenter has to use `g5.xlarge` instead, the per-active-hour GPU price is
-higher, but the same dynamic-vs-fixed principle still holds: the platform pays
-for **used GPU hours**, not for a permanently idling node.
+They do **not** currently automate warm-node or benchmark-style cost
+comparisons. Those experiments are now manual or future work rather than part
+of the day-one lifecycle.
 
-In practice, the dynamic path trades lower idle cost for a longer first-request
-latency because the first GPU node has to be launched and initialized.
+## Instance-Family Flexibility
 
-## Current tradeoff milestone
+The serving `NodePool` currently allows:
 
-Milestone 8 now makes the cost/latency tradeoff measurable with two checked-in
-profiles:
+- `g4dn.xlarge`
+- `g5.xlarge`
 
-- `zero-idle`
-- `warm-1`
+That improves the chance that a pending inference pod can find compatible GPU
+capacity in constrained regions or AZs.
 
-Use two separate runs:
+## Manual Next Steps
 
-```bash
-./scripts/dev measure --profile zero-idle
-./scripts/dev measure --profile warm-1
-```
+If you want to keep exploring cost tradeoffs, compare:
 
-Compare:
-
-- first external completion latency
-- estimated idle cost per hour
-- estimated burst cost
-- scale-down time back to zero GPU nodes
-
-## Next cost milestone
-
-Milestone 9 should add a mixed provisioning strategy:
-
-- `gpu-spot` for cheaper interruptible capacity
-- `gpu-ondemand` for fallback and baseline reliability
-
-That will let the platform optimize both **idle cost** and **active-hour cost**.
+- time to first GPU node
+- time to first successful public response
+- how quickly the cluster returns to zero GPU nodes
+- whether a warm-node policy is worth the extra idle spend for your traffic pattern

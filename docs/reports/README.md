@@ -1,12 +1,7 @@
 # Reports
 
-This directory is intended for generated validation artifacts, such as the
-Markdown timeline report written by:
+The default lifecycle no longer generates benchmark or timing report files.
 
-```bash
-./scripts/dev measure --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
-```
-
-Generated reports are not required for the repo to function, but they are the
-easiest way to capture cold-start, first-external-completion, scale-out, and
-scale-down timing for the current external-edge GPU serving milestone.
+This directory remains available if you want to keep manual experiment notes or
+save ad hoc validation output while exploring optional autoscaling and
+observability layers.

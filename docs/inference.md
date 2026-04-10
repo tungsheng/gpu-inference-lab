@@ -1,23 +1,25 @@
 # Inference
 
-## Current state
+## Current State
 
-The repository now includes a **real GPU inference service** instead of a
-placeholder GPU pod.
+The repository includes a real GPU inference service instead of a placeholder
+GPU pod.
 
-What is in place:
+What is in place by default:
 
 - a Karpenter-managed GPU `NodePool`
 - the NVIDIA device plugin
-- a real vLLM deployment at `platform/inference/vllm-openai.yaml`
+- a deployment-only vLLM manifest at `platform/inference/vllm-openai.yaml`
 - a dedicated `ClusterIP` service at `platform/inference/service.yaml`
 - a public ALB ingress at `platform/inference/ingress.yaml`
-- a Prometheus-backed HPA and a load-test job that can drive scale-out
-- PodMonitors plus dashboards for serving and GPU metrics
 
-## Serving stack
+Optional extras stay separate:
 
-The current serving runtime is:
+- `platform/inference/hpa.yaml` for autoscaling
+- `platform/tests/gpu-load-test.yaml` for load-driven scale-out experiments
+- `platform/observability/` for the metrics stack that supports the HPA
+
+## Serving Stack
 
 - image: `vllm/vllm-openai:v0.9.0`
 - model: `Qwen/Qwen2.5-0.5B-Instruct`
@@ -29,7 +31,7 @@ Why this stack:
 - it exposes a stable HTTP API instead of a shell command or sleep loop
 - the model is small enough to fit on the single-GPU node types used in this lab
 
-## Scheduling contract
+## Scheduling Contract
 
 The deployment depends on the same explicit scheduling rules the rest of the
 platform is built around:
@@ -39,15 +41,26 @@ platform is built around:
 - `requests.nvidia.com/gpu: 1`
 - `limits.nvidia.com/gpu: 1`
 
-That means the workload will stay pending until:
+That means the workload stays pending until:
 
-1. Karpenter creates a matching `NodeClaim`
+1. Karpenter creates matching capacity
 2. the EC2 GPU node joins the cluster
 3. the NVIDIA device plugin advertises `nvidia.com/gpu`
 
-## Manual validation
+## Default Validation
 
-Apply the serving manifest:
+Use the scripted path:
+
+```bash
+./scripts/up
+./scripts/verify
+```
+
+`./scripts/verify` is the default proof that the public inference edge works.
+
+## Manual Validation
+
+Apply the serving deployment manually:
 
 ```bash
 kubectl apply -f platform/inference/vllm-openai.yaml
@@ -80,39 +93,3 @@ curl "http://${EDGE_HOST}/v1/completions" \
   -H 'Content-Type: application/json' \
   -d '{"model":"qwen2.5-0.5b","prompt":"Say hello from the public edge.","max_tokens":32,"temperature":0}'
 ```
-
-## Load-triggered scale-out
-
-Apply the checked-in load test:
-
-```bash
-kubectl apply -f platform/tests/gpu-load-test.yaml
-```
-
-The checked-in k6 job is intentionally a little aggressive because the demo model
-is small and the HPA now scales on queued requests.
-
-Then watch:
-
-```bash
-kubectl get hpa -n app -w
-kubectl get pods -n app -w
-kubectl get nodeclaims -w
-kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1 | head
-```
-
-When the `vllm_requests_waiting` custom metric rises high enough for the HPA to
-request a second replica, Karpenter should provision a second GPU node because
-each vLLM pod requests one full GPU.
-
-## Scale-down behavior
-
-Delete the load test:
-
-```bash
-kubectl delete -f platform/tests/gpu-load-test.yaml
-```
-
-After the HPA settles back to one replica and the extra node empties, Karpenter
-should terminate the second GPU node. Deleting the inference manifest should
-return the cluster to zero GPU nodes.

@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/_common.sh"
+
+TOTAL_STAGES=7
+
+usage() {
+  cat <<EOF
+Usage:
+  ./scripts/down [terraform destroy args]
+
+Examples:
+  ./scripts/down
+  ./scripts/down -auto-approve
+EOF
+}
+
+check_down_prereqs() {
+  require_commands aws helm kubectl terraform
+}
+
+run_terraform_init() {
+  terraform -chdir="${TF_DIR}" init -input=false
+}
+
+resolve_destroy_command() {
+  command_string terraform "-chdir=${TF_DIR}" destroy "$@"
+}
+
+prepare_cluster_connection() {
+  try_load_cluster_context && update_kubeconfig && kubectl cluster-info >/dev/null
+}
+
+teardown_inference_edge() {
+  local ingress_hostname
+
+  ingress_hostname=$(kubectl get ingress "${GPU_INFERENCE_INGRESS_NAME}" \
+    -n "${APP_NAMESPACE}" \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+
+  kubectl delete -f "${GPU_INFERENCE_INGRESS_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion ingress "${GPU_INFERENCE_INGRESS_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  wait_for_alb_deletion "${ingress_hostname}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  kubectl delete -f "${GPU_INFERENCE_SERVICE_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion service "${GPU_INFERENCE_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion deployment "${GPU_INFERENCE_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}"
+}
+
+delete_gpu_capacity() {
+  kubectl delete -f "${KARPENTER_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion nodepool "${KARPENTER_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  kubectl delete -f "${KARPENTER_NODECLASS_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion ec2nodeclass "${KARPENTER_NODECLASS_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}"
+}
+
+uninstall_karpenter_and_gpu_plugin() {
+  if helm status "${KARPENTER_RELEASE_NAME}" -n "${KARPENTER_NAMESPACE}" >/dev/null 2>&1; then
+    helm uninstall "${KARPENTER_RELEASE_NAME}" -n "${KARPENTER_NAMESPACE}" --wait || return 1
+  fi
+  if helm status "${KARPENTER_CRD_RELEASE_NAME}" -n "${KARPENTER_NAMESPACE}" >/dev/null 2>&1; then
+    helm uninstall "${KARPENTER_CRD_RELEASE_NAME}" -n "${KARPENTER_NAMESPACE}" --wait || return 1
+  fi
+  kubectl delete -f "${KARPENTER_SERVICE_ACCOUNT_MANIFEST}" --ignore-not-found=true || return 1
+  kubectl delete -f "${NVIDIA_DEVICE_PLUGIN_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion daemonset nvidia-device-plugin-daemonset kube-system "${VERIFY_CLEANUP_TIMEOUT_SECONDS}"
+}
+
+run_terraform_destroy() {
+  terraform -chdir="${TF_DIR}" destroy "$@"
+}
+
+main() {
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
+
+  set_failure_hints \
+    "command -v terraform aws kubectl helm" \
+    "terraform -chdir=${TF_DIR} version" \
+    "kubectl version --client"
+  run_stage 1 "${TOTAL_STAGES}" "checking prerequisites" check_down_prereqs
+
+  set_failure_hints \
+    "terraform -chdir=${TF_DIR} init -input=false" \
+    "terraform -chdir=${TF_DIR} providers" \
+    "terraform -chdir=${TF_DIR} validate"
+  run_stage 2 "${TOTAL_STAGES}" "terraform init" run_terraform_init
+
+  print_stage_banner 3 "${TOTAL_STAGES}" "connect cluster context"
+  if ! prepare_cluster_connection; then
+    set_failure_hints \
+      "$(resolve_destroy_command "$@")" \
+      "terraform -chdir=${TF_DIR} output" \
+      "aws eks update-kubeconfig --name gpu-inference --region us-west-2"
+    print_stage_result "FAIL" 3 "${TOTAL_STAGES}" "connect cluster context"
+    print_failure_hints
+    exit 1
+  fi
+  print_stage_result "OK" 3 "${TOTAL_STAGES}" "connect cluster context"
+
+  set_failure_hints \
+    "kubectl get ingress,service,deployment -n ${APP_NAMESPACE}" \
+    "kubectl get events -n ${APP_NAMESPACE} --sort-by=.lastTimestamp | tail -n 40" \
+    "aws elbv2 describe-load-balancers --region ${AWS_REGION}"
+  run_stage 4 "${TOTAL_STAGES}" "remove inference edge" teardown_inference_edge
+
+  set_failure_hints \
+    "kubectl get nodepool,nodeclaim" \
+    "kubectl get ec2nodeclass ${KARPENTER_NODECLASS_NAME} -o yaml" \
+    "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
+  run_stage 5 "${TOTAL_STAGES}" "delete gpu capacity definitions" delete_gpu_capacity
+
+  set_failure_hints \
+    "helm list -n ${KARPENTER_NAMESPACE}" \
+    "kubectl get namespaces" \
+    "kubectl get daemonset -n kube-system nvidia-device-plugin-daemonset -o yaml"
+  run_stage 6 "${TOTAL_STAGES}" "uninstall karpenter and nvidia device plugin" uninstall_karpenter_and_gpu_plugin
+
+  set_failure_hints \
+    "terraform -chdir=${TF_DIR} state list" \
+    "terraform -chdir=${TF_DIR} plan -destroy" \
+    "terraform -chdir=${TF_DIR} output"
+  run_stage 7 "${TOTAL_STAGES}" "terraform destroy" run_terraform_destroy "$@"
+
+  printf '\nRemoved:\n'
+  printf '  Environment destroyed for %s\n' "${TF_DIR}"
+}
+
+main "$@"

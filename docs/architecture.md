@@ -5,7 +5,7 @@
 This project demonstrates a production-style GPU inference platform on AWS that
 keeps GPU cost elastic instead of paying for idle accelerator capacity.
 
-## Current implemented architecture
+## Default Architecture
 
 ```text
 Internet
@@ -16,9 +16,11 @@ ALB
    v
 Kubernetes Ingress
    |
-   +-----------------------> sample HTTP pods on managed system nodes
+   v
+vLLM Service
    |
-   +-----------------------> vLLM service on Karpenter GPU nodes
+   v
+vLLM Pod on Karpenter GPU Node
 
 EKS cluster
    |
@@ -29,46 +31,38 @@ EKS cluster
                                       +--> workload=gpu
                                       +--> gpu=true:NoSchedule
                                       +--> NVIDIA device plugin daemonset
-   |
-   +--> monitoring namespace -> Prometheus / Grafana / Adapter / Pushgateway / DCGM exporter
 ```
 
-Current implementation details:
+Default implementation details:
 
-- Terraform provisions the VPC, EKS cluster, and Karpenter IAM roles.
-- `./scripts/dev up` installs the AWS Load Balancer Controller,
-  metrics-server, the observability stack, Karpenter, the GPU
-  `EC2NodeClass`/`NodePool`, the NVIDIA device plugin, and the public
+- Terraform provisions the VPC, EKS cluster, and IAM roles.
+- `./scripts/up` installs the AWS Load Balancer Controller, Karpenter, the GPU
+  `EC2NodeClass` and `NodePool`, the NVIDIA device plugin, and the public
   inference edge.
 - The cluster always keeps system capacity on managed CPU nodes.
 - The cluster starts with zero GPU worker nodes.
-- The public ALB edge exists even before GPU pods are launched.
-- Applying the vLLM deployment creates a pending GPU pod, which Karpenter
-  converts into a `NodeClaim` and then an EC2 GPU instance.
-- Under load, the HPA scales from queued requests exposed through Prometheus
-  Adapter, which triggers a second GPU node when a second replica is needed.
-- `./scripts/dev measure --profile warm-1` temporarily adds a static warm
-  Karpenter `NodePool` so the repo can compare cold-start latency against a
-  zero-idle baseline.
-- When load disappears and the pods scale down, Karpenter consolidates empty
-  GPU nodes away.
+- The public ALB edge exists before GPU pods are launched.
+- Applying the vLLM deployment creates a pending GPU pod, which Karpenter turns
+  into a GPU instance.
+- `./scripts/verify` proves the first-response path and confirms the cluster
+  returns to zero GPU nodes after cleanup.
 
-## Operational characteristics
+## Optional Layers
+
+These remain in the repo, but they are no longer part of the default scripted
+path:
+
+- `platform/inference/hpa.yaml` for queue-depth-driven autoscaling
+- `platform/observability/` for Prometheus, Grafana, DCGM exporter, and related
+  dashboards
+- `platform/tests/gpu-load-test.yaml` for manual scale-out pressure
+
+## Operational Characteristics
 
 - Idle GPU cost is zero because there is no fixed GPU node group.
 - The GPU fleet is constrained but flexible: `g4dn.xlarge` and `g5.xlarge`
   are both allowed.
 - GPU scheduling stays explicit through `workload=gpu`,
   `gpu=true:NoSchedule`, and `nvidia.com/gpu: 1`.
-- The serving path is now a real inference API instead of a `sleep` container.
-
-## Implemented milestones
-
-- Milestone 1: AWS networking layer
-- Milestone 2: EKS cluster deployment
-- Milestone 3: ingress and load balancer integration
-- Milestone 4: Karpenter control-plane integration
-- Milestone 5: GPU runtime prerequisites
-- Milestone 6: dynamic GPU serving path
-- Milestone 7: external inference edge
-- Milestone 8: production metrics and cold-start tradeoffs
+- The default automated workflow optimizes for bring-up, first-response proof,
+  and clean teardown.

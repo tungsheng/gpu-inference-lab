@@ -31,12 +31,12 @@ jobs:
 
       - name: Bash syntax
         run: |
-          chmod +x scripts/dev scripts/*.sh test/*.sh
-          bash -n scripts/dev scripts/*.sh scripts/lib/*.sh test/*.sh test/helpers/*.sh
+          chmod +x scripts/up scripts/verify scripts/down test/*.sh
+          bash -n scripts/_common.sh scripts/up scripts/verify scripts/down test/*.sh test/helpers/*.sh
 
       - name: Shellcheck
         run: |
-          shellcheck scripts/dev scripts/*.sh scripts/lib/*.sh test/*.sh test/helpers/*.sh
+          shellcheck scripts/_common.sh scripts/up scripts/verify scripts/down test/*.sh test/helpers/*.sh
 
       - name: Shell tests
         run: ./test/run.sh

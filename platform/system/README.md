@@ -1,7 +1,7 @@
 # platform/system
 
-This directory contains cluster-level manifests used by the dev-environment
-helpers.
+This directory contains cluster-level manifests used by the minimal lifecycle
+scripts.
 
 Current checked-in examples:
 
@@ -9,7 +9,6 @@ Current checked-in examples:
 
 Related system components:
 
-- The AWS Load Balancer Controller is installed with Helm by
-  `scripts/post-terraform-apply.sh`
+- The AWS Load Balancer Controller is installed with Helm by `./scripts/up`
 - Its service account manifest remains under
   `platform/controller/aws-load-balancer-controller/`

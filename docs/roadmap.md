@@ -1,6 +1,6 @@
 # gpu-inference-lab Roadmap
 
-## Project objective
+## Project Objective
 
 Build a production-style GPU inference platform on AWS using:
 
@@ -10,7 +10,7 @@ Build a production-style GPU inference platform on AWS using:
 - Application Load Balancer
 - real GPU model serving
 
-## Target architecture
+## Target Architecture
 
 ```text
                  Internet
@@ -37,7 +37,7 @@ Build a production-style GPU inference platform on AWS using:
              Dynamic GPU NodePool
 ```
 
-## Implemented milestones
+## Implemented Milestones
 
 ### Milestone 0 - Repository foundation
 
@@ -83,9 +83,9 @@ Deliverables:
 
 - Karpenter-managed GPU `NodePool`
 - real vLLM inference deployment
-- load test that can trigger scale-out
-- measured cold-start and scale-down workflow
-- cost note comparing fixed and dynamic GPU baselines
+- public inference edge
+- default first-response validation flow
+- optional autoscaling and load-test assets kept in-repo for manual experiments
 
 ### Milestone 7 - External inference edge
 
@@ -95,21 +95,21 @@ Deliverables:
 
 - dedicated `vllm-openai` service and ingress manifests
 - shared public ALB path for `/v1` inference traffic
-- public endpoint reporting in `doctor`, `status`, and the measurement report
-- first-successful-external-completion timing in the measurement flow
+- public endpoint reporting from `./scripts/up`
+- first-successful-external-completion timing in `./scripts/verify`
 
 ### Milestone 8 - Production metrics and cold-start tradeoffs
 
-Status: implemented.
+Status: implemented as optional/manual assets.
 
 Deliverables:
 
 - system-node-group and Karpenter-only GPU-capacity guardrails
-- Prometheus, Grafana, DCGM exporter, Pushgateway, and Prometheus Adapter
+- Prometheus, Grafana, DCGM exporter, Pushgateway, and Prometheus Adapter manifests
 - vLLM autoscaling from `vllm:num_requests_waiting` instead of CPU utilization
-- `measure --profile zero-idle|warm-1` with production-summary and cost reporting
+- optional scale-out and reporting assets that are no longer part of the default script path
 
-## Planned next milestones
+## Planned Next Milestones
 
 ### Milestone 9 - Spot and on-demand GPU strategy
 

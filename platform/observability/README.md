@@ -13,5 +13,7 @@ milestone:
 - `pushgateway.yaml` for measurement-run summary metrics
 - `dashboards/*.yaml` for Grafana dashboards imported by the Grafana sidecar
 
-The stack is installed by `./scripts/dev up` into the `monitoring` namespace and
-removed by `./scripts/dev down`.
+This stack is no longer part of the default scripted lifecycle.
+
+Use these manifests only when you want to extend the minimal baseline with
+manual observability or autoscaling experiments.

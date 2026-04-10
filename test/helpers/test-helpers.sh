@@ -49,6 +49,24 @@ assert_status() {
   fi
 }
 
+assert_file_exists() {
+  local path=$1
+  local message=${2:-"expected file to exist: ${path}"}
+
+  if [[ ! -e "${path}" ]]; then
+    fail "${message}"
+  fi
+}
+
+assert_file_not_exists() {
+  local path=$1
+  local message=${2:-"expected file to be absent: ${path}"}
+
+  if [[ -e "${path}" ]]; then
+    fail "${message}"
+  fi
+}
+
 setup_test_tmpdir() {
   TEST_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/gpu-lab-test.XXXXXX")
   TEST_BIN="${TEST_TMPDIR}/bin"

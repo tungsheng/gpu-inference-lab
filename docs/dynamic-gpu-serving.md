@@ -1,13 +1,14 @@
 # Dynamic GPU Serving Path
 
-Milestone 6 delivers an end-to-end elastic GPU serving flow:
+Milestone 6 still centers on the same elastic GPU serving idea:
 
 - Karpenter-managed GPU `NodePool`
 - real GPU inference deployment
-- load test that can trigger additional GPU node provisioning
-- measurement of cold-start and scheduling milestones
+- public inference edge
 - scale-down validation back to zero GPU nodes
-- a fixed-vs-dynamic cost note
+
+The difference is that the default scripted path now focuses on the smallest
+useful proof of that behavior.
 
 ## Deliverables
 
@@ -28,72 +29,55 @@ Behavior:
 
 ### 2. Real GPU inference deployment
 
-File:
+Files:
 
 - `platform/inference/vllm-openai.yaml`
+- `platform/inference/service.yaml`
+- `platform/inference/ingress.yaml`
 
 Behavior:
 
 - runs the official vLLM OpenAI-compatible server
 - serves `Qwen/Qwen2.5-0.5B-Instruct`
 - requests one full GPU
-- includes an HPA that can request a second replica from queued inference work
+- exposes a public `/v1/completions` path through the ALB ingress
 
-### 3. Load test that triggers provisioning
-
-File:
-
-- `platform/tests/gpu-load-test.yaml`
-
-Behavior:
-
-- runs a `k6` job in-cluster
-- repeatedly calls the vLLM `/v1/completions` endpoint
-- keeps enough sustained pressure on the first replica for the HPA to ask for a
-  second GPU-backed pod
-
-### 4. Measured cold-start and scale-down timeline
+### 3. Default automated verification
 
 Script:
 
-- `./scripts/dev measure`
+- `./scripts/verify`
 
 Outputs:
 
-- a Markdown report with observed timestamps for:
-  - first pod creation
-  - first `NodeClaim`
-  - first GPU node join
-  - `nvidia.com/gpu` allocatable on the node
-  - first Ready serving replica
-  - first successful external completion
-  - HPA-driven scale-out
-  - extra-node consolidation
-  - full scale-down back to zero GPU nodes
+- a short timing summary for:
+  - first GPU node observed
+  - first Ready deployment
+  - first successful public response
+  - return to zero GPU nodes after cleanup
 
-## How to run it
+### 4. Optional autoscaling assets
 
-```bash
-terraform -chdir=infra/env/dev init
-./scripts/dev up
-./scripts/dev measure
-```
+Files:
 
-Optional custom report path:
+- `platform/inference/hpa.yaml`
+- `platform/tests/gpu-load-test.yaml`
+- `platform/observability/`
+
+These are intentionally outside the default lifecycle so the baseline stays
+small and easy to follow.
+
+## How To Run It
 
 ```bash
-./scripts/dev measure --report docs/reports/dynamic-gpu-serving-$(date +%Y%m%d-%H%M).md
+./scripts/up
+./scripts/verify
 ```
 
-## What success looks like
+## What Success Looks Like
 
-- `kubectl get nodeclaims` shows Karpenter creating a `NodeClaim` after the
-  first vLLM pod is pending
-- `kubectl get nodes -l karpenter.sh/nodepool=gpu-serving` grows from `0` to
-  `1`
+- `kubectl get nodeclaims` shows Karpenter reacting after the vLLM pod is pending
+- `kubectl get nodes -l karpenter.sh/nodepool=gpu-serving` grows from `0` to `1`
 - the first vLLM pod becomes `Ready`
-- the public inference edge returns the first successful completion
-- under load, the HPA requests `2` replicas and Karpenter adds a second GPU
-  node
-- after load removal, the extra node disappears
-- after deleting the inference workload, the GPU node count returns to `0`
+- the public inference edge returns a successful completion
+- after deleting the workload, the GPU node count returns to `0`
