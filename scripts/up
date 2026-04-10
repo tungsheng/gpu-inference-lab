@@ -6,7 +6,7 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/_common.sh"
 
-TOTAL_STAGES=7
+TOTAL_STAGES=8
 
 usage() {
   cat <<EOF
@@ -136,20 +136,27 @@ main() {
   run_stage 5 "${TOTAL_STAGES}" "install aws load balancer controller" install_aws_load_balancer_controller
 
   set_failure_hints \
+    "helm list -n ${MONITORING_NAMESPACE}" \
+    "kubectl get apiservice ${PROMETHEUS_ADAPTER_APISERVICE_NAME} -o yaml" \
+    "kubectl get pods -n ${MONITORING_NAMESPACE}"
+  run_stage 6 "${TOTAL_STAGES}" "install observability stack" install_observability_stack
+
+  set_failure_hints \
     "helm list -n ${KARPENTER_NAMESPACE}" \
     "kubectl get ec2nodeclass,nodepool" \
     "kubectl get daemonset -n kube-system nvidia-device-plugin-daemonset -o wide"
-  run_stage 6 "${TOTAL_STAGES}" "install karpenter and gpu prerequisites" install_karpenter_stack
+  run_stage 7 "${TOTAL_STAGES}" "install karpenter and gpu prerequisites" install_karpenter_stack
 
   set_failure_hints \
     "kubectl get service,ingress -n ${APP_NAMESPACE}" \
     "kubectl describe ingress ${GPU_INFERENCE_INGRESS_NAME} -n ${APP_NAMESPACE}" \
     "kubectl get events -n ${APP_NAMESPACE} --sort-by=.lastTimestamp | tail -n 40"
-  run_stage 7 "${TOTAL_STAGES}" "apply public inference edge" apply_inference_edge
+  run_stage 8 "${TOTAL_STAGES}" "apply public inference edge" apply_inference_edge
 
   printf '\nReady:\n'
   printf '  Public inference URL: %s\n' "$(public_inference_url "${INGRESS_HOSTNAME}")"
-  printf '  Next step: ./scripts/verify\n'
+  printf '  Grafana: kubectl port-forward -n %s deployment/%s 3000:3000\n' "${MONITORING_NAMESPACE}" "${KUBE_PROMETHEUS_STACK_GRAFANA_DEPLOYMENT}"
+  printf '  Next steps: ./scripts/verify or ./scripts/evaluate --profile zero-idle\n'
 }
 
 main "$@"

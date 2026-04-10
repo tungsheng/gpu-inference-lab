@@ -36,6 +36,9 @@ module "eks" {
   vpc_id          = module.vpc.vpc_id
   private_subnets = module.vpc.private_subnets
 
+  # Dev keeps the EKS API public for fast local iteration.
+  # The production direction should be a private endpoint plus SSM/bastion/VPN access
+  # and tighter public CIDR controls.
   endpoint_public_access       = true
   endpoint_public_access_cidrs = ["0.0.0.0/0"]
 

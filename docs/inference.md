@@ -10,14 +10,10 @@ What is in place by default:
 - a Karpenter-managed GPU `NodePool`
 - the NVIDIA device plugin
 - a deployment-only vLLM manifest at `platform/inference/vllm-openai.yaml`
+- a queue-depth-driven HPA at `platform/inference/hpa.yaml`
 - a dedicated `ClusterIP` service at `platform/inference/service.yaml`
 - a public ALB ingress at `platform/inference/ingress.yaml`
-
-Optional extras stay separate:
-
-- `platform/inference/hpa.yaml` for autoscaling
-- `platform/tests/gpu-load-test.yaml` for load-driven scale-out experiments
-- `platform/observability/` for the metrics stack that supports the HPA
+- the Prometheus and Prometheus Adapter stack that makes the HPA metric real
 
 ## Serving Stack
 
@@ -56,7 +52,24 @@ Use the scripted path:
 ./scripts/verify
 ```
 
-`./scripts/verify` is the default proof that the public inference edge works.
+`./scripts/verify` is the default proof that the public inference edge works
+from a zero-GPU baseline.
+
+## Load-Aware Validation
+
+Use the evaluation path:
+
+```bash
+./scripts/evaluate --profile zero-idle
+./scripts/evaluate --profile warm-1
+```
+
+That flow proves:
+
+- the HPA can scale from `1` to `2` replicas from `vllm_requests_waiting`
+- Karpenter can add a second GPU node in response
+- Prometheus can report latency, queue, throughput, and GPU-utilization metrics
+- the repo can compare cold-start and warm-node tradeoffs with report files
 
 ## Manual Validation
 
@@ -64,28 +77,19 @@ Apply the serving deployment manually:
 
 ```bash
 kubectl apply -f platform/inference/vllm-openai.yaml
+kubectl apply -f platform/inference/hpa.yaml
 ```
 
-Watch scheduling:
+Watch scheduling and autoscaling:
 
 ```bash
 kubectl get pods -n app -w
+kubectl get hpa -n app -w
 kubectl get nodeclaims -w
 kubectl get nodes -L workload,node.kubernetes.io/instance-type -w
 ```
 
-Once the pod is Ready, test the API from inside the cluster:
-
-```bash
-kubectl run curl -n app --rm -it --restart=Never \
-  --image=curlimages/curl:8.8.0 -- \
-  curl http://vllm-openai/v1/completions \
-    -H 'Content-Type: application/json' \
-    -d '{"model":"qwen2.5-0.5b","prompt":"Say hello from vLLM.","max_tokens":32,"temperature":0}'
-```
-
-If the public ingress is already provisioned, you can also test the external
-edge from your machine:
+If the public ingress is already provisioned, test the edge from your machine:
 
 ```bash
 EDGE_HOST=$(kubectl get ingress vllm-openai-ingress -n app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')

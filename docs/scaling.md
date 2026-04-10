@@ -2,55 +2,62 @@
 
 ## Current Compute Model
 
-The repository uses a **zero-idle GPU baseline**:
+The repository keeps a **zero-idle serving baseline** and a separate
+**warm-node experiment profile**:
 
 ```text
-system nodes (managed) -> m7i-flex.large -> controllers and shared services
-gpu nodes (dynamic)    -> g4dn.xlarge / g5.xlarge -> vLLM inference pods
+system nodes        -> m7i-flex.large              -> controllers and shared services
+gpu-serving nodes   -> g4dn.xlarge / g5.xlarge    -> default elastic serving path
+gpu-warm-1 nodes    -> g4dn.xlarge / g5.xlarge    -> warm-profile experiment
 ```
 
 Isolation rules:
 
 - system nodes are labeled `workload=system`
-- dynamic GPU nodes are labeled `workload=gpu`
-- dynamic GPU nodes are tainted `gpu=true:NoSchedule`
+- GPU nodes are labeled `workload=gpu`
+- GPU nodes are tainted `gpu=true:NoSchedule`
 - GPU workloads opt in with both a matching `nodeSelector` and toleration
 - the NVIDIA device plugin daemonset targets only `workload=gpu` nodes
 
-There is **no managed GPU node group**. The cluster starts without GPU nodes,
-and Karpenter launches them only when a pending pod requests `nvidia.com/gpu`.
+There is still **no managed GPU node group**. Karpenter owns GPU capacity.
 
 ## Default Scripted Path
 
-`./scripts/up` installs the GPU provisioning prerequisites, but it does not
-apply the inference deployment. The first GPU node should appear only during
-`./scripts/verify` or a manual workload apply.
+`./scripts/up` prepares the control plane and observability layer, but it does
+not apply the inference deployment.
 
 Expected shape after `./scripts/up`:
 
 - at least two `m7i-flex.large` nodes labeled `workload=system`
-- zero nodes labeled `karpenter.sh/nodepool=gpu-serving`
+- zero nodes labeled `workload=gpu`
+- Prometheus, Grafana, and the custom metrics API are Ready
 - one `NodePool` named `gpu-serving`
 - a public inference ingress that resolves before GPU pods are launched
 
-## Manual Scale-Out Extensions
+## Scale-Out Proof Path
 
-The always-on inference edge lives in:
+`./scripts/evaluate` makes the autoscaling path part of the real workflow:
 
-- `platform/inference/service.yaml`
-- `platform/inference/ingress.yaml`
+- applies `platform/inference/vllm-openai.yaml`
+- applies `platform/inference/hpa.yaml`
+- runs `platform/tests/gpu-load-test.yaml`
+- waits for `vllm_requests_waiting` to drive HPA desired replicas to `2`
+- waits for a second `NodeClaim`, second GPU node, and second Ready replica
 
-The deployment-only workload lives in:
+That turns HPA into a demonstrated path instead of an optional leftover file.
 
-- `platform/inference/vllm-openai.yaml`
+## Warm Profile
 
-The optional autoscaling manifest lives in:
+`platform/karpenter/nodepool-gpu-warm.yaml` defines the `warm-1` profile used
+by `./scripts/evaluate --profile warm-1`.
 
-- `platform/inference/hpa.yaml`
+It exists to compare:
 
-That HPA is still queue-depth-driven and still expects the supporting
-observability stack. It is intentionally separate from the default scripted
-workflow so the baseline stays easy to follow.
+- zero idle cost with slower first response
+- one warm GPU node with lower latency but higher idle spend
+
+The script removes the warm profile at the end of the run so the environment
+returns to zero GPU nodes after reporting.
 
 ## Version Pins
 
@@ -58,6 +65,8 @@ workflow so the baseline stays easy to follow.
 - system node group AMI type: `AL2023_x86_64_STANDARD`
 - system node group release: `1.35.2-20260304`
 - Karpenter chart/CRDs: `1.9.0`
+- kube-prometheus-stack chart: `82.18.0`
+- Prometheus Adapter chart: `5.2.0`
 - GPU node AMI: `amazon-eks-node-al2023-x86_64-nvidia-1.35-v20260304`
 - NVIDIA device plugin image: `v0.18.1`
 - vLLM image: `v0.9.0`

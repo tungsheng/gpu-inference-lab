@@ -1,7 +1,17 @@
 # Reports
 
-The default lifecycle no longer generates benchmark or timing report files.
+`./scripts/evaluate` writes experiment output into this directory.
 
-This directory remains available if you want to keep manual experiment notes or
-save ad hoc validation output while exploring optional autoscaling and
-observability layers.
+Each run can produce:
+
+- a Markdown summary report
+- a JSON report with the same timeline and metric fields
+
+The reports are meant to capture:
+
+- first GPU node timing
+- first Ready replica timing
+- first public response timing
+- HPA and Karpenter scale-out timing
+- burst latency, queue depth, throughput, and GPU utilization
+- zero-idle versus warm-node cost tradeoffs

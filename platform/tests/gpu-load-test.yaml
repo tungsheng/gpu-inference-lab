@@ -11,13 +11,13 @@ data:
     export const options = {
       scenarios: {
         inference_burst: {
-          // Keep sustained pressure on the first replica long enough for CPU-based HPA scale-out.
+          // Keep enough concurrent requests in flight to drive vllm_requests_waiting above the HPA target.
           executor: "ramping-vus",
           startVUs: 0,
           gracefulRampDown: "30s",
           stages: [
-            { duration: "2m", target: 12 },
-            { duration: "11m", target: 12 },
+            { duration: "2m", target: 16 },
+            { duration: "8m", target: 16 },
             { duration: "2m", target: 0 },
           ],
         },
@@ -31,7 +31,7 @@ data:
     const payload = JSON.stringify({
       model: "qwen2.5-0.5b",
       prompt: "Explain why elastic GPU nodes help an inference platform in one short paragraph.",
-      max_tokens: 256,
+      max_tokens: 512,
       temperature: 0,
     });
 

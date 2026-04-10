@@ -1,7 +1,9 @@
 # platform/observability
 
-This directory contains the observability resources for the production-metrics
-milestone:
+This directory contains the observability resources that are now part of the
+default platform path.
+
+Key pieces:
 
 - `kube-prometheus-stack-values.yaml` for Prometheus, Grafana, node metrics, and
   kube-state-metrics
@@ -10,10 +12,13 @@ milestone:
 - `vllm-podmonitor.yaml` for scraping vLLM request and queue metrics
 - `karpenter-podmonitor.yaml` for scraping Karpenter controller metrics
 - `dcgm-exporter.yaml` for GPU utilization metrics on GPU nodes
-- `pushgateway.yaml` for measurement-run summary metrics
+- `pushgateway.yaml` for experiment summary metrics
 - `dashboards/*.yaml` for Grafana dashboards imported by the Grafana sidecar
 
-This stack is no longer part of the default scripted lifecycle.
+`./scripts/up` installs this stack by default.
 
-Use these manifests only when you want to extend the minimal baseline with
-manual observability or autoscaling experiments.
+`./scripts/evaluate` depends on it to prove:
+
+- queue-depth-driven HPA scale-out
+- burst latency and throughput measurements
+- GPU utilization and saturation visibility

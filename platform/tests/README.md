@@ -1,15 +1,17 @@
 # platform/tests
 
-This directory contains manual validation manifests for the platform.
+This directory contains validation manifests for the platform.
 
 Current checked-in examples:
 
 - `gpu-test.yaml` to verify GPU scheduling and `nvidia-smi`
-- `gpu-load-test.yaml` to drive sustained vLLM load high enough for HPA scale-out
+- `gpu-load-test.yaml` to drive `vllm_requests_waiting` high enough for HPA scale-out
 - `cpu-scale-test.yaml` for the older CPU-only Karpenter pending-pod test path
 
-These manifests are not part of the default scripted lifecycle.
+`gpu-load-test.yaml` is now part of the scripted evaluation path:
 
-Use `./scripts/up` and `./scripts/verify` for the baseline workflow. Use the
-manifests in this directory only when you want additional manual checks or
-optional scale-out experiments.
+- `./scripts/evaluate --profile zero-idle`
+- `./scripts/evaluate --profile warm-1`
+
+Use `./scripts/verify` for the fast cold-start smoke test and the manifests in
+this directory when you want additional manual checks.

@@ -1,83 +1,83 @@
 # Dynamic GPU Serving Path
 
-Milestone 6 still centers on the same elastic GPU serving idea:
+The current milestone is no longer just “does a GPU pod ever start?”
 
-- Karpenter-managed GPU `NodePool`
-- real GPU inference deployment
-- public inference edge
-- scale-down validation back to zero GPU nodes
+It now proves three layers together:
 
-The difference is that the default scripted path now focuses on the smallest
-useful proof of that behavior.
+- cold-start serving from zero GPU nodes
+- load-aware scale-out to a second replica and second GPU node
+- operator-grade visibility into latency, queue depth, and GPU utilization
 
 ## Deliverables
 
-### 1. Karpenter-managed GPU NodePool
+### 1. Zero-idle serving baseline
 
 Files:
 
 - `platform/karpenter/nodeclass-gpu-serving.yaml`
 - `platform/karpenter/nodepool-gpu-serving.yaml`
+- `platform/inference/vllm-openai.yaml`
 
 Behavior:
 
 - launches `g4dn.xlarge` or `g5.xlarge`
-- applies `workload=gpu`
-- taints nodes with `gpu=true:NoSchedule`
-- uses a pinned EKS AL2023 NVIDIA AMI
-- consolidates empty nodes after `2m`
+- keeps the default GPU baseline at zero idle nodes
+- serves a real vLLM OpenAI-compatible API
 
-### 2. Real GPU inference deployment
-
-Files:
-
-- `platform/inference/vllm-openai.yaml`
-- `platform/inference/service.yaml`
-- `platform/inference/ingress.yaml`
-
-Behavior:
-
-- runs the official vLLM OpenAI-compatible server
-- serves `Qwen/Qwen2.5-0.5B-Instruct`
-- requests one full GPU
-- exposes a public `/v1/completions` path through the ALB ingress
-
-### 3. Default automated verification
-
-Script:
-
-- `./scripts/verify`
-
-Outputs:
-
-- a short timing summary for:
-  - first GPU node observed
-  - first Ready deployment
-  - first successful public response
-  - return to zero GPU nodes after cleanup
-
-### 4. Optional autoscaling assets
+### 2. Real autoscaling path
 
 Files:
 
 - `platform/inference/hpa.yaml`
 - `platform/tests/gpu-load-test.yaml`
-- `platform/observability/`
+- `platform/observability/prometheus-adapter-values.yaml`
+- `platform/observability/vllm-podmonitor.yaml`
 
-These are intentionally outside the default lifecycle so the baseline stays
-small and easy to follow.
+Behavior:
+
+- scales from `1` to `2` replicas on `vllm_requests_waiting`
+- turns replica scale-out into a second GPU node through Karpenter
+- uses a controlled in-cluster burst to prove the path
+
+### 3. Operator-grade visibility
+
+Files:
+
+- `platform/observability/kube-prometheus-stack-values.yaml`
+- `platform/observability/dcgm-exporter.yaml`
+- `platform/observability/dashboards/`
+
+Behavior:
+
+- exposes Prometheus and Grafana by default
+- captures p95 request latency, queue depth, throughput, and GPU utilization
+- captures capacity signals such as HPA replicas and active `NodeClaim` count
+
+### 4. Tradeoff reports
+
+Script:
+
+- `./scripts/evaluate`
+
+Outputs:
+
+- Markdown and JSON reports under `docs/reports/`
+- zero-idle versus `warm-1` comparisons
+- estimated idle cost per hour and burst cost
 
 ## How To Run It
 
 ```bash
 ./scripts/up
 ./scripts/verify
+./scripts/evaluate --profile zero-idle
+./scripts/evaluate --profile warm-1
 ```
 
 ## What Success Looks Like
 
-- `kubectl get nodeclaims` shows Karpenter reacting after the vLLM pod is pending
-- `kubectl get nodes -l karpenter.sh/nodepool=gpu-serving` grows from `0` to `1`
-- the first vLLM pod becomes `Ready`
-- the public inference edge returns a successful completion
-- after deleting the workload, the GPU node count returns to `0`
+- `kubectl get hpa -n app` shows desired replicas increase to `2`
+- `kubectl get nodeclaims` shows a second `NodeClaim` during the burst
+- `kubectl get nodes -l workload=gpu` grows to two GPU nodes
+- the second vLLM replica becomes `Ready`
+- the report captures first-response latency, p95 latency, queue depth, and GPU utilization

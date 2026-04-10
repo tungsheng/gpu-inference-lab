@@ -6,7 +6,7 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/_common.sh"
 
-TOTAL_STAGES=7
+TOTAL_STAGES=8
 
 usage() {
   cat <<EOF
@@ -35,23 +35,29 @@ prepare_cluster_connection() {
   try_load_cluster_context && update_kubeconfig && kubectl cluster-info >/dev/null
 }
 
-teardown_inference_edge() {
+teardown_runtime_surface() {
   local ingress_hostname
 
   ingress_hostname=$(kubectl get ingress "${GPU_INFERENCE_INGRESS_NAME}" \
     -n "${APP_NAMESPACE}" \
     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
 
+  kubectl delete -f "${GPU_LOAD_TEST_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion job "${GPU_LOAD_TEST_JOB_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  kubectl delete -f "${GPU_INFERENCE_HPA_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion hpa "${GPU_INFERENCE_HPA_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   kubectl delete -f "${GPU_INFERENCE_INGRESS_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion ingress "${GPU_INFERENCE_INGRESS_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   wait_for_alb_deletion "${ingress_hostname}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   kubectl delete -f "${GPU_INFERENCE_SERVICE_MANIFEST}" --ignore-not-found=true || return 1
-  wait_for_resource_deletion service "${GPU_INFERENCE_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  wait_for_resource_deletion service "${GPU_INFERENCE_SERVICE_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion deployment "${GPU_INFERENCE_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}"
 }
 
 delete_gpu_capacity() {
+  kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion nodepool "${KARPENTER_WARM_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   kubectl delete -f "${KARPENTER_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion nodepool "${KARPENTER_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   kubectl delete -f "${KARPENTER_NODECLASS_MANIFEST}" --ignore-not-found=true || return 1
@@ -105,10 +111,10 @@ main() {
   print_stage_result "OK" 3 "${TOTAL_STAGES}" "connect cluster context"
 
   set_failure_hints \
-    "kubectl get ingress,service,deployment -n ${APP_NAMESPACE}" \
+    "kubectl get ingress,service,deployment,hpa,job -n ${APP_NAMESPACE}" \
     "kubectl get events -n ${APP_NAMESPACE} --sort-by=.lastTimestamp | tail -n 40" \
     "aws elbv2 describe-load-balancers --region ${AWS_REGION}"
-  run_stage 4 "${TOTAL_STAGES}" "remove inference edge" teardown_inference_edge
+  run_stage 4 "${TOTAL_STAGES}" "remove inference and load artifacts" teardown_runtime_surface
 
   set_failure_hints \
     "kubectl get nodepool,nodeclaim" \
@@ -117,16 +123,22 @@ main() {
   run_stage 5 "${TOTAL_STAGES}" "delete gpu capacity definitions" delete_gpu_capacity
 
   set_failure_hints \
+    "helm list -n ${MONITORING_NAMESPACE}" \
+    "kubectl get apiservice ${PROMETHEUS_ADAPTER_APISERVICE_NAME}" \
+    "kubectl get all -n ${MONITORING_NAMESPACE}"
+  run_stage 6 "${TOTAL_STAGES}" "remove observability stack" uninstall_observability_stack
+
+  set_failure_hints \
     "helm list -n ${KARPENTER_NAMESPACE}" \
     "kubectl get namespaces" \
     "kubectl get daemonset -n kube-system nvidia-device-plugin-daemonset -o yaml"
-  run_stage 6 "${TOTAL_STAGES}" "uninstall karpenter and nvidia device plugin" uninstall_karpenter_and_gpu_plugin
+  run_stage 7 "${TOTAL_STAGES}" "uninstall karpenter and nvidia device plugin" uninstall_karpenter_and_gpu_plugin
 
   set_failure_hints \
     "terraform -chdir=${TF_DIR} state list" \
     "terraform -chdir=${TF_DIR} plan -destroy" \
     "terraform -chdir=${TF_DIR} output"
-  run_stage 7 "${TOTAL_STAGES}" "terraform destroy" run_terraform_destroy "$@"
+  run_stage 8 "${TOTAL_STAGES}" "terraform destroy" run_terraform_destroy "$@"
 
   printf '\nRemoved:\n'
   printf '  Environment destroyed for %s\n' "${TF_DIR}"

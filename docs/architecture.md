@@ -1,68 +1,59 @@
 # Architecture
 
-## Goal
-
-This project demonstrates a production-style GPU inference platform on AWS that
-keeps GPU cost elastic instead of paying for idle accelerator capacity.
-
-## Default Architecture
+## Serving Topology
 
 ```text
 Internet
    |
    v
-ALB
+Application Load Balancer
    |
    v
-Kubernetes Ingress
+Ingress (/v1)
    |
    v
 vLLM Service
    |
    v
-vLLM Pod on Karpenter GPU Node
+vLLM Deployment + HPA
+   |
+   v
+Karpenter-managed GPU nodes
 
-EKS cluster
-   |
-   +--> system managed node group -> m7i-flex.large -> workload=system
-   |
-   +--> Karpenter controller -> GPU NodePool -> g4dn.xlarge / g5.xlarge
-                                      |
-                                      +--> workload=gpu
-                                      +--> gpu=true:NoSchedule
-                                      +--> NVIDIA device plugin daemonset
+Supporting control plane:
+- AWS Load Balancer Controller
+- Karpenter
+- NVIDIA device plugin
+- Prometheus
+- Grafana
+- Prometheus Adapter
+- DCGM exporter
 ```
 
-Default implementation details:
+## Node Roles
 
-- Terraform provisions the VPC, EKS cluster, and IAM roles.
-- `./scripts/up` installs the AWS Load Balancer Controller, Karpenter, the GPU
-  `EC2NodeClass` and `NodePool`, the NVIDIA device plugin, and the public
-  inference edge.
-- The cluster always keeps system capacity on managed CPU nodes.
-- The cluster starts with zero GPU worker nodes.
-- The public ALB edge exists before GPU pods are launched.
-- Applying the vLLM deployment creates a pending GPU pod, which Karpenter turns
-  into a GPU instance.
+- system nodes run the controllers and shared services
+- `gpu-serving` is the zero-idle serving `NodePool`
+- `gpu-warm-1` is the warm-profile experiment `NodePool`
+
+GPU nodes are still created only through Karpenter. There is no fixed managed
+GPU node group.
+
+## Scripted Lifecycle
+
+- `./scripts/up` installs the public inference edge, observability stack, GPU
+  capacity definitions, and runtime prerequisites
 - `./scripts/verify` proves the first-response path and confirms the cluster
-  returns to zero GPU nodes after cleanup.
+  returns to zero GPU nodes after cleanup
+- `./scripts/evaluate` proves HPA-driven scale-out, second-node provisioning,
+  and report generation for zero-idle versus warm-node profiles
+- `./scripts/down` removes the runtime stack, observability stack, and
+  Terraform infrastructure
 
-## Optional Layers
+## Design Intent
 
-These remain in the repo, but they are no longer part of the default scripted
-path:
-
-- `platform/inference/hpa.yaml` for queue-depth-driven autoscaling
-- `platform/observability/` for Prometheus, Grafana, DCGM exporter, and related
-  dashboards
-- `platform/tests/gpu-load-test.yaml` for manual scale-out pressure
-
-## Operational Characteristics
-
-- Idle GPU cost is zero because there is no fixed GPU node group.
-- The GPU fleet is constrained but flexible: `g4dn.xlarge` and `g5.xlarge`
-  are both allowed.
-- GPU scheduling stays explicit through `workload=gpu`,
-  `gpu=true:NoSchedule`, and `nvidia.com/gpu: 1`.
-- The default automated workflow optimizes for bring-up, first-response proof,
-  and clean teardown.
+- keep the default compute baseline at zero idle GPU nodes
+- prove cold-start behavior separately from burst behavior
+- make operator visibility part of the default story instead of a manual add-on
+- preserve a clean dev/prod boundary by calling out the public EKS API as a
+  dev-only choice

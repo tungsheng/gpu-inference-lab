@@ -10,33 +10,6 @@ Build a production-style GPU inference platform on AWS using:
 - Application Load Balancer
 - real GPU model serving
 
-## Target Architecture
-
-```text
-                 Internet
-                    |
-                    v
-     ALB (Application Load Balancer)
-                    |
-                    v
-              Kubernetes Ingress
-                    |
-                    v
-              Inference Service
-                    |
-                    v
-              Inference Pods
-                    |
-                    v
-            Kubernetes Scheduler
-                    |
-                    v
-                 Karpenter
-                    |
-                    v
-             Dynamic GPU NodePool
-```
-
 ## Implemented Milestones
 
 ### Milestone 0 - Repository foundation
@@ -59,21 +32,9 @@ Status: implemented.
 
 Status: implemented.
 
-Deliverables:
-
-- Karpenter Terraform module
-- controller IAM roles
-- cluster-side Karpenter installation path
-
 ### Milestone 5 - GPU runtime prerequisites
 
 Status: implemented.
-
-Deliverables:
-
-- NVIDIA device plugin
-- GPU smoke test
-- taints, tolerations, and `nvidia.com/gpu` scheduling contract
 
 ### Milestone 6 - Dynamic GPU serving path
 
@@ -85,7 +46,6 @@ Deliverables:
 - real vLLM inference deployment
 - public inference edge
 - default first-response validation flow
-- optional autoscaling and load-test assets kept in-repo for manual experiments
 
 ### Milestone 7 - External inference edge
 
@@ -98,16 +58,17 @@ Deliverables:
 - public endpoint reporting from `./scripts/up`
 - first-successful-external-completion timing in `./scripts/verify`
 
-### Milestone 8 - Production metrics and cold-start tradeoffs
+### Milestone 8 - Load-aware GPU serving with operator visibility
 
-Status: implemented as optional/manual assets.
+Status: implemented.
 
 Deliverables:
 
-- system-node-group and Karpenter-only GPU-capacity guardrails
-- Prometheus, Grafana, DCGM exporter, Pushgateway, and Prometheus Adapter manifests
-- vLLM autoscaling from `vllm:num_requests_waiting` instead of CPU utilization
-- optional scale-out and reporting assets that are no longer part of the default script path
+- Prometheus, Grafana, Prometheus Adapter, dashboards, and DCGM exporter in the default `./scripts/up` path
+- queue-depth-driven HPA validation from `vllm_requests_waiting`
+- `./scripts/evaluate` for `zero-idle` and `warm-1` experiment profiles
+- Markdown and JSON reports for first-response, scale-out, latency, GPU utilization, and cost tradeoffs
+- explicit dev/prod boundary docs for public versus private EKS API access
 
 ## Planned Next Milestones
 

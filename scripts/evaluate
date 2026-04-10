@@ -1,0 +1,928 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/_common.sh"
+
+TOTAL_STAGES=9
+EVALUATION_PROFILE="zero-idle"
+REPORT_PATH=""
+JSON_REPORT_PATH=""
+
+DEPLOYMENT_APPLIED=0
+HPA_APPLIED=0
+LOAD_TEST_APPLIED=0
+WARM_NODEPOOL_APPLIED=0
+
+PUBLIC_INFERENCE_URL=""
+PROMETHEUS_LOCAL_PORT=""
+PROMETHEUS_PORT_FORWARD_PID=""
+PROMETHEUS_PORT_FORWARD_LOG=""
+PUSHGATEWAY_LOCAL_PORT=""
+PUSHGATEWAY_PORT_FORWARD_PID=""
+PUSHGATEWAY_PORT_FORWARD_LOG=""
+
+EVALUATION_START_TIME=""
+FIRST_NODECLAIM_TIME=""
+FIRST_GPU_NODE_TIME=""
+FIRST_READY_TIME=""
+FIRST_RESPONSE_TIME=""
+FIRST_POD_NAME=""
+FIRST_POD_SCHEDULED_TIME=""
+FIRST_CONTAINER_STARTED_TIME=""
+FIRST_GPU_NODE_NAME=""
+FIRST_GPU_INSTANCE_TYPE=""
+LOAD_START_TIME=""
+HPA_SCALE_OUT_TIME=""
+SECOND_NODECLAIM_TIME=""
+SECOND_GPU_NODE_TIME=""
+SECOND_READY_TIME=""
+SECOND_GPU_NODE_NAME=""
+SECOND_GPU_INSTANCE_TYPE=""
+LOAD_FINISH_TIME=""
+SCALE_IN_TIME=""
+PROFILE_BASELINE_RESTORED_TIME=""
+CLEANUP_FINISH_TIME=""
+
+P95_REQUEST_LATENCY_SECONDS=""
+P95_TTFT_SECONDS=""
+PEAK_QUEUE_DEPTH=""
+AVG_GENERATION_TOKENS_PER_SECOND=""
+AVG_GPU_UTILIZATION_PERCENT=""
+MAX_GPU_UTILIZATION_PERCENT=""
+PEAK_ACTIVE_NODECLAIMS=""
+ESTIMATED_IDLE_COST_PER_HOUR=""
+ESTIMATED_BURST_COST=""
+
+usage() {
+  cat <<EOF
+Usage:
+  ./scripts/evaluate [--profile zero-idle|warm-1] [--report path] [--json-report path]
+
+Examples:
+  ./scripts/evaluate --profile zero-idle
+  ./scripts/evaluate --profile warm-1
+  ./scripts/evaluate --profile zero-idle --report docs/reports/latest.md
+EOF
+}
+
+require_option_value() {
+  local option_name=$1
+  local option_value=${2-}
+
+  if [[ -z "${option_value}" || "${option_value}" == -* ]]; then
+    printf '%s requires a value\n' "${option_name}" >&2
+    usage >&2
+    exit 1
+  fi
+
+  printf '%s\n' "${option_value}"
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --profile)
+        EVALUATION_PROFILE=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --report)
+        REPORT_PATH=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --json-report)
+        JSON_REPORT_PATH=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        printf 'Unexpected argument: %s\n' "$1" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  case "${EVALUATION_PROFILE}" in
+    zero-idle|warm-1)
+      ;;
+    *)
+      printf 'Unsupported profile: %s\n' "${EVALUATION_PROFILE}" >&2
+      printf 'Supported profiles: zero-idle, warm-1\n' >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ -z "${REPORT_PATH}" ]]; then
+    REPORT_PATH="${REPO_ROOT}/docs/reports/evaluate-${EVALUATION_PROFILE}-$(date +%Y%m%d-%H%M%S).md"
+  fi
+
+  if [[ -z "${JSON_REPORT_PATH}" ]]; then
+    JSON_REPORT_PATH="${REPORT_PATH%.md}.json"
+  fi
+}
+
+cleanup_evaluate() {
+  if [[ -n "${PROMETHEUS_PORT_FORWARD_PID}" ]]; then
+    kill "${PROMETHEUS_PORT_FORWARD_PID}" 2>/dev/null || true
+    wait "${PROMETHEUS_PORT_FORWARD_PID}" 2>/dev/null || true
+    rm -f "${PROMETHEUS_PORT_FORWARD_LOG}" 2>/dev/null || true
+  fi
+
+  if [[ -n "${PUSHGATEWAY_PORT_FORWARD_PID}" ]]; then
+    kill "${PUSHGATEWAY_PORT_FORWARD_PID}" 2>/dev/null || true
+    wait "${PUSHGATEWAY_PORT_FORWARD_PID}" 2>/dev/null || true
+    rm -f "${PUSHGATEWAY_PORT_FORWARD_LOG}" 2>/dev/null || true
+  fi
+
+  if [[ "${LOAD_TEST_APPLIED}" == "1" ]]; then
+    kubectl delete -f "${GPU_LOAD_TEST_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+  if [[ "${HPA_APPLIED}" == "1" ]]; then
+    kubectl delete -f "${GPU_INFERENCE_HPA_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+  if [[ "${DEPLOYMENT_APPLIED}" == "1" ]]; then
+    kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+  if [[ "${WARM_NODEPOOL_APPLIED}" == "1" ]]; then
+    kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+}
+
+evaluate_prereqs() {
+  require_commands kubectl curl awk
+}
+
+is_warm_profile() {
+  [[ "${EVALUATION_PROFILE}" == "warm-1" ]]
+}
+
+set_if_unset() {
+  local variable_name=$1
+  local value=$2
+
+  if [[ -z "${!variable_name:-}" ]]; then
+    printf -v "${variable_name}" '%s' "${value}"
+  fi
+}
+
+pod_names() {
+  kubectl get pods \
+    -n "${APP_NAMESPACE}" \
+    -l "app=${GPU_INFERENCE_DEPLOYMENT_NAME}" \
+    --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+}
+
+first_pod_name() {
+  pod_names | sed -n '1p'
+}
+
+first_gpu_node_name() {
+  kubectl get nodes \
+    -l 'workload=gpu' \
+    --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | sed -n '1p'
+}
+
+second_gpu_node_name() {
+  kubectl get nodes \
+    -l 'workload=gpu' \
+    --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | sed -n '2p'
+}
+
+node_instance_type() {
+  local node_name=$1
+
+  kubectl get node "${node_name}" \
+    -o jsonpath='{.metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null
+}
+
+wait_for_first_pod_name() {
+  local timeout_seconds=$1
+  local start_time
+
+  start_time=$(date +%s)
+
+  while true; do
+    local pod_name
+    pod_name=$(first_pod_name)
+    if [[ -n "${pod_name}" ]]; then
+      printf '%s\n' "${pod_name}"
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for the first vLLM pod to appear\n' >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+wait_for_pod_condition_timestamp() {
+  local pod_name=$1
+  local jsonpath=$2
+  local timeout_seconds=$3
+  local start_time
+
+  start_time=$(date +%s)
+
+  while true; do
+    local timestamp
+    timestamp=$(kubectl get pod "${pod_name}" -n "${APP_NAMESPACE}" -o "jsonpath=${jsonpath}" 2>/dev/null || true)
+
+    if [[ -n "${timestamp}" ]]; then
+      printf '%s\n' "${timestamp}"
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for pod timestamp: %s\n' "${pod_name}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+prepare_edge_and_profile() {
+  ensure_namespace || return 1
+  kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}" || return 1
+  kubectl apply -f "${GPU_INFERENCE_INGRESS_MANIFEST}" || return 1
+  wait_for_apiservice_available "${PROMETHEUS_ADAPTER_APISERVICE_NAME}" "${MONITORING_TIMEOUT_SECONDS}" || return 1
+  PUBLIC_INFERENCE_URL=$(public_inference_url "$(wait_for_ingress_hostname "${INGRESS_HOSTNAME_TIMEOUT_SECONDS}")") || return 1
+
+  kubectl delete -f "${GPU_LOAD_TEST_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete -f "${GPU_INFERENCE_HPA_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+
+  if is_warm_profile; then
+    kubectl apply -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" || return 1
+    WARM_NODEPOOL_APPLIED=1
+    kubectl wait --for=condition=Ready "nodepool/${KARPENTER_WARM_NODEPOOL_NAME}" --timeout=10m || return 1
+    wait_for_all_gpu_nodes_at_least 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  else
+    kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+    wait_for_all_gpu_nodes_at_most 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  fi
+}
+
+seed_profile_baseline_events() {
+  if ! is_warm_profile; then
+    return 0
+  fi
+
+  set_if_unset FIRST_NODECLAIM_TIME "${EVALUATION_START_TIME}"
+  set_if_unset FIRST_GPU_NODE_TIME "${EVALUATION_START_TIME}"
+  FIRST_GPU_NODE_NAME=$(first_gpu_node_name)
+  if [[ -n "${FIRST_GPU_NODE_NAME}" ]]; then
+    FIRST_GPU_INSTANCE_TYPE=$(node_instance_type "${FIRST_GPU_NODE_NAME}")
+  fi
+}
+
+apply_inference_stack() {
+  kubectl apply -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" || return 1
+  DEPLOYMENT_APPLIED=1
+  kubectl apply -f "${GPU_INFERENCE_HPA_MANIFEST}" || return 1
+  HPA_APPLIED=1
+  EVALUATION_START_TIME=$(date +%s)
+  seed_profile_baseline_events
+}
+
+wait_for_first_ready_and_response() {
+  wait_for_nodeclaims_at_least 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  set_if_unset FIRST_NODECLAIM_TIME "$(date +%s)"
+
+  wait_for_all_gpu_nodes_at_least 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  set_if_unset FIRST_GPU_NODE_TIME "$(date +%s)"
+
+  if [[ -z "${FIRST_GPU_NODE_NAME}" ]]; then
+    FIRST_GPU_NODE_NAME=$(first_gpu_node_name)
+    FIRST_GPU_INSTANCE_TYPE=$(node_instance_type "${FIRST_GPU_NODE_NAME}")
+  fi
+
+  FIRST_POD_NAME=$(wait_for_first_pod_name "${EVALUATE_SCALE_TIMEOUT_SECONDS}") || return 1
+  FIRST_POD_SCHEDULED_TIME=$(wait_for_pod_condition_timestamp \
+    "${FIRST_POD_NAME}" \
+    "{.status.conditions[?(@.type=='PodScheduled')].lastTransitionTime}" \
+    "${EVALUATE_SCALE_TIMEOUT_SECONDS}") || return 1
+  FIRST_CONTAINER_STARTED_TIME=$(wait_for_pod_condition_timestamp \
+    "${FIRST_POD_NAME}" \
+    '{.status.containerStatuses[0].state.running.startedAt}' \
+    "${EVALUATE_SCALE_TIMEOUT_SECONDS}") || return 1
+
+  kubectl rollout status "deployment/${GPU_INFERENCE_DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" --timeout=20m || return 1
+  FIRST_READY_TIME=$(date +%s)
+  wait_for_http_200 "${PUBLIC_INFERENCE_URL}" "${VERIFY_RESPONSE_TIMEOUT_SECONDS}" || return 1
+  FIRST_RESPONSE_TIME=$(date +%s)
+}
+
+run_load_and_wait_for_scale_out() {
+  kubectl apply -f "${GPU_LOAD_TEST_MANIFEST}" || return 1
+  LOAD_TEST_APPLIED=1
+  LOAD_START_TIME=$(date +%s)
+
+  wait_for_hpa_desired_replicas_at_least "${APP_NAMESPACE}" "${GPU_INFERENCE_HPA_NAME}" 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  HPA_SCALE_OUT_TIME=$(date +%s)
+
+  wait_for_nodeclaims_at_least 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  SECOND_NODECLAIM_TIME=$(date +%s)
+
+  wait_for_all_gpu_nodes_at_least 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  SECOND_GPU_NODE_TIME=$(date +%s)
+  SECOND_GPU_NODE_NAME=$(second_gpu_node_name)
+  if [[ -n "${SECOND_GPU_NODE_NAME}" ]]; then
+    SECOND_GPU_INSTANCE_TYPE=$(node_instance_type "${SECOND_GPU_NODE_NAME}")
+  fi
+
+  wait_for_deployment_ready_replicas_at_least "${APP_NAMESPACE}" "${GPU_INFERENCE_DEPLOYMENT_NAME}" 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  SECOND_READY_TIME=$(date +%s)
+
+  wait_for_http_200 "${PUBLIC_INFERENCE_URL}" "${VERIFY_RESPONSE_TIMEOUT_SECONDS}"
+}
+
+wait_for_burst_completion() {
+  wait_for_job_completion "${APP_NAMESPACE}" "${GPU_LOAD_TEST_JOB_NAME}" "${EVALUATE_LOAD_TIMEOUT_SECONDS}" || return 1
+  LOAD_FINISH_TIME=$(date +%s)
+}
+
+remove_load_and_wait_for_scale_in() {
+  kubectl delete -f "${GPU_LOAD_TEST_MANIFEST}" --ignore-not-found=true || return 1
+  LOAD_TEST_APPLIED=0
+  wait_for_hpa_desired_replicas_at_most "${APP_NAMESPACE}" "${GPU_INFERENCE_HPA_NAME}" 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  wait_for_deployment_ready_replicas_at_most "${APP_NAMESPACE}" "${GPU_INFERENCE_DEPLOYMENT_NAME}" 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  wait_for_all_gpu_nodes_at_most 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  SCALE_IN_TIME=$(date +%s)
+}
+
+delete_inference_and_clean_profile_capacity() {
+  kubectl delete -f "${GPU_INFERENCE_HPA_MANIFEST}" --ignore-not-found=true || return 1
+  HPA_APPLIED=0
+  wait_for_resource_deletion hpa "${GPU_INFERENCE_HPA_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+
+  kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true || return 1
+  DEPLOYMENT_APPLIED=0
+  wait_for_resource_deletion deployment "${GPU_INFERENCE_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+
+  if is_warm_profile; then
+    wait_for_all_gpu_nodes_at_most 1 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+    PROFILE_BASELINE_RESTORED_TIME=$(date +%s)
+    kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
+    WARM_NODEPOOL_APPLIED=0
+  fi
+
+  wait_for_all_gpu_nodes_at_most 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  CLEANUP_FINISH_TIME=$(date +%s)
+}
+
+normalize_rfc3339() {
+  local timestamp=$1
+
+  if [[ "${timestamp}" == *.*Z ]]; then
+    printf '%sZ\n' "${timestamp%%.*}"
+    return 0
+  fi
+
+  printf '%s\n' "${timestamp}"
+}
+
+rfc3339_to_epoch() {
+  local timestamp
+  timestamp=$(normalize_rfc3339 "$1")
+
+  if date -u -d "${timestamp}" +%s >/dev/null 2>&1; then
+    date -u -d "${timestamp}" +%s
+    return 0
+  fi
+
+  date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "${timestamp}" +%s
+}
+
+seconds_since_start() {
+  local timestamp=${1:-}
+
+  if [[ -z "${timestamp}" || -z "${EVALUATION_START_TIME}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  printf '%s\n' "$((timestamp - EVALUATION_START_TIME))"
+}
+
+seconds_between() {
+  local start_timestamp=${1:-}
+  local end_timestamp=${2:-}
+
+  if [[ -z "${start_timestamp}" || -z "${end_timestamp}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  printf '%s\n' "$((end_timestamp - start_timestamp))"
+}
+
+lookback_window() {
+  local end_time
+  local window_seconds
+
+  end_time=${CLEANUP_FINISH_TIME:-$(date +%s)}
+  window_seconds=$((end_time - EVALUATION_START_TIME + 120))
+  if (( window_seconds < 300 )); then
+    window_seconds=300
+  fi
+
+  printf '%ss\n' "${window_seconds}"
+}
+
+start_port_forward() {
+  local resource_name=$1
+  local resource_namespace=$2
+  local remote_port=$3
+  local local_port_var_name=$4
+  local pid_var_name=$5
+  local log_var_name=$6
+  local port_forward_log
+  local port_forward_pid
+  local local_port=""
+  local remaining_attempts=50
+
+  port_forward_log=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-port-forward.XXXXXX")
+  kubectl port-forward -n "${resource_namespace}" "${resource_name}" ":${remote_port}" >"${port_forward_log}" 2>&1 &
+  port_forward_pid=$!
+
+  while (( remaining_attempts > 0 )); do
+    if ! kill -0 "${port_forward_pid}" 2>/dev/null; then
+      cat "${port_forward_log}" >&2 || true
+      rm -f "${port_forward_log}" || true
+      return 1
+    fi
+
+    local_port=$(sed -n 's/.*127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "${port_forward_log}" | head -n 1)
+    if [[ -n "${local_port}" ]]; then
+      printf -v "${local_port_var_name}" '%s' "${local_port}"
+      printf -v "${pid_var_name}" '%s' "${port_forward_pid}"
+      printf -v "${log_var_name}" '%s' "${port_forward_log}"
+      return 0
+    fi
+
+    remaining_attempts=$((remaining_attempts - 1))
+    sleep 0.2
+  done
+
+  cat "${port_forward_log}" >&2 || true
+  kill "${port_forward_pid}" 2>/dev/null || true
+  wait "${port_forward_pid}" 2>/dev/null || true
+  rm -f "${port_forward_log}" || true
+  return 1
+}
+
+ensure_prometheus_local_port() {
+  if [[ -n "${PROMETHEUS_LOCAL_PORT}" ]]; then
+    return 0
+  fi
+
+  start_port_forward \
+    "service/${KUBE_PROMETHEUS_STACK_PROMETHEUS_SERVICE}" \
+    "${MONITORING_NAMESPACE}" \
+    9090 \
+    PROMETHEUS_LOCAL_PORT \
+    PROMETHEUS_PORT_FORWARD_PID \
+    PROMETHEUS_PORT_FORWARD_LOG
+}
+
+ensure_pushgateway_local_port() {
+  if [[ -n "${PUSHGATEWAY_LOCAL_PORT}" ]]; then
+    return 0
+  fi
+
+  start_port_forward \
+    "service/${PUSHGATEWAY_SERVICE_NAME}" \
+    "${MONITORING_NAMESPACE}" \
+    9091 \
+    PUSHGATEWAY_LOCAL_PORT \
+    PUSHGATEWAY_PORT_FORWARD_PID \
+    PUSHGATEWAY_PORT_FORWARD_LOG
+}
+
+extract_prometheus_scalar() {
+  tr -d '\n' | sed -n 's/.*"value":\[[^,]*,"\([^"]*\)"\].*/\1/p'
+}
+
+prometheus_query_scalar() {
+  local query=$1
+  local response
+  local scalar_value
+
+  ensure_prometheus_local_port || return 1
+
+  response=$(curl -fsS --get "http://127.0.0.1:${PROMETHEUS_LOCAL_PORT}/api/v1/query" \
+    --data-urlencode "query=${query}" 2>/dev/null || true)
+  if [[ -z "${response}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  scalar_value=$(printf '%s' "${response}" | extract_prometheus_scalar)
+  if [[ "${scalar_value}" == "NaN" || "${scalar_value}" == "+Inf" || "${scalar_value}" == "-Inf" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  printf '%s\n' "${scalar_value}"
+}
+
+gpu_instance_hourly_cost() {
+  case "${1:-}" in
+    g4dn.xlarge)
+      printf '0.526'
+      ;;
+    g5.xlarge)
+      printf '1.006'
+      ;;
+    *)
+      printf '%s\n' ""
+      ;;
+  esac
+}
+
+multiply_decimal_by_seconds_over_hour() {
+  local decimal_value=${1:-}
+  local duration_seconds=${2:-}
+
+  if [[ -z "${decimal_value}" || -z "${duration_seconds}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  awk -v rate="${decimal_value}" -v seconds="${duration_seconds}" 'BEGIN { printf "%.6f\n", (rate * seconds) / 3600 }'
+}
+
+sum_decimal_values() {
+  local left_value=${1:-0}
+  local right_value=${2:-0}
+
+  awk -v left="${left_value}" -v right="${right_value}" 'BEGIN { printf "%.6f\n", left + right }'
+}
+
+estimate_costs() {
+  local first_node_hourly_cost
+  local second_node_hourly_cost
+  local first_node_active_seconds
+  local second_node_active_seconds
+  local first_node_burst_cost
+  local second_node_burst_cost
+
+  first_node_hourly_cost=$(gpu_instance_hourly_cost "${FIRST_GPU_INSTANCE_TYPE}")
+  second_node_hourly_cost=$(gpu_instance_hourly_cost "${SECOND_GPU_INSTANCE_TYPE}")
+
+  if is_warm_profile; then
+    ESTIMATED_IDLE_COST_PER_HOUR=${first_node_hourly_cost}
+    first_node_active_seconds=$(seconds_between "${EVALUATION_START_TIME}" "${CLEANUP_FINISH_TIME}")
+  else
+    ESTIMATED_IDLE_COST_PER_HOUR="0"
+    first_node_active_seconds=$(seconds_between "${FIRST_GPU_NODE_TIME}" "${CLEANUP_FINISH_TIME}")
+  fi
+
+  second_node_active_seconds=$(seconds_between "${SECOND_GPU_NODE_TIME}" "${SCALE_IN_TIME}")
+  first_node_burst_cost=$(multiply_decimal_by_seconds_over_hour "${first_node_hourly_cost}" "${first_node_active_seconds}")
+  second_node_burst_cost=$(multiply_decimal_by_seconds_over_hour "${second_node_hourly_cost}" "${second_node_active_seconds}")
+  ESTIMATED_BURST_COST=$(sum_decimal_values "${first_node_burst_cost:-0}" "${second_node_burst_cost:-0}")
+}
+
+collect_production_metrics() {
+  local window
+  local queue_query
+  local latency_query
+  local ttft_query
+  local throughput_query
+  local nodeclaim_query
+
+  window=$(lookback_window)
+  queue_query="max_over_time((sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])"
+  latency_query="quantile_over_time(0.95, (histogram_quantile(0.95, sum by (le) (rate(vllm:e2e_request_latency_seconds_bucket{namespace=\"${APP_NAMESPACE}\"}[1m]))))[${window}:1m])"
+  ttft_query="quantile_over_time(0.95, (histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{namespace=\"${APP_NAMESPACE}\"}[1m]))))[${window}:1m])"
+  throughput_query="avg_over_time((sum(rate(vllm:generation_tokens_total{namespace=\"${APP_NAMESPACE}\"}[1m])))[${window}:1m])"
+  nodeclaim_query="max_over_time(((sum(karpenter_nodeclaims_created_total{nodepool=~\"${KARPENTER_NODEPOOL_NAME}|${KARPENTER_WARM_NODEPOOL_NAME}\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=~\"${KARPENTER_NODEPOOL_NAME}|${KARPENTER_WARM_NODEPOOL_NAME}\"})))[${window}:1m])"
+
+  P95_REQUEST_LATENCY_SECONDS=$(prometheus_query_scalar "${latency_query}") || return 1
+  P95_TTFT_SECONDS=$(prometheus_query_scalar "${ttft_query}") || return 1
+  PEAK_QUEUE_DEPTH=$(prometheus_query_scalar "${queue_query}") || return 1
+  AVG_GENERATION_TOKENS_PER_SECOND=$(prometheus_query_scalar "${throughput_query}") || return 1
+  AVG_GPU_UTILIZATION_PERCENT=$(prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])") || return 1
+  MAX_GPU_UTILIZATION_PERCENT=$(prometheus_query_scalar "max_over_time((max(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])") || return 1
+  PEAK_ACTIVE_NODECLAIMS=$(prometheus_query_scalar "${nodeclaim_query}") || return 1
+
+  estimate_costs
+}
+
+append_pushgateway_metric() {
+  local output_file=$1
+  local metric_name=$2
+  local metric_value=${3:-}
+
+  if [[ -z "${metric_value}" ]]; then
+    return 0
+  fi
+
+  printf '%s %s\n' "${metric_name}" "${metric_value}" >> "${output_file}"
+}
+
+push_summary_metrics() {
+  local payload_file
+  local push_path
+
+  ensure_pushgateway_local_port || return 0
+
+  payload_file=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-pushgateway.XXXXXX")
+  push_path="http://127.0.0.1:${PUSHGATEWAY_LOCAL_PORT}/metrics/job/gpu-serving-measure/profile/${EVALUATION_PROFILE}"
+
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_first_gpu_node_seconds" "$(seconds_since_start "${FIRST_GPU_NODE_TIME}")"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_model_ready_seconds" "$(seconds_since_start "${FIRST_READY_TIME}")"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_first_external_completion_seconds" "$(seconds_since_start "${FIRST_RESPONSE_TIME}")"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_second_gpu_node_seconds" "$(seconds_since_start "${SECOND_GPU_NODE_TIME}")"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_second_ready_replica_seconds" "$(seconds_since_start "${SECOND_READY_TIME}")"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_scale_down_to_zero_gpu_nodes_seconds" "$(seconds_between "${LOAD_FINISH_TIME}" "${CLEANUP_FINISH_TIME}")"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_estimated_idle_cost_per_hour" "${ESTIMATED_IDLE_COST_PER_HOUR}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_estimated_burst_cost" "${ESTIMATED_BURST_COST}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_request_latency_seconds" "${P95_REQUEST_LATENCY_SECONDS}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_average_gpu_utilization_percent" "${AVG_GPU_UTILIZATION_PERCENT}"
+
+  if [[ ! -s "${payload_file}" ]]; then
+    rm -f "${payload_file}"
+    return 0
+  fi
+
+  curl -fsS --data-binary @"${payload_file}" "${push_path}" >/dev/null 2>&1 || true
+  rm -f "${payload_file}"
+}
+
+json_escape() {
+  local value=$1
+
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  value=${value//$'\n'/\\n}
+  value=${value//$'\r'/\\r}
+  value=${value//$'\t'/\\t}
+  printf '"%s"' "${value}"
+}
+
+json_nullable_string() {
+  local value=${1:-}
+
+  if [[ -z "${value}" ]]; then
+    printf 'null'
+    return 0
+  fi
+
+  json_escape "${value}"
+}
+
+json_nullable_number() {
+  local value=${1:-}
+
+  if [[ -z "${value}" ]]; then
+    printf 'null'
+    return 0
+  fi
+
+  printf '%s' "${value}"
+}
+
+display_duration() {
+  local seconds=${1:-}
+
+  if [[ -z "${seconds}" ]]; then
+    printf 'n/a'
+    return 0
+  fi
+
+  format_duration "${seconds}"
+}
+
+display_metric() {
+  local value=${1:-}
+  local suffix=${2:-}
+
+  if [[ -z "${value}" ]]; then
+    printf 'n/a'
+    return 0
+  fi
+
+  printf '%s%s' "${value}" "${suffix}"
+}
+
+pod_schedule_to_ready_seconds() {
+  if [[ -z "${FIRST_POD_SCHEDULED_TIME}" || -z "${FIRST_READY_TIME}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  printf '%s\n' "$((FIRST_READY_TIME - $(rfc3339_to_epoch "${FIRST_POD_SCHEDULED_TIME}")))"
+}
+
+container_started_to_ready_seconds() {
+  if [[ -z "${FIRST_CONTAINER_STARTED_TIME}" || -z "${FIRST_READY_TIME}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  printf '%s\n' "$((FIRST_READY_TIME - $(rfc3339_to_epoch "${FIRST_CONTAINER_STARTED_TIME}")))"
+}
+
+write_reports() {
+  local pod_schedule_ready_seconds
+  local container_ready_seconds
+
+  pod_schedule_ready_seconds=$(pod_schedule_to_ready_seconds)
+  container_ready_seconds=$(container_started_to_ready_seconds)
+
+  mkdir -p "$(dirname "${REPORT_PATH}")"
+  mkdir -p "$(dirname "${JSON_REPORT_PATH}")"
+
+  cat > "${REPORT_PATH}" <<EOF
+# Load-Aware GPU Serving Report
+
+- Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+- Profile: ${EVALUATION_PROFILE}
+- Public endpoint: ${PUBLIC_INFERENCE_URL}
+- First GPU instance type: ${FIRST_GPU_INSTANCE_TYPE:-n/a}
+- Second GPU instance type: ${SECOND_GPU_INSTANCE_TYPE:-n/a}
+
+## Timeline
+
+| Event | Delta from start |
+| --- | --- |
+| First NodeClaim | $(display_duration "$(seconds_since_start "${FIRST_NODECLAIM_TIME}")") |
+| First GPU node | $(display_duration "$(seconds_since_start "${FIRST_GPU_NODE_TIME}")") |
+| First ready replica | $(display_duration "$(seconds_since_start "${FIRST_READY_TIME}")") |
+| First public response | $(display_duration "$(seconds_since_start "${FIRST_RESPONSE_TIME}")") |
+| Load job started | $(display_duration "$(seconds_since_start "${LOAD_START_TIME}")") |
+| HPA desired replicas = 2 | $(display_duration "$(seconds_since_start "${HPA_SCALE_OUT_TIME}")") |
+| Second NodeClaim | $(display_duration "$(seconds_since_start "${SECOND_NODECLAIM_TIME}")") |
+| Second GPU node | $(display_duration "$(seconds_since_start "${SECOND_GPU_NODE_TIME}")") |
+| Second ready replica | $(display_duration "$(seconds_since_start "${SECOND_READY_TIME}")") |
+| Load job complete | $(display_duration "$(seconds_since_start "${LOAD_FINISH_TIME}")") |
+| Scale-in back to one GPU node | $(display_duration "$(seconds_since_start "${SCALE_IN_TIME}")") |
+| Warm baseline restored | $(display_duration "$(seconds_since_start "${PROFILE_BASELINE_RESTORED_TIME}")") |
+| Final cleanup to zero GPU nodes | $(display_duration "$(seconds_since_start "${CLEANUP_FINISH_TIME}")") |
+
+## Operator Summary
+
+- Node launch latency: $(display_duration "$(seconds_since_start "${FIRST_GPU_NODE_TIME}")")
+- Pod scheduled to Ready: $(display_duration "${pod_schedule_ready_seconds}")
+- Container started to Ready (model-load proxy): $(display_duration "${container_ready_seconds}")
+- First public response: $(display_duration "$(seconds_since_start "${FIRST_RESPONSE_TIME}")")
+- Scale-out to second GPU node: $(display_duration "$(seconds_since_start "${SECOND_GPU_NODE_TIME}")")
+- Scale-out to second ready replica: $(display_duration "$(seconds_since_start "${SECOND_READY_TIME}")")
+- Scale-in after load completion: $(display_duration "$(seconds_between "${LOAD_FINISH_TIME}" "${SCALE_IN_TIME}")")
+- Final cleanup to zero GPU nodes: $(display_duration "$(seconds_between "${LOAD_FINISH_TIME}" "${CLEANUP_FINISH_TIME}")")
+
+## Metrics
+
+- p95 request latency during burst: $(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")
+- p95 time to first token during burst: $(display_metric "${P95_TTFT_SECONDS}" "s")
+- Peak waiting requests: $(display_metric "${PEAK_QUEUE_DEPTH}")
+- Average generation tokens per second: $(display_metric "${AVG_GENERATION_TOKENS_PER_SECOND}")
+- Average GPU utilization: $(display_metric "${AVG_GPU_UTILIZATION_PERCENT}" "%")
+- Max GPU utilization: $(display_metric "${MAX_GPU_UTILIZATION_PERCENT}" "%")
+- Peak active NodeClaims: $(display_metric "${PEAK_ACTIVE_NODECLAIMS}")
+
+## Cost
+
+- Estimated idle cost per hour for profile: ${ESTIMATED_IDLE_COST_PER_HOUR:-n/a}
+- Estimated burst cost for this run: ${ESTIMATED_BURST_COST:-n/a}
+
+## Notes
+
+- \`Container started -> Ready\` is reported as the model-load proxy because the baseline experiment does not rely on a separate vLLM model-load completion metric.
+- The queue-depth-driven HPA is validated from the custom metric \`vllm_requests_waiting\`, not CPU utilization.
+- The script cleans up the warm profile at the end so the environment returns to zero GPU nodes after reporting.
+EOF
+
+  cat > "${JSON_REPORT_PATH}" <<EOF
+{
+  "generated_at": $(json_escape "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"),
+  "profile": $(json_escape "${EVALUATION_PROFILE}"),
+  "public_endpoint": $(json_escape "${PUBLIC_INFERENCE_URL}"),
+  "first_gpu_instance_type": $(json_nullable_string "${FIRST_GPU_INSTANCE_TYPE}"),
+  "second_gpu_instance_type": $(json_nullable_string "${SECOND_GPU_INSTANCE_TYPE}"),
+  "timeline": {
+    "first_nodeclaim_seconds": $(json_nullable_number "$(seconds_since_start "${FIRST_NODECLAIM_TIME}")"),
+    "first_gpu_node_seconds": $(json_nullable_number "$(seconds_since_start "${FIRST_GPU_NODE_TIME}")"),
+    "first_ready_seconds": $(json_nullable_number "$(seconds_since_start "${FIRST_READY_TIME}")"),
+    "first_public_response_seconds": $(json_nullable_number "$(seconds_since_start "${FIRST_RESPONSE_TIME}")"),
+    "load_started_seconds": $(json_nullable_number "$(seconds_since_start "${LOAD_START_TIME}")"),
+    "hpa_scale_out_seconds": $(json_nullable_number "$(seconds_since_start "${HPA_SCALE_OUT_TIME}")"),
+    "second_nodeclaim_seconds": $(json_nullable_number "$(seconds_since_start "${SECOND_NODECLAIM_TIME}")"),
+    "second_gpu_node_seconds": $(json_nullable_number "$(seconds_since_start "${SECOND_GPU_NODE_TIME}")"),
+    "second_ready_seconds": $(json_nullable_number "$(seconds_since_start "${SECOND_READY_TIME}")"),
+    "load_complete_seconds": $(json_nullable_number "$(seconds_since_start "${LOAD_FINISH_TIME}")"),
+    "scale_in_seconds": $(json_nullable_number "$(seconds_since_start "${SCALE_IN_TIME}")"),
+    "warm_baseline_restored_seconds": $(json_nullable_number "$(seconds_since_start "${PROFILE_BASELINE_RESTORED_TIME}")"),
+    "cleanup_finish_seconds": $(json_nullable_number "$(seconds_since_start "${CLEANUP_FINISH_TIME}")")
+  },
+  "operator_summary": {
+    "pod_scheduled_to_ready_seconds": $(json_nullable_number "${pod_schedule_ready_seconds}"),
+    "container_started_to_ready_seconds": $(json_nullable_number "${container_ready_seconds}")
+  },
+  "metrics": {
+    "p95_request_latency_seconds": $(json_nullable_number "${P95_REQUEST_LATENCY_SECONDS}"),
+    "p95_ttft_seconds": $(json_nullable_number "${P95_TTFT_SECONDS}"),
+    "peak_waiting_requests": $(json_nullable_number "${PEAK_QUEUE_DEPTH}"),
+    "average_generation_tokens_per_second": $(json_nullable_number "${AVG_GENERATION_TOKENS_PER_SECOND}"),
+    "average_gpu_utilization_percent": $(json_nullable_number "${AVG_GPU_UTILIZATION_PERCENT}"),
+    "max_gpu_utilization_percent": $(json_nullable_number "${MAX_GPU_UTILIZATION_PERCENT}"),
+    "peak_active_nodeclaims": $(json_nullable_number "${PEAK_ACTIVE_NODECLAIMS}")
+  },
+  "cost": {
+    "estimated_idle_cost_per_hour": $(json_nullable_number "${ESTIMATED_IDLE_COST_PER_HOUR}"),
+    "estimated_burst_cost": $(json_nullable_number "${ESTIMATED_BURST_COST}")
+  }
+}
+EOF
+}
+
+collect_metrics_and_write_reports() {
+  collect_production_metrics || return 1
+  push_summary_metrics || true
+  write_reports
+}
+
+main() {
+  parse_args "$@"
+  trap cleanup_evaluate EXIT
+
+  set_failure_hints \
+    "command -v kubectl curl awk" \
+    "kubectl config current-context" \
+    "kubectl get apiservice ${PROMETHEUS_ADAPTER_APISERVICE_NAME}"
+  run_stage 1 "${TOTAL_STAGES}" "checking prerequisites" evaluate_prereqs
+
+  set_failure_hints \
+    "kubectl get ingress,service -n ${APP_NAMESPACE}" \
+    "kubectl get apiservice ${PROMETHEUS_ADAPTER_APISERVICE_NAME} -o yaml" \
+    "kubectl get nodepool ${KARPENTER_WARM_NODEPOOL_NAME}"
+  run_stage 2 "${TOTAL_STAGES}" "prepare evaluation edge and profile" prepare_edge_and_profile
+
+  set_failure_hints \
+    "kubectl get deployment,hpa -n ${APP_NAMESPACE}" \
+    "kubectl describe hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE}" \
+    "kubectl get pods -n ${APP_NAMESPACE}"
+  run_stage 3 "${TOTAL_STAGES}" "apply inference deployment and hpa" apply_inference_stack
+
+  set_failure_hints \
+    "kubectl get pods -n ${APP_NAMESPACE} -o wide" \
+    "kubectl get nodeclaims" \
+    "kubectl logs -n ${APP_NAMESPACE} deployment/${GPU_INFERENCE_DEPLOYMENT_NAME} --tail=100"
+  run_stage 4 "${TOTAL_STAGES}" "wait for first ready replica and first public response" wait_for_first_ready_and_response
+
+  set_failure_hints \
+    "kubectl describe hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE}" \
+    "kubectl get nodeclaims,nodes" \
+    "kubectl logs -n ${APP_NAMESPACE} job/${GPU_LOAD_TEST_JOB_NAME} --tail=100"
+  run_stage 5 "${TOTAL_STAGES}" "run load and wait for scale-out" run_load_and_wait_for_scale_out
+
+  set_failure_hints \
+    "kubectl get job ${GPU_LOAD_TEST_JOB_NAME} -n ${APP_NAMESPACE} -o yaml" \
+    "kubectl logs -n ${APP_NAMESPACE} job/${GPU_LOAD_TEST_JOB_NAME}" \
+    "kubectl get hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE} -o yaml"
+  run_stage 6 "${TOTAL_STAGES}" "wait for the burst to complete" wait_for_burst_completion
+
+  set_failure_hints \
+    "kubectl get hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE}" \
+    "kubectl get deployment ${GPU_INFERENCE_DEPLOYMENT_NAME} -n ${APP_NAMESPACE} -o yaml" \
+    "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
+  run_stage 7 "${TOTAL_STAGES}" "remove load and wait for scale-in" remove_load_and_wait_for_scale_in
+
+  set_failure_hints \
+    "kubectl get deployment,hpa -n ${APP_NAMESPACE}" \
+    "kubectl get nodepool ${KARPENTER_WARM_NODEPOOL_NAME}" \
+    "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
+  run_stage 8 "${TOTAL_STAGES}" "delete inference workload and clean profile capacity" delete_inference_and_clean_profile_capacity
+
+  set_failure_hints \
+    "kubectl get svc -n ${MONITORING_NAMESPACE}" \
+    "kubectl get pods -n ${MONITORING_NAMESPACE}" \
+    "kubectl get podmonitor,servicemonitor -n ${MONITORING_NAMESPACE}"
+  run_stage 9 "${TOTAL_STAGES}" "collect metrics and write reports" collect_metrics_and_write_reports
+
+  printf '\nEvaluated:\n'
+  printf '  Profile: %s\n' "${EVALUATION_PROFILE}"
+  printf '  First public response: %s\n' "$(display_duration "$(seconds_since_start "${FIRST_RESPONSE_TIME}")")"
+  printf '  Second ready replica: %s\n' "$(display_duration "$(seconds_since_start "${SECOND_READY_TIME}")")"
+  printf '  p95 request latency: %s\n' "$(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")"
+  printf '  Average GPU utilization: %s\n' "$(display_metric "${AVG_GPU_UTILIZATION_PERCENT}" "%")"
+  printf '  Markdown report: %s\n' "${REPORT_PATH}"
+  printf '  JSON report: %s\n' "${JSON_REPORT_PATH}"
+}
+
+main "$@"

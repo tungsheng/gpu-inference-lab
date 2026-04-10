@@ -3,15 +3,11 @@
 **gpu-inference-lab** is a hands-on AWS project for a production-style GPU
 inference platform on Amazon EKS.
 
-The default workflow is intentionally small:
+The repository now demonstrates two things by default:
 
-- `./scripts/up` provisions AWS infrastructure and installs the minimum
-  Kubernetes platform pieces needed for the public inference path
-- `./scripts/verify` proves the cold-start path end to end by waiting for a GPU
-  node, a Ready vLLM pod, one successful public response, and a return to zero
-  GPU nodes
-- `./scripts/down` tears the platform down in reverse order and then destroys
-  the Terraform environment
+- the public GPU inference path can cold-start from zero with `./scripts/verify`
+- the serving stack can scale under burst load with operator-grade visibility
+  through `./scripts/evaluate`
 
 ## Architecture At A Glance
 
@@ -27,30 +23,34 @@ Ingress (/v1)
    v
 vLLM Service
    |
+   +--> vLLM Deployment
+   |      |
+   |      +--> HPA on vllm_requests_waiting
+   |
+   +--> Prometheus + Grafana + Prometheus Adapter
+   |
    v
-vLLM Pod on Karpenter GPU Node
+Karpenter GPU NodePool(s)
 
 EKS cluster
    |
    +--> managed system nodes (m7i-flex.large)
    |
-   +--> Karpenter GPU NodePool (g4dn.xlarge / g5.xlarge)
-          |
-          +--> workload=gpu
-          +--> gpu=true:NoSchedule
-          +--> NVIDIA device plugin
+   +--> gpu-serving NodePool (zero-idle baseline)
+   |
+   +--> gpu-warm-1 NodePool (evaluation profile)
 ```
 
 ## Repository Map
 
 - `infra/env/dev/`: active Terraform environment
 - `infra/modules/`: reusable Terraform modules
-- `platform/karpenter/`: GPU `EC2NodeClass`, `NodePool`, and service account
-- `platform/inference/`: vLLM deployment, public service, ingress, and optional HPA
-- `platform/system/`: cluster-level runtime manifests such as the NVIDIA device plugin
-- `platform/tests/`: optional manual validation manifests
-- `scripts/`: the minimal lifecycle commands and shared helper
-- `docs/`: workflow, architecture, scaling, inference, and roadmap notes
+- `platform/karpenter/`: GPU `EC2NodeClass`, `NodePool`, and warm-profile manifests
+- `platform/inference/`: vLLM deployment, HPA, public service, and ingress
+- `platform/observability/`: Prometheus, Grafana, Prometheus Adapter, DCGM exporter, and dashboards
+- `platform/tests/`: GPU smoke and burst-load manifests
+- `scripts/`: lifecycle commands and the shared helper
+- `docs/`: workflow, architecture, scaling, networking, and roadmap notes
 
 ## Prerequisites
 
@@ -69,10 +69,17 @@ Bring the environment up:
 ./scripts/up
 ```
 
-Validate the public inference path:
+Smoke-test the cold-start path:
 
 ```bash
 ./scripts/verify
+```
+
+Run the load-aware evaluation:
+
+```bash
+./scripts/evaluate --profile zero-idle
+./scripts/evaluate --profile warm-1
 ```
 
 Tear the environment down:
@@ -91,14 +98,15 @@ Run the local shell checks:
 
 - Terraform-managed VPC, EKS cluster, and IAM roles
 - AWS Load Balancer Controller
+- Prometheus, Grafana, Prometheus Adapter, dashboards, and GPU metrics exporters
 - Karpenter controller and CRDs
 - GPU `EC2NodeClass` and `NodePool`
 - NVIDIA device plugin
 - `app` namespace
 - public inference service and ingress
 
-After `./scripts/up`, the cluster is ready for GPU work, but the default GPU
-node count should still be `0`.
+After `./scripts/up`, the cluster is ready for GPU work, the custom metrics API
+is available for the HPA, and the default GPU node count should still be `0`.
 
 ## What `verify` Proves
 
@@ -107,14 +115,25 @@ node count should still be `0`.
 - the public `/v1/completions` edge returns a `200`
 - deleting the workload returns the cluster to zero GPU nodes
 
-## Advanced And Manual Extensions
+## What `evaluate` Proves
 
-These assets stay in the repo, but they are not part of the default scripted
-workflow:
+- `vllm_requests_waiting` can drive HPA scale-out from one to two replicas
+- replica scale-out causes Karpenter to add a second GPU node
+- Prometheus and DCGM metrics can answer latency, queue depth, and GPU saturation questions
+- the repo can compare a zero-idle profile against a one-warm-node profile and write reports under `docs/reports/`
 
-- `platform/inference/hpa.yaml` for queue-depth-driven autoscaling
-- `platform/observability/` for Prometheus, Grafana, and related dashboards
-- `platform/tests/` for manual smoke and load-test manifests
+## Dev vs Production Access
+
+The dev environment keeps the EKS API public for simplicity:
+
+- `endpoint_public_access = true`
+- `endpoint_public_access_cidrs = ["0.0.0.0/0"]`
+
+That is a **dev-only convenience**. A production variant should switch to:
+
+- private endpoint access
+- bastion, SSM, or VPN-based admin access
+- tighter CIDR controls for any remaining public exposure
 
 ## Docs
 
