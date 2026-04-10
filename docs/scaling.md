@@ -44,7 +44,8 @@ Expected shape after `./scripts/up`:
 - waits for `vllm_requests_waiting` to drive HPA desired replicas to `2`
 - waits for a second `NodeClaim`, second GPU node, and second Ready replica
 
-That turns HPA into a demonstrated path instead of an optional leftover file.
+That makes the HPA an exercised part of the workflow instead of a checked-in
+manifest that users must remember to wire up themselves.
 
 ## Warm Profile
 

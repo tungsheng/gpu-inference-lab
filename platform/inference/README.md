@@ -10,8 +10,10 @@ This directory contains the serving workload manifests:
 The current serving stack uses the official `vllm/vllm-openai` image to expose
 an OpenAI-compatible API backed by `Qwen/Qwen2.5-0.5B-Instruct`.
 
-The default script roles are:
+The script roles are:
 
+- `./scripts/up` applies the service and ingress so the public edge exists
+  before any GPU workload is launched
 - `./scripts/verify` applies the deployment-only manifest to prove cold start
 - `./scripts/evaluate` applies both the deployment and HPA to prove burst
   scale-out

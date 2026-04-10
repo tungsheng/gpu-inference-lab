@@ -14,8 +14,9 @@ Ingress (/v1)
    v
 vLLM Service
    |
-   v
-vLLM Deployment + HPA
+   +--> vLLM Deployment
+   |      |
+   |      +--> HPA on vllm_requests_waiting (evaluate/manual path)
    |
    v
 Karpenter-managed GPU nodes
@@ -42,7 +43,8 @@ GPU node group.
 ## Scripted Lifecycle
 
 - `./scripts/up` installs the public inference edge, observability stack, GPU
-  capacity definitions, and runtime prerequisites
+  capacity definitions, and runtime prerequisites, but does not apply the vLLM
+  deployment or HPA
 - `./scripts/verify` proves the first-response path and confirms the cluster
   returns to zero GPU nodes after cleanup
 - `./scripts/evaluate` proves HPA-driven scale-out, second-node provisioning,

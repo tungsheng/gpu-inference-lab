@@ -1,19 +1,23 @@
 # Inference
 
-## Current State
+## What Lives Here
 
-The repository includes a real GPU inference service instead of a placeholder
-GPU pod.
+The repo uses a real GPU inference service.
 
-What is in place by default:
+This part of the repo includes:
 
-- a Karpenter-managed GPU `NodePool`
-- the NVIDIA device plugin
 - a deployment-only vLLM manifest at `platform/inference/vllm-openai.yaml`
 - a queue-depth-driven HPA at `platform/inference/hpa.yaml`
 - a dedicated `ClusterIP` service at `platform/inference/service.yaml`
 - a public ALB ingress at `platform/inference/ingress.yaml`
-- the Prometheus and Prometheus Adapter stack that makes the HPA metric real
+
+The scripts use those manifests in different ways:
+
+- `./scripts/up` prepares the GPU `NodePool`, NVIDIA device plugin,
+  observability stack, service, and ingress
+- `./scripts/verify` applies only `platform/inference/vllm-openai.yaml`
+- `./scripts/evaluate` applies both `platform/inference/vllm-openai.yaml` and
+  `platform/inference/hpa.yaml`
 
 ## Serving Stack
 
@@ -69,11 +73,11 @@ That flow proves:
 - the HPA can scale from `1` to `2` replicas from `vllm_requests_waiting`
 - Karpenter can add a second GPU node in response
 - Prometheus can report latency, queue, throughput, and GPU-utilization metrics
-- the repo can compare cold-start and warm-node tradeoffs with report files
+- the repo can compare zero-idle and warm-node tradeoffs with report files
 
 ## Manual Validation
 
-Apply the serving deployment manually:
+After `./scripts/up`, apply the serving workload manually:
 
 ```bash
 kubectl apply -f platform/inference/vllm-openai.yaml

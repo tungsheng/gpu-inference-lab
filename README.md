@@ -3,11 +3,11 @@
 **gpu-inference-lab** is a hands-on AWS project for a production-style GPU
 inference platform on Amazon EKS.
 
-The repository now demonstrates two things by default:
+The repo currently proves two paths:
 
-- the public GPU inference path can cold-start from zero with `./scripts/verify`
-- the serving stack can scale under burst load with operator-grade visibility
-  through `./scripts/evaluate`
+- `./scripts/verify` cold-starts the public inference edge from zero GPU nodes
+- `./scripts/evaluate --profile zero-idle|warm-1` proves HPA-driven burst
+  scale-out with metrics and report output
 
 ## Architecture At A Glance
 
@@ -25,7 +25,7 @@ vLLM Service
    |
    +--> vLLM Deployment
    |      |
-   |      +--> HPA on vllm_requests_waiting
+   |      +--> HPA on vllm_requests_waiting (evaluate path)
    |
    +--> Prometheus + Grafana + Prometheus Adapter
    |
@@ -137,13 +137,21 @@ That is a **dev-only convenience**. A production variant should switch to:
 
 ## Docs
 
-- [Architecture](docs/architecture.md)
+Start here:
+
 - [Dev environment workflow](docs/dev-environment.md)
-- [Dynamic GPU serving](docs/dynamic-gpu-serving.md)
 - [Operations](docs/operations.md)
-- [Scaling](docs/scaling.md)
+
+Understand the platform:
+
+- [Architecture](docs/architecture.md)
 - [Inference](docs/inference.md)
+- [Scaling](docs/scaling.md)
 - [Cost optimization](docs/cost-optimization.md)
 - [Networking](docs/networking.md)
+
+Background and next steps:
+
+- [Dynamic GPU serving](docs/dynamic-gpu-serving.md)
 - [GPU bin packing](docs/gpu-binpacking.md)
 - [Roadmap](docs/roadmap.md)

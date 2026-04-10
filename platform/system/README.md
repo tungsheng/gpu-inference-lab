@@ -3,7 +3,7 @@
 This directory contains cluster-level manifests used by the minimal lifecycle
 scripts.
 
-Current checked-in examples:
+Current manifest:
 
 - `nvidia-device-plugin.yaml` for GPU runtime discovery on tainted GPU nodes
 

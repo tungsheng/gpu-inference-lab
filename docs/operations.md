@@ -1,52 +1,20 @@
 # Operations
 
-## Default Workflow
+Use [dev-environment.md](dev-environment.md) for the step-by-step runbook. This
+doc is the short operational summary.
 
-The repository now supports a four-command operational lifecycle:
+## Lifecycle
 
-- `./scripts/up`
-- `./scripts/verify`
-- `./scripts/evaluate --profile zero-idle`
-- `./scripts/down`
-
-`./scripts/up` prepares the platform:
-
-- applies Terraform
-- updates kubeconfig
-- installs the AWS Load Balancer Controller
-- installs Prometheus, Grafana, Prometheus Adapter, dashboards, and GPU metrics exporters
-- installs Karpenter
-- applies the GPU `EC2NodeClass` and `NodePool`
-- applies the NVIDIA device plugin
-- applies the dedicated inference service and public ingress
-
-`./scripts/verify` proves the cold-start path:
-
-- starts from zero GPU nodes
-- applies the real vLLM deployment
-- waits for Karpenter to provision one GPU node
-- waits for the deployment to become Ready
-- waits for the first successful external completion through the ALB edge
-- deletes the deployment
-- confirms the cluster returns to zero GPU nodes
-
-`./scripts/evaluate` proves load-aware behavior:
-
-- applies the real vLLM deployment and HPA
-- drives a burst through `platform/tests/gpu-load-test.yaml`
-- waits for HPA scale-out to two desired replicas
-- waits for a second `NodeClaim`, second GPU node, and second Ready replica
-- collects Prometheus- and DCGM-backed latency, queue, throughput, and GPU-utilization metrics
-- writes Markdown and JSON reports under `docs/reports/`
-
-`./scripts/down` reverses the stack:
-
-- removes load-test and inference workload resources
-- removes the warm and serving GPU capacity definitions
-- removes the observability stack
-- uninstalls Karpenter
-- removes the NVIDIA device plugin
-- destroys Terraform-managed infrastructure
+- `./scripts/up` creates the dev environment, installs controllers and
+  observability, applies the public service and ingress, and leaves GPU node
+  count at `0`
+- `./scripts/verify` applies only the vLLM deployment to prove the public
+  first-response path from a zero-GPU baseline
+- `./scripts/evaluate --profile zero-idle|warm-1` applies the deployment and
+  HPA, runs the burst load, gathers metrics, writes reports, and returns the
+  cluster to zero GPU nodes
+- `./scripts/down` removes runtime resources, observability, capacity
+  definitions, controllers, and Terraform-managed infrastructure
 
 ## Questions The Workflow Can Answer
 
@@ -62,7 +30,7 @@ The repository now supports a four-command operational lifecycle:
 
 ## Reports And Dashboards
 
-The default operator story now includes:
+The operator story includes:
 
 - Prometheus metrics for vLLM queue depth, request latency, and token throughput
 - Grafana dashboards for serving, capacity, and experiment summaries

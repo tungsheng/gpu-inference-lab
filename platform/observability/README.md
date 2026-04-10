@@ -1,7 +1,7 @@
 # platform/observability
 
-This directory contains the observability resources that are now part of the
-default platform path.
+This directory contains the observability resources used by the default
+workflow.
 
 Key pieces:
 
@@ -15,7 +15,7 @@ Key pieces:
 - `pushgateway.yaml` for experiment summary metrics
 - `dashboards/*.yaml` for Grafana dashboards imported by the Grafana sidecar
 
-`./scripts/up` installs this stack by default.
+`./scripts/up` installs this stack.
 
 `./scripts/evaluate` depends on it to prove:
 

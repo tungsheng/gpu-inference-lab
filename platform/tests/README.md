@@ -2,11 +2,10 @@
 
 This directory contains validation manifests for the platform.
 
-Current checked-in examples:
+Active validation manifests:
 
 - `gpu-test.yaml` to verify GPU scheduling and `nvidia-smi`
 - `gpu-load-test.yaml` to drive `vllm_requests_waiting` high enough for HPA scale-out
-- `cpu-scale-test.yaml` for the older CPU-only Karpenter pending-pod test path
 
 `gpu-load-test.yaml` is now part of the scripted evaluation path:
 
