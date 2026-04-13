@@ -3,10 +3,13 @@ prometheus:
   port: 9090
   path: ""
 
+metricsRelistInterval: 30s
+metricsMaxAge: 2m
+
 rules:
   default: false
   custom:
-    - seriesQuery: 'vllm:num_requests_waiting{namespace!="",pod!=""}'
+    - seriesQuery: 'vllm:num_requests_running{namespace!="",pod!=""}'
       resources:
         overrides:
           namespace:
@@ -14,6 +17,6 @@ rules:
           pod:
             resource: pod
       name:
-        matches: '^vllm:num_requests_waiting$'
-        as: 'vllm_requests_waiting'
-      metricsQuery: 'max(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+        matches: '^vllm:num_requests_running$'
+        as: 'vllm_requests_running'
+      metricsQuery: 'max(max_over_time(<<.Series>>{<<.LabelMatchers>>}[1m])) by (<<.GroupBy>>)'

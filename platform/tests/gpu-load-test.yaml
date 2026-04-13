@@ -11,13 +11,16 @@ data:
     export const options = {
       scenarios: {
         inference_burst: {
-          // Keep enough concurrent requests in flight to drive vllm_requests_waiting above the HPA target.
-          executor: "ramping-vus",
-          startVUs: 0,
-          gracefulRampDown: "30s",
+          // Drive a fixed arrival rate so k6 does not self-throttle as latency rises.
+          // That makes running-request-based HPA scale-out much more deterministic.
+          executor: "ramping-arrival-rate",
+          startRate: 1,
+          timeUnit: "1s",
+          preAllocatedVUs: 96,
+          maxVUs: 256,
           stages: [
-            { duration: "2m", target: 16 },
-            { duration: "8m", target: 16 },
+            { duration: "2m", target: 6 },
+            { duration: "8m", target: 6 },
             { duration: "2m", target: 0 },
           ],
         },
@@ -30,8 +33,8 @@ data:
     const targetUrl = __ENV.TARGET_URL || "http://vllm-openai.app.svc.cluster.local/v1/completions";
     const payload = JSON.stringify({
       model: "qwen2.5-0.5b",
-      prompt: "Explain why elastic GPU nodes help an inference platform in one short paragraph.",
-      max_tokens: 512,
+      prompt: "Write a detailed 12-point explanation of why elastic GPU nodes help an inference platform, with each point expanded into multiple full sentences.",
+      max_tokens: 1024,
       temperature: 0,
     });
 

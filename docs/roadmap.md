@@ -15,7 +15,7 @@ Build a production-style GPU inference platform on AWS using:
 The repository currently proves two operator-relevant paths:
 
 - `./scripts/verify` can cold-start the public inference edge from zero GPU nodes
-- `./scripts/evaluate --profile zero-idle|warm-1` can drive queue-depth-based HPA scale-out, trigger a second GPU node through Karpenter, and write latency, utilization, and cost reports
+- `./scripts/evaluate --profile zero-idle|warm-1` can drive running-request-based HPA scale-out, trigger a second GPU node through Karpenter, and write latency, utilization, and cost reports
 
 The default lifecycle today is:
 
@@ -118,7 +118,7 @@ Status: implemented.
 Outcome:
 
 - Prometheus, Grafana, Prometheus Adapter, dashboards, Pushgateway, and DCGM exporter in the default `./scripts/up` path
-- queue-depth-driven HPA validation from `vllm_requests_waiting`
+- running-request-driven HPA validation from `vllm_requests_running`
 - `./scripts/evaluate` for `zero-idle` and `warm-1` experiment profiles
 - Markdown and JSON reports for first-response, scale-out, latency, GPU utilization, and cost tradeoffs
 - explicit dev/prod boundary docs for public versus private EKS API access

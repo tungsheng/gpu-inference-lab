@@ -44,6 +44,8 @@ teardown_runtime_surface() {
 
   kubectl delete -f "${GPU_LOAD_TEST_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion job "${GPU_LOAD_TEST_JOB_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  kubectl delete -f "${GPU_WARM_PLACEHOLDER_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion deployment "${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   kubectl delete -f "${GPU_INFERENCE_HPA_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion hpa "${GPU_INFERENCE_HPA_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   kubectl delete -f "${GPU_INFERENCE_INGRESS_MANIFEST}" --ignore-not-found=true || return 1

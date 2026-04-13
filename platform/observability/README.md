@@ -19,6 +19,6 @@ Key pieces:
 
 `./scripts/evaluate` depends on it to prove:
 
-- queue-depth-driven HPA scale-out
+- running-request-driven HPA scale-out
 - burst latency and throughput measurements
 - GPU utilization and saturation visibility

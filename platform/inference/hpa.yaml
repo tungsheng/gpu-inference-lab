@@ -17,7 +17,7 @@ spec:
       policies:
         - type: Pods
           value: 1
-          periodSeconds: 60
+          periodSeconds: 15
     scaleDown:
       stabilizationWindowSeconds: 180
       selectPolicy: Max
@@ -29,7 +29,7 @@ spec:
     - type: Pods
       pods:
         metric:
-          name: vllm_requests_waiting
+          name: vllm_requests_running
         target:
           type: AverageValue
-          averageValue: "2"
+          averageValue: "128"

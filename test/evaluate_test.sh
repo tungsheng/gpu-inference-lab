@@ -34,6 +34,7 @@ write_stub kubectl \
 "    rm -f \"${TEST_TMPDIR}/load-applied\" \"${TEST_TMPDIR}/load-finished\"" \
 "    exit 0" \
 "    ;;" \
+"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true')" \
 "    rm -f \"${TEST_TMPDIR}/hpa-applied\"" \
 "    exit 0" \
@@ -94,14 +95,21 @@ write_stub kubectl \
 "    fi" \
 "    exit 0" \
 "    ;;" \
-"  get\ pod\ vllm-openai-0\ -n\ app\ -o\ jsonpath=*PodScheduled* ) printf '%s\n' '2026-04-10T20:00:10Z'; exit 0 ;;" \
-"  get\ pod\ vllm-openai-0\ -n\ app\ -o\ jsonpath=*containerStatuses*running.startedAt* ) printf '%s\n' '2026-04-10T20:01:30Z'; exit 0 ;;" \
-"  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml')" \
-"    : > \"${TEST_TMPDIR}/load-applied\"" \
-"    rm -f \"${TEST_TMPDIR}/load-finished\"" \
+  "  get\ pod\ vllm-openai-0\ -n\ app\ -o\ jsonpath=*PodScheduled* ) printf '%s\n' '2026-04-10T20:00:10Z'; exit 0 ;;" \
+  "  get\ pod\ vllm-openai-0\ -n\ app\ -o\ jsonpath=*containerStatuses*running.startedAt* ) printf '%s\n' '2026-04-10T20:01:30Z'; exit 0 ;;" \
+  "  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
+  "  'get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running') printf '%s\n' '{\"kind\":\"MetricValueList\",\"items\":[{\"value\":\"0\"}]}'; exit 0 ;;" \
+  "  'apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml')" \
+    "    : > \"${TEST_TMPDIR}/load-applied\"" \
+    "    rm -f \"${TEST_TMPDIR}/load-finished\"" \
 "    exit 0" \
 "    ;;" \
+  "  'get job gpu-load-test -n app -o jsonpath={.status.conditions[?(@.type=='\"'\"'Complete'\"'\"')].status}')" \
+    "    if [[ -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+      "      printf '%s\n' 'True'" \
+    "    fi" \
+    "    exit 0" \
+    "    ;;" \
 "  'get hpa vllm-openai -n app -o jsonpath={.status.desiredReplicas}')" \
 "    if [[ -f \"${TEST_TMPDIR}/hpa-applied\" ]]; then" \
 "      if [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
@@ -141,7 +149,7 @@ write_stub curl \
 "  value='1.25'" \
 "  case \"\$cmd\" in" \
 "    *'time_to_first_token_seconds_bucket'*) value='0.61' ;;" \
-"    *'num_requests_waiting'*) value='6' ;;" \
+"    *'num_requests_running'*) value='256' ;;" \
 "    *'generation_tokens_total'*) value='142.5' ;;" \
 "    *'avg_over_time((avg(DCGM_FI_DEV_GPU_UTIL))'*) value='74.2' ;;" \
 "    *'max_over_time((max(DCGM_FI_DEV_GPU_UTIL))'*) value='93.7' ;;" \
@@ -163,8 +171,9 @@ run_and_capture env \
   --json-report "${TEST_TMPDIR}/report.json"
 
 assert_status 0 "${COMMAND_STATUS}" "scripts/evaluate should complete the load-aware validation flow"
-assert_contains "${COMMAND_OUTPUT}" "OK 5/9 run load and wait for scale-out" "evaluate should confirm the scale-out stage"
-assert_contains "${COMMAND_OUTPUT}" "OK 9/9 collect metrics and write reports" "evaluate should collect metrics and write reports"
+assert_contains "${COMMAND_OUTPUT}" "OK 5/10 wait for hpa metric pipeline and apply hpa" "evaluate should confirm the metric preflight stage"
+assert_contains "${COMMAND_OUTPUT}" "OK 6/10 run load and wait for scale-out" "evaluate should confirm the scale-out stage"
+assert_contains "${COMMAND_OUTPUT}" "OK 10/10 collect metrics and write reports" "evaluate should collect metrics and write reports"
 assert_contains "${COMMAND_OUTPUT}" "Profile: zero-idle" "evaluate should summarize the profile it measured"
 assert_contains "${COMMAND_OUTPUT}" "Markdown report: ${TEST_TMPDIR}/report.md" "evaluate should print the Markdown report path"
 
@@ -177,4 +186,13 @@ KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
 assert_contains "${REPORT_CONTENT}" "Second GPU node" "the report should include the scale-out timeline"
 assert_contains "${REPORT_CONTENT}" "Average GPU utilization" "the report should include Prometheus-backed GPU metrics"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/inference/hpa.yaml" "evaluate should apply the HPA manifest"
+assert_contains "${KUBECTL_LOG}" "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running" "evaluate should verify that the custom metric is available before running load"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml" "evaluate should apply the load test manifest"
+assert_occurs_before "${KUBECTL_LOG}" \
+  "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running" \
+  "apply -f ${REPO_ROOT}/platform/inference/hpa.yaml" \
+  "evaluate should wait for the custom metric before applying the HPA"
+assert_occurs_before "${KUBECTL_LOG}" \
+  "apply -f ${REPO_ROOT}/platform/inference/hpa.yaml" \
+  "apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml" \
+  "evaluate should apply the HPA before starting the burst load"

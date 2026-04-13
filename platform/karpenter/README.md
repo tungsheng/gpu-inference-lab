@@ -6,7 +6,7 @@ GPU capacity:
 - `serviceaccount.yaml`
 - `nodeclass-gpu-serving.yaml`
 - `nodepool-gpu-serving.yaml`
-- `nodepool-gpu-warm.yaml`
+- `nodepool-gpu-warm.yaml` (legacy cleanup compatibility)
 
 These manifests assume the current dev cluster name `gpu-inference` and the
 Terraform-created Karpenter node role `gpu-inference-karpenter-node`.
@@ -19,6 +19,8 @@ The serving `NodePool` launches `g4dn.xlarge` or `g5.xlarge` on-demand nodes,
 applies `workload=gpu`, taints them with `gpu=true:NoSchedule`, and
 consolidates them away after they empty.
 
-The warm-profile `NodePool` is only used by `./scripts/evaluate --profile warm-1`
-and is removed at the end of the run so the environment returns to zero GPU
-nodes.
+`./scripts/evaluate --profile warm-1` now warms capacity with
+`platform/tests/gpu-warm-placeholder.yaml` so it exercises the same dynamic
+`gpu-serving` provisioning path used by the real inference deployment. The
+legacy warm `NodePool` manifest remains here so `./scripts/down` can clean up
+older experiments safely.

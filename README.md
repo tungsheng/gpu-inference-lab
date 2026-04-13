@@ -25,7 +25,7 @@ vLLM Service
    |
    +--> vLLM Deployment
    |      |
-   |      +--> HPA on vllm_requests_waiting (evaluate path)
+   |      +--> HPA on vllm_requests_running (evaluate path)
    |
    +--> Prometheus + Grafana + Prometheus Adapter
    |
@@ -36,16 +36,16 @@ EKS cluster
    |
    +--> managed system nodes (m7i-flex.large)
    |
-   +--> gpu-serving NodePool (zero-idle baseline)
+   +--> gpu-serving NodePool (zero-idle and warm-1 baseline)
    |
-   +--> gpu-warm-1 NodePool (evaluation profile)
+   +--> gpu-warm-placeholder Deployment (warm-1 profile)
 ```
 
 ## Repository Map
 
 - `infra/env/dev/`: active Terraform environment
 - `infra/modules/`: reusable Terraform modules
-- `platform/karpenter/`: GPU `EC2NodeClass`, `NodePool`, and warm-profile manifests
+- `platform/karpenter/`: GPU `EC2NodeClass` and `NodePool` manifests
 - `platform/inference/`: vLLM deployment, HPA, public service, and ingress
 - `platform/observability/`: Prometheus, Grafana, Prometheus Adapter, DCGM exporter, and dashboards
 - `platform/tests/`: GPU smoke and burst-load manifests
@@ -117,7 +117,7 @@ is available for the HPA, and the default GPU node count should still be `0`.
 
 ## What `evaluate` Proves
 
-- `vllm_requests_waiting` can drive HPA scale-out from one to two replicas
+- `vllm_requests_running` can drive HPA scale-out from one to two replicas
 - replica scale-out causes Karpenter to add a second GPU node
 - Prometheus and DCGM metrics can answer latency, queue depth, and GPU saturation questions
 - the repo can compare a zero-idle profile against a one-warm-node profile and write reports under `docs/reports/`

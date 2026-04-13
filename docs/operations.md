@@ -22,7 +22,7 @@ doc is the short operational summary.
 - Can a pending GPU workload trigger Karpenter provisioning?
 - How long does the first GPU node take to appear?
 - How long does the pod take to go from scheduled to Ready?
-- Can `vllm_requests_waiting` drive HPA replica scale-out?
+- Can `vllm_requests_running` drive HPA replica scale-out?
 - Does replica scale-out cause a second GPU node to join?
 - What does p95 latency look like during a controlled burst?
 - Is the GPU underutilized or saturated during the run?

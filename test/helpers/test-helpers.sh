@@ -29,6 +29,22 @@ assert_contains() {
   fi
 }
 
+assert_occurs_before() {
+  local haystack=$1
+  local first_needle=$2
+  local second_needle=$3
+  local message=${4:-"expected '${first_needle}' to appear before '${second_needle}'"}
+  local first_line
+  local second_line
+
+  first_line=$(printf '%s\n' "${haystack}" | awk -v needle="${first_needle}" 'index($0, needle) { print NR; exit }')
+  second_line=$(printf '%s\n' "${haystack}" | awk -v needle="${second_needle}" 'index($0, needle) { print NR; exit }')
+
+  if [[ -z "${first_line}" || -z "${second_line}" || "${first_line}" -ge "${second_line}" ]]; then
+    fail "${message}"
+  fi
+}
+
 assert_not_contains() {
   local haystack=$1
   local needle=$2

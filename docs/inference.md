@@ -7,7 +7,7 @@ The repo uses a real GPU inference service.
 This part of the repo includes:
 
 - a deployment-only vLLM manifest at `platform/inference/vllm-openai.yaml`
-- a queue-depth-driven HPA at `platform/inference/hpa.yaml`
+- a running-request-driven HPA at `platform/inference/hpa.yaml`
 - a dedicated `ClusterIP` service at `platform/inference/service.yaml`
 - a public ALB ingress at `platform/inference/ingress.yaml`
 
@@ -70,8 +70,10 @@ Use the evaluation path:
 
 That flow proves:
 
-- the HPA can scale from `1` to `2` replicas from `vllm_requests_waiting`
+- the HPA can scale from `1` to `2` replicas from `vllm_requests_running`
 - Karpenter can add a second GPU node in response
+- `warm-1` can keep one `gpu-serving` node alive with the tiny
+  `platform/tests/gpu-warm-placeholder.yaml` deployment
 - Prometheus can report latency, queue, throughput, and GPU-utilization metrics
 - the repo can compare zero-idle and warm-node tradeoffs with report files
 

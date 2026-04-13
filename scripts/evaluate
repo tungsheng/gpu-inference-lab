@@ -6,7 +6,7 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/_common.sh"
 
-TOTAL_STAGES=9
+TOTAL_STAGES=10
 EVALUATION_PROFILE="zero-idle"
 REPORT_PATH=""
 JSON_REPORT_PATH=""
@@ -14,7 +14,8 @@ JSON_REPORT_PATH=""
 DEPLOYMENT_APPLIED=0
 HPA_APPLIED=0
 LOAD_TEST_APPLIED=0
-WARM_NODEPOOL_APPLIED=0
+WARM_PLACEHOLDER_APPLIED=0
+PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS=0
 
 PUBLIC_INFERENCE_URL=""
 PROMETHEUS_LOCAL_PORT=""
@@ -23,6 +24,7 @@ PROMETHEUS_PORT_FORWARD_LOG=""
 PUSHGATEWAY_LOCAL_PORT=""
 PUSHGATEWAY_PORT_FORWARD_PID=""
 PUSHGATEWAY_PORT_FORWARD_LOG=""
+METRIC_SEED_REQUEST_PIDS=()
 
 EVALUATION_START_TIME=""
 FIRST_NODECLAIM_TIME=""
@@ -48,7 +50,7 @@ CLEANUP_FINISH_TIME=""
 
 P95_REQUEST_LATENCY_SECONDS=""
 P95_TTFT_SECONDS=""
-PEAK_QUEUE_DEPTH=""
+PEAK_RUNNING_REQUESTS=""
 AVG_GENERATION_TOKENS_PER_SECOND=""
 AVG_GPU_UTILIZATION_PERCENT=""
 MAX_GPU_UTILIZATION_PERCENT=""
@@ -140,6 +142,8 @@ cleanup_evaluate() {
     rm -f "${PUSHGATEWAY_PORT_FORWARD_LOG}" 2>/dev/null || true
   fi
 
+  stop_metric_seed_requests || true
+
   if [[ "${LOAD_TEST_APPLIED}" == "1" ]]; then
     kubectl delete -f "${GPU_LOAD_TEST_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
   fi
@@ -149,8 +153,8 @@ cleanup_evaluate() {
   if [[ "${DEPLOYMENT_APPLIED}" == "1" ]]; then
     kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
   fi
-  if [[ "${WARM_NODEPOOL_APPLIED}" == "1" ]]; then
-    kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  if [[ "${WARM_PLACEHOLDER_APPLIED}" == "1" && "${PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS}" != "1" ]]; then
+    kubectl delete -f "${GPU_WARM_PLACEHOLDER_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
   fi
 }
 
@@ -253,6 +257,101 @@ wait_for_pod_condition_timestamp() {
   done
 }
 
+print_warm_profile_failure_diagnostics() {
+  {
+    printf '\nWarm-profile diagnostics:\n'
+    printf '  placeholder deployment: %s/%s\n' "${APP_NAMESPACE}" "${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME}"
+    printf '  preserved for inspection: yes\n'
+    printf '\n'
+    kubectl get deployment "${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" -o wide 2>/dev/null || true
+    kubectl get pods -n "${APP_NAMESPACE}" -l "app=${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME}" -o wide 2>/dev/null || true
+    kubectl get nodeclaims -o wide 2>/dev/null || true
+    kubectl get nodes -l workload=gpu -o wide 2>/dev/null || true
+    printf '\nRecent cluster events:\n'
+    kubectl get events -A --sort-by=.lastTimestamp 2>/dev/null | tail -n 20 || true
+    printf '\nClean up with:\n'
+    printf '  kubectl delete -f %s --ignore-not-found=true\n' "${GPU_WARM_PLACEHOLDER_MANIFEST}"
+    printf '  ./scripts/down\n'
+  } >&2
+}
+
+preserve_warm_profile_failure_state() {
+  PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS=1
+  print_warm_profile_failure_diagnostics
+}
+
+start_metric_seed_requests() {
+  local request_count=${1:-4}
+  local request_index
+  local payload
+
+  if [[ -z "${PUBLIC_INFERENCE_URL}" ]]; then
+    return 1
+  fi
+
+  payload='{"model":"qwen2.5-0.5b","prompt":"Write a long, detailed numbered outline about autoscaling GPU inference services. Keep going until you reach the token limit.","max_tokens":1024,"temperature":0}'
+  METRIC_SEED_REQUEST_PIDS=()
+
+  for (( request_index=0; request_index<request_count; request_index++ )); do
+    curl -sS -o /dev/null \
+      --connect-timeout 10 \
+      --max-time "${HTTP_REQUEST_TIMEOUT_SECONDS}" \
+      -H 'Content-Type: application/json' \
+      -X POST \
+      --data "${payload}" \
+      "${PUBLIC_INFERENCE_URL}" >/dev/null 2>&1 &
+    METRIC_SEED_REQUEST_PIDS+=("$!")
+  done
+}
+
+stop_metric_seed_requests() {
+  local request_pid
+  local deadline
+
+  if ((${#METRIC_SEED_REQUEST_PIDS[@]} == 0)); then
+    return 0
+  fi
+
+  for request_pid in "${METRIC_SEED_REQUEST_PIDS[@]}"; do
+    kill "${request_pid}" 2>/dev/null || true
+  done
+
+  for request_pid in "${METRIC_SEED_REQUEST_PIDS[@]}"; do
+    deadline=$(( $(date +%s) + 5 ))
+    while kill -0 "${request_pid}" 2>/dev/null; do
+      if (( $(date +%s) >= deadline )); then
+        kill -9 "${request_pid}" 2>/dev/null || true
+        break
+      fi
+
+      sleep 0.2
+    done
+  done
+
+  for request_pid in "${METRIC_SEED_REQUEST_PIDS[@]}"; do
+    wait "${request_pid}" 2>/dev/null || true
+  done
+
+  METRIC_SEED_REQUEST_PIDS=()
+}
+
+prepare_warm_profile_capacity() {
+  kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl apply -f "${GPU_WARM_PLACEHOLDER_MANIFEST}" || return 1
+  WARM_PLACEHOLDER_APPLIED=1
+
+  if ! wait_for_all_gpu_nodes_at_least 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}"; then
+    preserve_warm_profile_failure_state
+    return 1
+  fi
+
+  if ! kubectl rollout status "deployment/${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" \
+    --timeout="${EVALUATE_SCALE_TIMEOUT_SECONDS}s"; then
+    preserve_warm_profile_failure_state
+    return 1
+  fi
+}
+
 prepare_edge_and_profile() {
   ensure_namespace || return 1
   kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}" || return 1
@@ -265,11 +364,9 @@ prepare_edge_and_profile() {
   kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
 
   if is_warm_profile; then
-    kubectl apply -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" || return 1
-    WARM_NODEPOOL_APPLIED=1
-    kubectl wait --for=condition=Ready "nodepool/${KARPENTER_WARM_NODEPOOL_NAME}" --timeout=10m || return 1
-    wait_for_all_gpu_nodes_at_least 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+    prepare_warm_profile_capacity || return 1
   else
+    kubectl delete -f "${GPU_WARM_PLACEHOLDER_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
     kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
     wait_for_all_gpu_nodes_at_most 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   fi
@@ -291,8 +388,6 @@ seed_profile_baseline_events() {
 apply_inference_stack() {
   kubectl apply -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" || return 1
   DEPLOYMENT_APPLIED=1
-  kubectl apply -f "${GPU_INFERENCE_HPA_MANIFEST}" || return 1
-  HPA_APPLIED=1
   EVALUATION_START_TIME=$(date +%s)
   seed_profile_baseline_events
 }
@@ -326,11 +421,40 @@ wait_for_first_ready_and_response() {
 }
 
 run_load_and_wait_for_scale_out() {
+  local start_time
+
   kubectl apply -f "${GPU_LOAD_TEST_MANIFEST}" || return 1
   LOAD_TEST_APPLIED=1
   LOAD_START_TIME=$(date +%s)
+  start_time=${LOAD_START_TIME}
 
-  wait_for_hpa_desired_replicas_at_least "${APP_NAMESPACE}" "${GPU_INFERENCE_HPA_NAME}" 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  while true; do
+    local desired_replicas
+    local job_complete
+
+    desired_replicas=$(hpa_desired_replicas "${APP_NAMESPACE}" "${GPU_INFERENCE_HPA_NAME}")
+    desired_replicas=${desired_replicas:-0}
+    if (( desired_replicas >= 2 )); then
+      break
+    fi
+
+    job_complete=$(kubectl get job "${GPU_LOAD_TEST_JOB_NAME}" \
+      -n "${APP_NAMESPACE}" \
+      -o jsonpath="{.status.conditions[?(@.type=='Complete')].status}" 2>/dev/null || true)
+    if [[ "${job_complete}" == "True" ]]; then
+      printf 'Load job completed before HPA scaled out; desired replicas stayed at %s\n' "${desired_replicas}" >&2
+      return 1
+    fi
+
+    if (( $(date +%s) - start_time >= EVALUATE_SCALE_TIMEOUT_SECONDS )); then
+      printf 'Timed out waiting for HPA %s/%s to reach at least %s desired replica(s)\n' \
+        "${APP_NAMESPACE}" "${GPU_INFERENCE_HPA_NAME}" "2" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+
   HPA_SCALE_OUT_TIME=$(date +%s)
 
   wait_for_nodeclaims_at_least 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
@@ -375,8 +499,9 @@ delete_inference_and_clean_profile_capacity() {
   if is_warm_profile; then
     wait_for_all_gpu_nodes_at_most 1 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
     PROFILE_BASELINE_RESTORED_TIME=$(date +%s)
-    kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
-    WARM_NODEPOOL_APPLIED=0
+    kubectl delete -f "${GPU_WARM_PLACEHOLDER_MANIFEST}" --ignore-not-found=true || return 1
+    WARM_PLACEHOLDER_APPLIED=0
+    wait_for_resource_deletion deployment "${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   fi
 
   wait_for_all_gpu_nodes_at_most 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
@@ -539,6 +664,76 @@ prometheus_query_scalar() {
   printf '%s\n' "${scalar_value}"
 }
 
+wait_for_prometheus_series() {
+  local query=$1
+  local timeout_seconds=$2
+  local start_time
+
+  start_time=$(date +%s)
+
+  while true; do
+    local scalar_value
+    scalar_value=$(prometheus_query_scalar "${query}") || return 1
+    if [[ -n "${scalar_value}" ]]; then
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for Prometheus series: %s\n' "${query}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+custom_pod_metric_response() {
+  local namespace=$1
+  local pod_name=$2
+  local metric_name=$3
+
+  kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1/namespaces/${namespace}/pods/${pod_name}/${metric_name}" 2>/dev/null || true
+}
+
+wait_for_custom_pod_metric() {
+  local namespace=$1
+  local pod_name=$2
+  local metric_name=$3
+  local timeout_seconds=$4
+  local start_time
+
+  start_time=$(date +%s)
+
+  while true; do
+    local response
+    response=$(custom_pod_metric_response "${namespace}" "${pod_name}" "${metric_name}")
+    if [[ -n "${response}" && "${response}" == *'"value"'* ]]; then
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for custom metric %s on pod %s/%s\n' "${metric_name}" "${namespace}" "${pod_name}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+wait_for_hpa_metric_pipeline() {
+  if [[ -z "${FIRST_POD_NAME}" ]]; then
+    printf 'First vLLM pod name is unavailable for metric checks\n' >&2
+    return 1
+  fi
+
+  start_metric_seed_requests 4 || return 1
+  wait_for_custom_pod_metric "${APP_NAMESPACE}" "${FIRST_POD_NAME}" "vllm_requests_running" "${MONITORING_TIMEOUT_SECONDS}" || return 1
+  stop_metric_seed_requests || true
+
+  kubectl apply -f "${GPU_INFERENCE_HPA_MANIFEST}" || return 1
+  HPA_APPLIED=1
+}
+
 gpu_instance_hourly_cost() {
   case "${1:-}" in
     g4dn.xlarge)
@@ -599,14 +794,14 @@ estimate_costs() {
 
 collect_production_metrics() {
   local window
-  local queue_query
+  local running_query
   local latency_query
   local ttft_query
   local throughput_query
   local nodeclaim_query
 
   window=$(lookback_window)
-  queue_query="max_over_time((sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])"
+  running_query="max_over_time((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])"
   latency_query="quantile_over_time(0.95, (histogram_quantile(0.95, sum by (le) (rate(vllm:e2e_request_latency_seconds_bucket{namespace=\"${APP_NAMESPACE}\"}[1m]))))[${window}:1m])"
   ttft_query="quantile_over_time(0.95, (histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{namespace=\"${APP_NAMESPACE}\"}[1m]))))[${window}:1m])"
   throughput_query="avg_over_time((sum(rate(vllm:generation_tokens_total{namespace=\"${APP_NAMESPACE}\"}[1m])))[${window}:1m])"
@@ -614,7 +809,7 @@ collect_production_metrics() {
 
   P95_REQUEST_LATENCY_SECONDS=$(prometheus_query_scalar "${latency_query}") || return 1
   P95_TTFT_SECONDS=$(prometheus_query_scalar "${ttft_query}") || return 1
-  PEAK_QUEUE_DEPTH=$(prometheus_query_scalar "${queue_query}") || return 1
+  PEAK_RUNNING_REQUESTS=$(prometheus_query_scalar "${running_query}") || return 1
   AVG_GENERATION_TOKENS_PER_SECOND=$(prometheus_query_scalar "${throughput_query}") || return 1
   AVG_GPU_UTILIZATION_PERCENT=$(prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])") || return 1
   MAX_GPU_UTILIZATION_PERCENT=$(prometheus_query_scalar "max_over_time((max(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])") || return 1
@@ -790,7 +985,7 @@ write_reports() {
 
 - p95 request latency during burst: $(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")
 - p95 time to first token during burst: $(display_metric "${P95_TTFT_SECONDS}" "s")
-- Peak waiting requests: $(display_metric "${PEAK_QUEUE_DEPTH}")
+- Peak running requests: $(display_metric "${PEAK_RUNNING_REQUESTS}")
 - Average generation tokens per second: $(display_metric "${AVG_GENERATION_TOKENS_PER_SECOND}")
 - Average GPU utilization: $(display_metric "${AVG_GPU_UTILIZATION_PERCENT}" "%")
 - Max GPU utilization: $(display_metric "${MAX_GPU_UTILIZATION_PERCENT}" "%")
@@ -804,7 +999,7 @@ write_reports() {
 ## Notes
 
 - \`Container started -> Ready\` is reported as the model-load proxy because the baseline experiment does not rely on a separate vLLM model-load completion metric.
-- The queue-depth-driven HPA is validated from the custom metric \`vllm_requests_waiting\`, not CPU utilization.
+- The HPA is validated from the custom metric \`vllm_requests_running\`, not CPU utilization.
 - The script cleans up the warm profile at the end so the environment returns to zero GPU nodes after reporting.
 EOF
 
@@ -837,7 +1032,7 @@ EOF
   "metrics": {
     "p95_request_latency_seconds": $(json_nullable_number "${P95_REQUEST_LATENCY_SECONDS}"),
     "p95_ttft_seconds": $(json_nullable_number "${P95_TTFT_SECONDS}"),
-    "peak_waiting_requests": $(json_nullable_number "${PEAK_QUEUE_DEPTH}"),
+    "peak_running_requests": $(json_nullable_number "${PEAK_RUNNING_REQUESTS}"),
     "average_generation_tokens_per_second": $(json_nullable_number "${AVG_GENERATION_TOKENS_PER_SECOND}"),
     "average_gpu_utilization_percent": $(json_nullable_number "${AVG_GPU_UTILIZATION_PERCENT}"),
     "max_gpu_utilization_percent": $(json_nullable_number "${MAX_GPU_UTILIZATION_PERCENT}"),
@@ -870,14 +1065,16 @@ main() {
   set_failure_hints \
     "kubectl get ingress,service -n ${APP_NAMESPACE}" \
     "kubectl get apiservice ${PROMETHEUS_ADAPTER_APISERVICE_NAME} -o yaml" \
-    "kubectl get nodepool ${KARPENTER_WARM_NODEPOOL_NAME}"
+    "kubectl get deployment,pods -n ${APP_NAMESPACE} -l app=${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME}" \
+    "kubectl get nodeclaims,nodes -o wide" \
+    "kubectl logs -n ${KARPENTER_NAMESPACE} deployment/karpenter --since=10m"
   run_stage 2 "${TOTAL_STAGES}" "prepare evaluation edge and profile" prepare_edge_and_profile
 
   set_failure_hints \
     "kubectl get deployment,hpa -n ${APP_NAMESPACE}" \
     "kubectl describe hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE}" \
     "kubectl get pods -n ${APP_NAMESPACE}"
-  run_stage 3 "${TOTAL_STAGES}" "apply inference deployment and hpa" apply_inference_stack
+  run_stage 3 "${TOTAL_STAGES}" "apply inference deployment" apply_inference_stack
 
   set_failure_hints \
     "kubectl get pods -n ${APP_NAMESPACE} -o wide" \
@@ -886,34 +1083,43 @@ main() {
   run_stage 4 "${TOTAL_STAGES}" "wait for first ready replica and first public response" wait_for_first_ready_and_response
 
   set_failure_hints \
+    "kubectl get deployment,pods -n ${APP_NAMESPACE}" \
+    "kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/${APP_NAMESPACE}/pods/${FIRST_POD_NAME:-<pod-name>}/vllm_requests_running" \
+    "kubectl logs -n ${APP_NAMESPACE} deployment/${GPU_INFERENCE_DEPLOYMENT_NAME} --tail=100" \
+    "kubectl port-forward -n ${MONITORING_NAMESPACE} service/${KUBE_PROMETHEUS_STACK_PROMETHEUS_SERVICE} 9090:9090"
+  run_stage 5 "${TOTAL_STAGES}" "wait for hpa metric pipeline and apply hpa" wait_for_hpa_metric_pipeline
+
+  set_failure_hints \
+    "kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/${APP_NAMESPACE}/pods/${FIRST_POD_NAME:-<pod-name>}/vllm_requests_running" \
     "kubectl describe hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE}" \
+    "kubectl port-forward -n ${MONITORING_NAMESPACE} service/${KUBE_PROMETHEUS_STACK_PROMETHEUS_SERVICE} 9090:9090" \
     "kubectl get nodeclaims,nodes" \
     "kubectl logs -n ${APP_NAMESPACE} job/${GPU_LOAD_TEST_JOB_NAME} --tail=100"
-  run_stage 5 "${TOTAL_STAGES}" "run load and wait for scale-out" run_load_and_wait_for_scale_out
+  run_stage 6 "${TOTAL_STAGES}" "run load and wait for scale-out" run_load_and_wait_for_scale_out
 
   set_failure_hints \
     "kubectl get job ${GPU_LOAD_TEST_JOB_NAME} -n ${APP_NAMESPACE} -o yaml" \
     "kubectl logs -n ${APP_NAMESPACE} job/${GPU_LOAD_TEST_JOB_NAME}" \
     "kubectl get hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE} -o yaml"
-  run_stage 6 "${TOTAL_STAGES}" "wait for the burst to complete" wait_for_burst_completion
+  run_stage 7 "${TOTAL_STAGES}" "wait for the burst to complete" wait_for_burst_completion
 
   set_failure_hints \
     "kubectl get hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE}" \
     "kubectl get deployment ${GPU_INFERENCE_DEPLOYMENT_NAME} -n ${APP_NAMESPACE} -o yaml" \
     "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
-  run_stage 7 "${TOTAL_STAGES}" "remove load and wait for scale-in" remove_load_and_wait_for_scale_in
+  run_stage 8 "${TOTAL_STAGES}" "remove load and wait for scale-in" remove_load_and_wait_for_scale_in
 
   set_failure_hints \
     "kubectl get deployment,hpa -n ${APP_NAMESPACE}" \
-    "kubectl get nodepool ${KARPENTER_WARM_NODEPOOL_NAME}" \
+    "kubectl get deployment ${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME} -n ${APP_NAMESPACE}" \
     "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
-  run_stage 8 "${TOTAL_STAGES}" "delete inference workload and clean profile capacity" delete_inference_and_clean_profile_capacity
+  run_stage 9 "${TOTAL_STAGES}" "delete inference workload and clean profile capacity" delete_inference_and_clean_profile_capacity
 
   set_failure_hints \
     "kubectl get svc -n ${MONITORING_NAMESPACE}" \
     "kubectl get pods -n ${MONITORING_NAMESPACE}" \
     "kubectl get podmonitor,servicemonitor -n ${MONITORING_NAMESPACE}"
-  run_stage 9 "${TOTAL_STAGES}" "collect metrics and write reports" collect_metrics_and_write_reports
+  run_stage 10 "${TOTAL_STAGES}" "collect metrics and write reports" collect_metrics_and_write_reports
 
   printf '\nEvaluated:\n'
   printf '  Profile: %s\n' "${EVALUATION_PROFILE}"

@@ -3,7 +3,7 @@
 This directory contains the serving workload manifests:
 
 - `vllm-openai.yaml` for the GPU-bound vLLM `Deployment`
-- `hpa.yaml` for the queue-depth-driven `HorizontalPodAutoscaler`
+- `hpa.yaml` for the running-request-driven `HorizontalPodAutoscaler`
 - `service.yaml` for the stable in-cluster `vllm-openai` `ClusterIP` service
 - `ingress.yaml` for the public ALB-backed `/v1` inference path
 
@@ -19,4 +19,4 @@ The script roles are:
   scale-out
 
 The HPA depends on the observability stack installed by `./scripts/up`, because
-its target metric is `vllm_requests_waiting` from Prometheus Adapter.
+its target metric is `vllm_requests_running` from Prometheus Adapter.

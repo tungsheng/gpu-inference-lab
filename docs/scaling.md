@@ -8,7 +8,7 @@ The repository keeps a **zero-idle serving baseline** and a separate
 ```text
 system nodes        -> m7i-flex.large              -> controllers and shared services
 gpu-serving nodes   -> g4dn.xlarge / g5.xlarge    -> default elastic serving path
-gpu-warm-1 nodes    -> g4dn.xlarge / g5.xlarge    -> warm-profile experiment
+warm placeholder    -> tiny Deployment in app     -> keeps one gpu-serving node alive
 ```
 
 Isolation rules:
@@ -41,7 +41,7 @@ Expected shape after `./scripts/up`:
 - applies `platform/inference/vllm-openai.yaml`
 - applies `platform/inference/hpa.yaml`
 - runs `platform/tests/gpu-load-test.yaml`
-- waits for `vllm_requests_waiting` to drive HPA desired replicas to `2`
+- waits for `vllm_requests_running` to drive HPA desired replicas to `2`
 - waits for a second `NodeClaim`, second GPU node, and second Ready replica
 
 That makes the HPA an exercised part of the workflow instead of a checked-in
@@ -49,16 +49,18 @@ manifest that users must remember to wire up themselves.
 
 ## Warm Profile
 
-`platform/karpenter/nodepool-gpu-warm.yaml` defines the `warm-1` profile used
-by `./scripts/evaluate --profile warm-1`.
+`./scripts/evaluate --profile warm-1` applies
+`platform/tests/gpu-warm-placeholder.yaml` before the vLLM deployment. The
+placeholder tolerates the GPU taint, selects the `gpu-serving` labels, and
+keeps one dynamic serving node alive without consuming the GPU.
 
 It exists to compare:
 
 - zero idle cost with slower first response
 - one warm GPU node with lower latency but higher idle spend
 
-The script removes the warm profile at the end of the run so the environment
-returns to zero GPU nodes after reporting.
+The script removes the warm placeholder at the end of the run so the
+environment returns to zero GPU nodes after reporting.
 
 ## Version Pins
 

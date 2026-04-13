@@ -16,7 +16,7 @@ vLLM Service
    |
    +--> vLLM Deployment
    |      |
-   |      +--> HPA on vllm_requests_waiting (evaluate/manual path)
+   |      +--> HPA on vllm_requests_running (evaluate/manual path)
    |
    v
 Karpenter-managed GPU nodes
@@ -35,7 +35,8 @@ Supporting control plane:
 
 - system nodes run the controllers and shared services
 - `gpu-serving` is the zero-idle serving `NodePool`
-- `gpu-warm-1` is the warm-profile experiment `NodePool`
+- `gpu-warm-placeholder` is the warm-profile deployment that keeps one
+  `gpu-serving` node alive without consuming the GPU
 
 GPU nodes are still created only through Karpenter. There is no fixed managed
 GPU node group.

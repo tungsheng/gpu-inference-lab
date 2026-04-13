@@ -66,6 +66,8 @@ write_stub kubectl \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com' ;;" \
 "  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get job gpu-load-test -n app') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get deployment gpu-warm-placeholder -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get hpa vllm-openai -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/ingress.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -105,6 +107,7 @@ KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
 TERRAFORM_LOG=$(cat "${TEST_TMPDIR}/terraform.log")
 
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true" "down should delete the HPA during teardown"
+assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true" "down should remove a preserved warm placeholder deployment if one exists"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml --ignore-not-found=true" "down should remove the GPU metrics exporter"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true" "down should remove the warm NodePool if it exists"
 assert_not_contains "${KUBECTL_LOG}" "platform/test-app" "down should not reference the sample app"
