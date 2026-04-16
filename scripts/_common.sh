@@ -16,7 +16,11 @@ KARPENTER_RELEASE_NAME="karpenter"
 KARPENTER_CRD_RELEASE_NAME="karpenter-crd"
 KARPENTER_CHART_VERSION="1.9.0"
 KARPENTER_NODECLASS_NAME="gpu-serving"
-KARPENTER_NODEPOOL_NAME="gpu-serving"
+KARPENTER_ONDEMAND_NODEPOOL_NAME="gpu-serving-ondemand"
+KARPENTER_SPOT_NODEPOOL_NAME="gpu-serving-spot"
+KARPENTER_LEGACY_NODEPOOL_NAME="gpu-serving"
+KARPENTER_SERVING_NODEPOOL_REGEX="${KARPENTER_ONDEMAND_NODEPOOL_NAME}|${KARPENTER_SPOT_NODEPOOL_NAME}"
+KARPENTER_SERVING_NODEPOOL_SELECTOR="karpenter.sh/nodepool in (${KARPENTER_ONDEMAND_NODEPOOL_NAME},${KARPENTER_SPOT_NODEPOOL_NAME})"
 KARPENTER_WARM_NODEPOOL_NAME="gpu-warm-1"
 KARPENTER_SERVICE_ACCOUNT_NAME="karpenter"
 
@@ -57,7 +61,8 @@ POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-10}"
 ALB_CONTROLLER_SERVICE_ACCOUNT_MANIFEST="${REPO_ROOT}/platform/controller/aws-load-balancer-controller/service-account.yaml"
 KARPENTER_SERVICE_ACCOUNT_MANIFEST="${REPO_ROOT}/platform/karpenter/serviceaccount.yaml"
 KARPENTER_NODECLASS_MANIFEST="${REPO_ROOT}/platform/karpenter/nodeclass-gpu-serving.yaml"
-KARPENTER_NODEPOOL_MANIFEST="${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving.yaml"
+KARPENTER_ONDEMAND_NODEPOOL_MANIFEST="${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml"
+KARPENTER_SPOT_NODEPOOL_MANIFEST="${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml"
 KARPENTER_WARM_NODEPOOL_MANIFEST="${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml"
 NVIDIA_DEVICE_PLUGIN_MANIFEST="${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml"
 GPU_INFERENCE_DEPLOYMENT_MANIFEST="${REPO_ROOT}/platform/inference/vllm-openai.yaml"
@@ -347,7 +352,7 @@ wait_for_ingress_hostname() {
 }
 
 gpu_node_count() {
-  kubectl get nodes -l "karpenter.sh/nodepool=${KARPENTER_NODEPOOL_NAME}" -o name 2>/dev/null | wc -l | tr -d ' '
+  kubectl get nodes -l "${KARPENTER_SERVING_NODEPOOL_SELECTOR}" -o name 2>/dev/null | wc -l | tr -d ' '
 }
 
 all_gpu_node_count() {
@@ -569,7 +574,35 @@ wait_for_hpa_desired_replicas_at_most() {
 }
 
 nodeclaim_count() {
-  kubectl get nodeclaims -o name 2>/dev/null | wc -l | tr -d ' '
+  kubectl get nodeclaims -l "${KARPENTER_SERVING_NODEPOOL_SELECTOR}" -o name 2>/dev/null | wc -l | tr -d ' '
+}
+
+node_capacity_type() {
+  local node_name=$1
+
+  kubectl get node "${node_name}" \
+    -o jsonpath='{.metadata.labels.karpenter\.sh/capacity-type}' 2>/dev/null
+}
+
+node_nodepool() {
+  local node_name=$1
+
+  kubectl get node "${node_name}" \
+    -o jsonpath='{.metadata.labels.karpenter\.sh/nodepool}' 2>/dev/null
+}
+
+nodepool_capacity_type() {
+  case "${1:-}" in
+    *spot)
+      printf 'spot\n'
+      ;;
+    *ondemand|*on-demand)
+      printf 'on-demand\n'
+      ;;
+    *)
+      printf 'unknown\n'
+      ;;
+  esac
 }
 
 wait_for_nodeclaims_at_least() {

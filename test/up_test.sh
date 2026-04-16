@@ -86,8 +86,10 @@ write_stub kubectl \
 "  'rollout status deployment/karpenter -n karpenter --timeout=10m') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/karpenter/nodeclass-gpu-serving.yaml') exit 0 ;;" \
 "  'wait --for=condition=Ready ec2nodeclass/gpu-serving --timeout=10m') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving.yaml') exit 0 ;;" \
-"  'wait --for=condition=Ready nodepool/gpu-serving --timeout=10m') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml') exit 0 ;;" \
+"  'wait --for=condition=Ready nodepool/gpu-serving-ondemand --timeout=10m') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml') exit 0 ;;" \
+"  'wait --for=condition=Ready nodepool/gpu-serving-spot --timeout=10m') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml') exit 0 ;;" \
 "  'rollout status daemonset/nvidia-device-plugin-daemonset -n kube-system --timeout=10m') exit 0 ;;" \
 "  'get namespace app') exit 1 ;;" \
@@ -113,5 +115,7 @@ KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
 assert_contains "${TERRAFORM_LOG}" "apply -auto-approve" "up should pass raw terraform arguments through to terraform apply"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/observability/vllm-podmonitor.yaml" "up should apply the vLLM PodMonitor"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml" "up should apply the GPU metrics exporter"
+assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" "up should install the on-demand serving NodePool"
+assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml" "up should install the spot serving NodePool"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/inference/ingress.yaml" "up should apply the inference ingress"
 assert_not_contains "${KUBECTL_LOG}" "platform/test-app" "up should not reference the sample app"

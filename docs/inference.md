@@ -13,7 +13,7 @@ This part of the repo includes:
 
 The scripts use those manifests in different ways:
 
-- `./scripts/up` prepares the GPU `NodePool`, NVIDIA device plugin,
+- `./scripts/up` prepares the GPU serving `NodePool`s, NVIDIA device plugin,
   observability stack, service, and ingress
 - `./scripts/verify` applies only `platform/inference/vllm-openai.yaml`
 - `./scripts/evaluate` applies both `platform/inference/vllm-openai.yaml` and
@@ -72,8 +72,10 @@ That flow proves:
 
 - the HPA can scale from `1` to `2` replicas from `vllm_requests_running`
 - Karpenter can add a second GPU node in response
-- `warm-1` can keep one `gpu-serving` node alive with the tiny
+- `warm-1` can keep one on-demand serving GPU node alive with the tiny
   `platform/tests/gpu-warm-placeholder.yaml` deployment
+- new burst capacity prefers `gpu-serving-spot` while `gpu-serving-ondemand`
+  remains available as fallback
 - Prometheus can report latency, queue, throughput, and GPU-utilization metrics
 - the repo can compare zero-idle and warm-node tradeoffs with report files
 

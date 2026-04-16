@@ -78,7 +78,11 @@ write_stub kubectl \
 "  'get deployment vllm-openai -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodepool gpu-warm-1') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get nodepool gpu-serving-spot') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get nodepool gpu-serving-ondemand') exit 1 ;;" \
+"  'delete nodepool/gpu-serving --ignore-not-found=true') exit 0 ;;" \
 "  'get nodepool gpu-serving') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/nodeclass-gpu-serving.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get ec2nodeclass gpu-serving') exit 1 ;;" \
@@ -110,5 +114,7 @@ assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/inference/hpa.
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true" "down should remove a preserved warm placeholder deployment if one exists"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml --ignore-not-found=true" "down should remove the GPU metrics exporter"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true" "down should remove the warm NodePool if it exists"
+assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" "down should remove the spot serving NodePool"
+assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true" "down should remove the on-demand serving NodePool"
 assert_not_contains "${KUBECTL_LOG}" "platform/test-app" "down should not reference the sample app"
 assert_contains "${TERRAFORM_LOG}" "destroy -auto-approve" "down should pass raw terraform arguments through to terraform destroy"

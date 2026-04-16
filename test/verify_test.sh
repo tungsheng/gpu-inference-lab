@@ -18,7 +18,7 @@ write_stub kubectl \
 "    : > \"${TEST_TMPDIR}/deployment-present\"" \
 "    exit 0" \
 "    ;;" \
-"  'get nodes -l karpenter.sh/nodepool=gpu-serving -o name')" \
+"  'get nodes -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-present\" ]]; then" \
 "      printf '%s\n' 'node/gpu-serving-1'" \
 "    fi" \

@@ -86,8 +86,10 @@ install_karpenter_stack() {
   kubectl rollout status "deployment/${KARPENTER_RELEASE_NAME}" -n "${KARPENTER_NAMESPACE}" --timeout=10m || return 1
   kubectl apply -f "${KARPENTER_NODECLASS_MANIFEST}" || return 1
   kubectl wait --for=condition=Ready "ec2nodeclass/${KARPENTER_NODECLASS_NAME}" --timeout=10m || return 1
-  kubectl apply -f "${KARPENTER_NODEPOOL_MANIFEST}" || return 1
-  kubectl wait --for=condition=Ready "nodepool/${KARPENTER_NODEPOOL_NAME}" --timeout=10m || return 1
+  kubectl apply -f "${KARPENTER_ONDEMAND_NODEPOOL_MANIFEST}" || return 1
+  kubectl wait --for=condition=Ready "nodepool/${KARPENTER_ONDEMAND_NODEPOOL_NAME}" --timeout=10m || return 1
+  kubectl apply -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" || return 1
+  kubectl wait --for=condition=Ready "nodepool/${KARPENTER_SPOT_NODEPOOL_NAME}" --timeout=10m || return 1
   kubectl apply -f "${NVIDIA_DEVICE_PLUGIN_MANIFEST}" || return 1
   kubectl rollout status daemonset/nvidia-device-plugin-daemonset -n kube-system --timeout=10m
 }

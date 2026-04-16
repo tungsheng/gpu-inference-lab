@@ -34,9 +34,10 @@ Supporting control plane:
 ## Node Roles
 
 - system nodes run the controllers and shared services
-- `gpu-serving` is the zero-idle serving `NodePool`
+- `gpu-serving-ondemand` is the warm-baseline and fallback serving `NodePool`
+- `gpu-serving-spot` is the preferred burst serving `NodePool`
 - `gpu-warm-placeholder` is the warm-profile deployment that keeps one
-  `gpu-serving` node alive without consuming the GPU
+  on-demand serving node alive without consuming the GPU
 
 GPU nodes are still created only through Karpenter. There is no fixed managed
 GPU node group.

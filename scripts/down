@@ -60,8 +60,12 @@ teardown_runtime_surface() {
 delete_gpu_capacity() {
   kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion nodepool "${KARPENTER_WARM_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
-  kubectl delete -f "${KARPENTER_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
-  wait_for_resource_deletion nodepool "${KARPENTER_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  kubectl delete -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion nodepool "${KARPENTER_SPOT_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  kubectl delete -f "${KARPENTER_ONDEMAND_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion nodepool "${KARPENTER_ONDEMAND_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  kubectl delete "nodepool/${KARPENTER_LEGACY_NODEPOOL_NAME}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion nodepool "${KARPENTER_LEGACY_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   kubectl delete -f "${KARPENTER_NODECLASS_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion ec2nodeclass "${KARPENTER_NODECLASS_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}"
 }

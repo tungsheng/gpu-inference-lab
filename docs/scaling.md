@@ -7,8 +7,9 @@ The repository keeps a **zero-idle serving baseline** and a separate
 
 ```text
 system nodes        -> m7i-flex.large              -> controllers and shared services
-gpu-serving nodes   -> g4dn.xlarge / g5.xlarge    -> default elastic serving path
-warm placeholder    -> tiny Deployment in app     -> keeps one gpu-serving node alive
+gpu-serving-ondemand -> g4dn.xlarge / g5.xlarge   -> warm baseline and fallback serving path
+gpu-serving-spot     -> g4dn.xlarge / g5.xlarge   -> preferred burst serving path
+warm placeholder     -> tiny Deployment in app    -> keeps one on-demand serving node alive
 ```
 
 Isolation rules:
@@ -31,7 +32,8 @@ Expected shape after `./scripts/up`:
 - at least two `m7i-flex.large` nodes labeled `workload=system`
 - zero nodes labeled `workload=gpu`
 - Prometheus, Grafana, and the custom metrics API are Ready
-- one `NodePool` named `gpu-serving`
+- one `NodePool` named `gpu-serving-ondemand`
+- one `NodePool` named `gpu-serving-spot`
 - a public inference ingress that resolves before GPU pods are launched
 
 ## Scale-Out Proof Path
@@ -51,8 +53,9 @@ manifest that users must remember to wire up themselves.
 
 `./scripts/evaluate --profile warm-1` applies
 `platform/tests/gpu-warm-placeholder.yaml` before the vLLM deployment. The
-placeholder tolerates the GPU taint, selects the `gpu-serving` labels, and
-keeps one dynamic serving node alive without consuming the GPU.
+placeholder tolerates the GPU taint, selects the serving GPU labels, pins
+itself to `karpenter.sh/capacity-type=on-demand`, and keeps one dynamic serving
+node alive without consuming the GPU.
 
 It exists to compare:
 

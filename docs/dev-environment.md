@@ -29,7 +29,7 @@ What `./scripts/up` does:
 4. Installs the AWS Load Balancer Controller
 5. Installs Prometheus, Grafana, Prometheus Adapter, dashboards, and GPU metrics exporters
 6. Installs Karpenter CRDs and controller
-7. Applies the GPU `EC2NodeClass` and `NodePool`
+7. Applies the GPU `EC2NodeClass` plus both serving `NodePool`s
 8. Applies the NVIDIA device plugin
 9. Ensures the `app` namespace exists
 10. Applies the inference service and public ingress
@@ -76,11 +76,12 @@ Compare the one-warm-node profile:
 The evaluate flow:
 
 1. Confirms the public edge and custom metrics API are ready
-2. Applies the vLLM deployment and HPA
+2. Applies the vLLM deployment
 3. Waits for the first replica and first successful public response
-4. Runs the checked-in k6 load job
-5. Waits for HPA desired replicas to reach `2`
-6. Waits for a second `NodeClaim`, second GPU node, and second Ready replica
+4. Preflights the `vllm_requests_running` metric and then applies the HPA
+5. Runs the checked-in k6 load job
+6. Waits for HPA desired replicas to reach `2`, plus the second `NodeClaim`,
+   GPU node, and Ready replica
 7. Waits for the burst to complete and then scale back in
 8. Cleans up the workload and returns the cluster to zero GPU nodes
 9. Writes Markdown and JSON reports under `docs/reports/`
@@ -140,7 +141,7 @@ What `./scripts/down` does:
 2. Reconnects to the cluster from Terraform outputs
 3. Deletes load-test, HPA, ingress, service, and deployment resources
 4. Waits for the ALB to disappear
-5. Deletes the warm and serving GPU `NodePool` resources plus the `EC2NodeClass`
+5. Deletes the warm legacy `NodePool`, both serving `NodePool`s, and the `EC2NodeClass`
 6. Removes the observability stack
 7. Uninstalls Karpenter and the NVIDIA device plugin
 8. Runs `terraform -chdir=infra/env/dev destroy`

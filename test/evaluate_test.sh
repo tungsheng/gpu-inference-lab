@@ -58,7 +58,7 @@ write_stub kubectl \
 "    fi" \
 "    exit 0" \
 "    ;;" \
-"  'get nodeclaims -o name')" \
+"  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
 "      printf '%s\n' 'nodeclaim/gpu-serving-1'" \
 "      if [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
@@ -77,7 +77,11 @@ write_stub kubectl \
 "    exit 0" \
 "    ;;" \
 "  'get node gpu-serving-1 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g5.xlarge'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-ondemand'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'on-demand'; exit 0 ;;" \
 "  'get node gpu-serving-2 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g4dn.xlarge'; exit 0 ;;" \
+"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-spot'; exit 0 ;;" \
+"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'spot'; exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml')" \
 "    : > \"${TEST_TMPDIR}/deployment-applied\"" \
 "    exit 0" \
@@ -181,10 +185,17 @@ assert_file_exists "${TEST_TMPDIR}/report.md" "evaluate should write the Markdow
 assert_file_exists "${TEST_TMPDIR}/report.json" "evaluate should write the JSON report"
 
 REPORT_CONTENT=$(cat "${TEST_TMPDIR}/report.md")
+JSON_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/report.json")
 KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
 
 assert_contains "${REPORT_CONTENT}" "Second GPU node" "the report should include the scale-out timeline"
 assert_contains "${REPORT_CONTENT}" "Average GPU utilization" "the report should include Prometheus-backed GPU metrics"
+assert_contains "${REPORT_CONTENT}" "First GPU capacity type: on-demand" "the report should include the first node capacity type"
+assert_contains "${REPORT_CONTENT}" "Second GPU capacity type: spot" "the report should include the second node capacity type"
+assert_contains "${REPORT_CONTENT}" "Estimated burst spot cost for this run" "the report should include cost split by capacity type"
+assert_contains "${JSON_REPORT_CONTENT}" "\"first_gpu_capacity_type\": \"on-demand\"" "the JSON report should persist the first node capacity type"
+assert_contains "${JSON_REPORT_CONTENT}" "\"second_gpu_capacity_type\": \"spot\"" "the JSON report should persist the second node capacity type"
+assert_contains "${JSON_REPORT_CONTENT}" "\"peak_active_nodeclaims_by_capacity_type\"" "the JSON report should include per-capacity NodeClaim metrics"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/inference/hpa.yaml" "evaluate should apply the HPA manifest"
 assert_contains "${KUBECTL_LOG}" "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running" "evaluate should verify that the custom metric is available before running load"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml" "evaluate should apply the load test manifest"

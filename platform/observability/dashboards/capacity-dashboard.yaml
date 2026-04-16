@@ -132,8 +132,18 @@ data:
           "targets": [
             {
               "expr": "count(kube_node_labels{label_workload=\"gpu\"})",
-              "legendFormat": "gpu nodes",
+              "legendFormat": "total gpu nodes",
               "refId": "A"
+            },
+            {
+              "expr": "count(kube_node_labels{label_workload=\"gpu\",label_karpenter_sh_capacity_type=\"on-demand\"})",
+              "legendFormat": "on-demand gpu nodes",
+              "refId": "B"
+            },
+            {
+              "expr": "count(kube_node_labels{label_workload=\"gpu\",label_karpenter_sh_capacity_type=\"spot\"})",
+              "legendFormat": "spot gpu nodes",
+              "refId": "C"
             }
           ],
           "title": "GPU Node Count",
@@ -155,9 +165,19 @@ data:
           "id": 6,
           "targets": [
             {
-              "expr": "sum(karpenter_nodeclaims_created_total{nodepool=~\"gpu-serving|gpu-warm-1\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=~\"gpu-serving|gpu-warm-1\"})",
-              "legendFormat": "active nodeclaims",
+              "expr": "sum(karpenter_nodeclaims_created_total{nodepool=~\"gpu-serving-ondemand|gpu-serving-spot\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=~\"gpu-serving-ondemand|gpu-serving-spot\"})",
+              "legendFormat": "active nodeclaims total",
               "refId": "A"
+            },
+            {
+              "expr": "sum(karpenter_nodeclaims_created_total{nodepool=\"gpu-serving-ondemand\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=\"gpu-serving-ondemand\"})",
+              "legendFormat": "active on-demand nodeclaims",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(karpenter_nodeclaims_created_total{nodepool=\"gpu-serving-spot\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=\"gpu-serving-spot\"})",
+              "legendFormat": "active spot nodeclaims",
+              "refId": "C"
             }
           ],
           "title": "Active NodeClaims",

@@ -36,25 +36,29 @@ The `warm-1` profile measures:
 Each evaluation report writes:
 
 - first GPU node timing
+- first GPU capacity type
 - first Ready replica timing
 - first public response timing
 - HPA scale-out timing
 - second GPU node timing
+- second GPU capacity type
 - second Ready replica timing
 - p95 latency during burst
 - GPU utilization during burst
-- estimated idle cost per hour for the profile
-- estimated burst cost for the measured run
+- peak active nodeclaims overall and by capacity type
+- estimated idle cost per hour for the profile, split by capacity type
+- estimated burst cost for the measured run, split by capacity type
 
-## Instance-Family Flexibility
+## Capacity Mix
 
-The serving `NodePool` currently allows:
+Both serving `NodePool`s currently allow:
 
 - `g4dn.xlarge`
 - `g5.xlarge`
 
-That improves the chance that a pending inference pod can find compatible GPU
-capacity in constrained regions or AZs.
+The repo prefers `gpu-serving-spot` for fresh burst nodes, while
+`gpu-serving-ondemand` remains available for the warm baseline and spot
+fallback.
 
 ## Reading The Warm-Node Tradeoff
 

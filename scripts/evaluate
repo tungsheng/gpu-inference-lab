@@ -25,6 +25,7 @@ PUSHGATEWAY_LOCAL_PORT=""
 PUSHGATEWAY_PORT_FORWARD_PID=""
 PUSHGATEWAY_PORT_FORWARD_LOG=""
 METRIC_SEED_REQUEST_PIDS=()
+WAIT_CONTEXT_LOG_INTERVAL_SECONDS="${WAIT_CONTEXT_LOG_INTERVAL_SECONDS:-30}"
 
 EVALUATION_START_TIME=""
 FIRST_NODECLAIM_TIME=""
@@ -35,14 +36,18 @@ FIRST_POD_NAME=""
 FIRST_POD_SCHEDULED_TIME=""
 FIRST_CONTAINER_STARTED_TIME=""
 FIRST_GPU_NODE_NAME=""
+FIRST_GPU_NODEPOOL_NAME=""
 FIRST_GPU_INSTANCE_TYPE=""
+FIRST_GPU_CAPACITY_TYPE=""
 LOAD_START_TIME=""
 HPA_SCALE_OUT_TIME=""
 SECOND_NODECLAIM_TIME=""
 SECOND_GPU_NODE_TIME=""
 SECOND_READY_TIME=""
 SECOND_GPU_NODE_NAME=""
+SECOND_GPU_NODEPOOL_NAME=""
 SECOND_GPU_INSTANCE_TYPE=""
+SECOND_GPU_CAPACITY_TYPE=""
 LOAD_FINISH_TIME=""
 SCALE_IN_TIME=""
 PROFILE_BASELINE_RESTORED_TIME=""
@@ -55,8 +60,14 @@ AVG_GENERATION_TOKENS_PER_SECOND=""
 AVG_GPU_UTILIZATION_PERCENT=""
 MAX_GPU_UTILIZATION_PERCENT=""
 PEAK_ACTIVE_NODECLAIMS=""
+PEAK_ACTIVE_ONDEMAND_NODECLAIMS=""
+PEAK_ACTIVE_SPOT_NODECLAIMS=""
 ESTIMATED_IDLE_COST_PER_HOUR=""
 ESTIMATED_BURST_COST=""
+ESTIMATED_IDLE_COST_ONDEMAND_PER_HOUR=""
+ESTIMATED_IDLE_COST_SPOT_PER_HOUR=""
+ESTIMATED_BURST_COST_ONDEMAND=""
+ESTIMATED_BURST_COST_SPOT=""
 
 usage() {
   cat <<EOF
@@ -208,6 +219,34 @@ node_instance_type() {
     -o jsonpath='{.metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null
 }
 
+populate_first_gpu_node_identity() {
+  FIRST_GPU_NODE_NAME=$(first_gpu_node_name)
+  if [[ -z "${FIRST_GPU_NODE_NAME}" ]]; then
+    return 0
+  fi
+
+  FIRST_GPU_INSTANCE_TYPE=$(node_instance_type "${FIRST_GPU_NODE_NAME}")
+  FIRST_GPU_NODEPOOL_NAME=$(node_nodepool "${FIRST_GPU_NODE_NAME}")
+  FIRST_GPU_CAPACITY_TYPE=$(node_capacity_type "${FIRST_GPU_NODE_NAME}")
+  if [[ -z "${FIRST_GPU_CAPACITY_TYPE}" ]]; then
+    FIRST_GPU_CAPACITY_TYPE=$(nodepool_capacity_type "${FIRST_GPU_NODEPOOL_NAME}")
+  fi
+}
+
+populate_second_gpu_node_identity() {
+  SECOND_GPU_NODE_NAME=$(second_gpu_node_name)
+  if [[ -z "${SECOND_GPU_NODE_NAME}" ]]; then
+    return 0
+  fi
+
+  SECOND_GPU_INSTANCE_TYPE=$(node_instance_type "${SECOND_GPU_NODE_NAME}")
+  SECOND_GPU_NODEPOOL_NAME=$(node_nodepool "${SECOND_GPU_NODE_NAME}")
+  SECOND_GPU_CAPACITY_TYPE=$(node_capacity_type "${SECOND_GPU_NODE_NAME}")
+  if [[ -z "${SECOND_GPU_CAPACITY_TYPE}" ]]; then
+    SECOND_GPU_CAPACITY_TYPE=$(nodepool_capacity_type "${SECOND_GPU_NODEPOOL_NAME}")
+  fi
+}
+
 wait_for_first_pod_name() {
   local timeout_seconds=$1
   local start_time
@@ -278,6 +317,191 @@ print_warm_profile_failure_diagnostics() {
 preserve_warm_profile_failure_state() {
   PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS=1
   print_warm_profile_failure_diagnostics
+}
+
+print_serving_nodeclaim_snapshot() {
+  local output
+
+  output=$(kubectl get nodeclaims \
+    -l "${KARPENTER_SERVING_NODEPOOL_SELECTOR}" \
+    -o custom-columns='NAME:.metadata.name,NODEPOOL:.metadata.labels.karpenter\.sh/nodepool,NODE:.status.nodeName' \
+    --no-headers 2>/dev/null || true)
+
+  if [[ -z "${output}" ]]; then
+    printf 'Current serving NodeClaims: none\n' >&2
+    return 0
+  fi
+
+  printf 'Current serving NodeClaims (name nodepool node):\n%s\n' "${output}" >&2
+}
+
+print_serving_node_snapshot() {
+  local output
+
+  output=$(kubectl get nodes \
+    -l 'workload=gpu' \
+    -L karpenter.sh/nodepool,karpenter.sh/capacity-type,node.kubernetes.io/instance-type \
+    --no-headers 2>/dev/null || true)
+
+  if [[ -z "${output}" ]]; then
+    printf 'Current serving GPU nodes: none\n' >&2
+    return 0
+  fi
+
+  printf 'Current serving GPU nodes (name status roles age version nodepool capacity-type instance-type):\n%s\n' "${output}" >&2
+}
+
+print_serving_pod_snapshot() {
+  local output
+
+  output=$(kubectl get pods \
+    -n "${APP_NAMESPACE}" \
+    -l "app=${GPU_INFERENCE_DEPLOYMENT_NAME}" \
+    -o wide \
+    --no-headers 2>/dev/null || true)
+
+  if [[ -z "${output}" ]]; then
+    printf 'Current serving pods: none\n' >&2
+    return 0
+  fi
+
+  printf 'Current serving pods:\n%s\n' "${output}" >&2
+}
+
+wait_for_serving_nodeclaims_at_least_with_progress() {
+  local expected=$1
+  local timeout_seconds=$2
+  local start_time
+  local last_log_time=0
+
+  start_time=$(date +%s)
+
+  while true; do
+    local current_count
+    local now
+
+    current_count=$(nodeclaim_count)
+    if (( current_count >= expected )); then
+      return 0
+    fi
+
+    now=$(date +%s)
+    if (( now - last_log_time >= WAIT_CONTEXT_LOG_INTERVAL_SECONDS )); then
+      printf 'Waiting for %s serving NodeClaim(s); currently %s/%s\n' "${expected}" "${current_count}" "${expected}" >&2
+      print_serving_nodeclaim_snapshot
+      last_log_time=${now}
+    fi
+
+    if (( now - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for at least %s NodeClaim(s)\n' "${expected}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+wait_for_serving_gpu_nodes_at_least_with_progress() {
+  local expected=$1
+  local timeout_seconds=$2
+  local start_time
+  local last_log_time=0
+
+  start_time=$(date +%s)
+
+  while true; do
+    local current_count
+    local now
+
+    current_count=$(all_gpu_node_count)
+    if (( current_count >= expected )); then
+      return 0
+    fi
+
+    now=$(date +%s)
+    if (( now - last_log_time >= WAIT_CONTEXT_LOG_INTERVAL_SECONDS )); then
+      printf 'Waiting for %s total GPU node(s); currently %s/%s\n' "${expected}" "${current_count}" "${expected}" >&2
+      print_serving_node_snapshot
+      last_log_time=${now}
+    fi
+
+    if (( now - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for at least %s total GPU node(s)\n' "${expected}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+wait_for_serving_gpu_nodes_at_most_with_progress() {
+  local expected=$1
+  local timeout_seconds=$2
+  local start_time
+  local last_log_time=0
+
+  start_time=$(date +%s)
+
+  while true; do
+    local current_count
+    local now
+
+    current_count=$(all_gpu_node_count)
+    if (( current_count <= expected )); then
+      return 0
+    fi
+
+    now=$(date +%s)
+    if (( now - last_log_time >= WAIT_CONTEXT_LOG_INTERVAL_SECONDS )); then
+      printf 'Waiting for GPU cleanup to reach at most %s node(s); currently %s\n' "${expected}" "${current_count}" >&2
+      print_serving_nodeclaim_snapshot
+      print_serving_node_snapshot
+      last_log_time=${now}
+    fi
+
+    if (( now - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for at most %s total GPU node(s)\n' "${expected}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+wait_for_ready_replicas_at_least_with_progress() {
+  local expected=$1
+  local timeout_seconds=$2
+  local start_time
+  local last_log_time=0
+
+  start_time=$(date +%s)
+
+  while true; do
+    local ready_replicas
+    local now
+
+    ready_replicas=$(deployment_ready_replicas "${APP_NAMESPACE}" "${GPU_INFERENCE_DEPLOYMENT_NAME}")
+    ready_replicas=${ready_replicas:-0}
+    if (( ready_replicas >= expected )); then
+      return 0
+    fi
+
+    now=$(date +%s)
+    if (( now - last_log_time >= WAIT_CONTEXT_LOG_INTERVAL_SECONDS )); then
+      printf 'Waiting for %s ready replica(s); currently %s/%s\n' "${expected}" "${ready_replicas}" "${expected}" >&2
+      print_serving_pod_snapshot
+      print_serving_node_snapshot
+      last_log_time=${now}
+    fi
+
+    if (( now - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for deployment %s/%s to reach at least %s ready replica(s)\n' \
+        "${APP_NAMESPACE}" "${GPU_INFERENCE_DEPLOYMENT_NAME}" "${expected}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
 }
 
 start_metric_seed_requests() {
@@ -379,10 +603,7 @@ seed_profile_baseline_events() {
 
   set_if_unset FIRST_NODECLAIM_TIME "${EVALUATION_START_TIME}"
   set_if_unset FIRST_GPU_NODE_TIME "${EVALUATION_START_TIME}"
-  FIRST_GPU_NODE_NAME=$(first_gpu_node_name)
-  if [[ -n "${FIRST_GPU_NODE_NAME}" ]]; then
-    FIRST_GPU_INSTANCE_TYPE=$(node_instance_type "${FIRST_GPU_NODE_NAME}")
-  fi
+  populate_first_gpu_node_identity
 }
 
 apply_inference_stack() {
@@ -393,15 +614,14 @@ apply_inference_stack() {
 }
 
 wait_for_first_ready_and_response() {
-  wait_for_nodeclaims_at_least 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  wait_for_serving_nodeclaims_at_least_with_progress 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   set_if_unset FIRST_NODECLAIM_TIME "$(date +%s)"
 
-  wait_for_all_gpu_nodes_at_least 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  wait_for_serving_gpu_nodes_at_least_with_progress 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   set_if_unset FIRST_GPU_NODE_TIME "$(date +%s)"
 
   if [[ -z "${FIRST_GPU_NODE_NAME}" ]]; then
-    FIRST_GPU_NODE_NAME=$(first_gpu_node_name)
-    FIRST_GPU_INSTANCE_TYPE=$(node_instance_type "${FIRST_GPU_NODE_NAME}")
+    populate_first_gpu_node_identity
   fi
 
   FIRST_POD_NAME=$(wait_for_first_pod_name "${EVALUATE_SCALE_TIMEOUT_SECONDS}") || return 1
@@ -457,17 +677,14 @@ run_load_and_wait_for_scale_out() {
 
   HPA_SCALE_OUT_TIME=$(date +%s)
 
-  wait_for_nodeclaims_at_least 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  wait_for_serving_nodeclaims_at_least_with_progress 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   SECOND_NODECLAIM_TIME=$(date +%s)
 
-  wait_for_all_gpu_nodes_at_least 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  wait_for_serving_gpu_nodes_at_least_with_progress 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   SECOND_GPU_NODE_TIME=$(date +%s)
-  SECOND_GPU_NODE_NAME=$(second_gpu_node_name)
-  if [[ -n "${SECOND_GPU_NODE_NAME}" ]]; then
-    SECOND_GPU_INSTANCE_TYPE=$(node_instance_type "${SECOND_GPU_NODE_NAME}")
-  fi
+  populate_second_gpu_node_identity
 
-  wait_for_deployment_ready_replicas_at_least "${APP_NAMESPACE}" "${GPU_INFERENCE_DEPLOYMENT_NAME}" 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  wait_for_ready_replicas_at_least_with_progress 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   SECOND_READY_TIME=$(date +%s)
 
   wait_for_http_200 "${PUBLIC_INFERENCE_URL}" "${VERIFY_RESPONSE_TIMEOUT_SECONDS}"
@@ -483,7 +700,7 @@ remove_load_and_wait_for_scale_in() {
   LOAD_TEST_APPLIED=0
   wait_for_hpa_desired_replicas_at_most "${APP_NAMESPACE}" "${GPU_INFERENCE_HPA_NAME}" 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   wait_for_deployment_ready_replicas_at_most "${APP_NAMESPACE}" "${GPU_INFERENCE_DEPLOYMENT_NAME}" 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
-  wait_for_all_gpu_nodes_at_most 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  wait_for_serving_gpu_nodes_at_most_with_progress 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   SCALE_IN_TIME=$(date +%s)
 }
 
@@ -497,14 +714,14 @@ delete_inference_and_clean_profile_capacity() {
   wait_for_resource_deletion deployment "${GPU_INFERENCE_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
 
   if is_warm_profile; then
-    wait_for_all_gpu_nodes_at_most 1 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+    wait_for_serving_gpu_nodes_at_most_with_progress 1 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
     PROFILE_BASELINE_RESTORED_TIME=$(date +%s)
     kubectl delete -f "${GPU_WARM_PLACEHOLDER_MANIFEST}" --ignore-not-found=true || return 1
     WARM_PLACEHOLDER_APPLIED=0
     wait_for_resource_deletion deployment "${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   fi
 
-  wait_for_all_gpu_nodes_at_most 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  wait_for_serving_gpu_nodes_at_most_with_progress 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   CLEANUP_FINISH_TIME=$(date +%s)
 }
 
@@ -735,12 +952,29 @@ wait_for_hpa_metric_pipeline() {
 }
 
 gpu_instance_hourly_cost() {
-  case "${1:-}" in
+  local instance_type=${1:-}
+  local capacity_type=${2:-on-demand}
+
+  case "${instance_type}" in
     g4dn.xlarge)
-      printf '0.526'
+      case "${capacity_type}" in
+        spot)
+          printf '0.316'
+          ;;
+        *)
+          printf '0.526'
+          ;;
+      esac
       ;;
     g5.xlarge)
-      printf '1.006'
+      case "${capacity_type}" in
+        spot)
+          printf '0.604'
+          ;;
+        *)
+          printf '1.006'
+          ;;
+      esac
       ;;
     *)
       printf '%s\n' ""
@@ -775,11 +1009,21 @@ estimate_costs() {
   local first_node_burst_cost
   local second_node_burst_cost
 
-  first_node_hourly_cost=$(gpu_instance_hourly_cost "${FIRST_GPU_INSTANCE_TYPE}")
-  second_node_hourly_cost=$(gpu_instance_hourly_cost "${SECOND_GPU_INSTANCE_TYPE}")
+  first_node_hourly_cost=$(gpu_instance_hourly_cost "${FIRST_GPU_INSTANCE_TYPE}" "${FIRST_GPU_CAPACITY_TYPE}")
+  second_node_hourly_cost=$(gpu_instance_hourly_cost "${SECOND_GPU_INSTANCE_TYPE}" "${SECOND_GPU_CAPACITY_TYPE}")
+
+  ESTIMATED_IDLE_COST_ONDEMAND_PER_HOUR="0"
+  ESTIMATED_IDLE_COST_SPOT_PER_HOUR="0"
+  ESTIMATED_BURST_COST_ONDEMAND="0"
+  ESTIMATED_BURST_COST_SPOT="0"
 
   if is_warm_profile; then
     ESTIMATED_IDLE_COST_PER_HOUR=${first_node_hourly_cost}
+    if [[ "${FIRST_GPU_CAPACITY_TYPE}" == "spot" ]]; then
+      ESTIMATED_IDLE_COST_SPOT_PER_HOUR=${first_node_hourly_cost}
+    else
+      ESTIMATED_IDLE_COST_ONDEMAND_PER_HOUR=${first_node_hourly_cost}
+    fi
     first_node_active_seconds=$(seconds_between "${EVALUATION_START_TIME}" "${CLEANUP_FINISH_TIME}")
   else
     ESTIMATED_IDLE_COST_PER_HOUR="0"
@@ -790,6 +1034,18 @@ estimate_costs() {
   first_node_burst_cost=$(multiply_decimal_by_seconds_over_hour "${first_node_hourly_cost}" "${first_node_active_seconds}")
   second_node_burst_cost=$(multiply_decimal_by_seconds_over_hour "${second_node_hourly_cost}" "${second_node_active_seconds}")
   ESTIMATED_BURST_COST=$(sum_decimal_values "${first_node_burst_cost:-0}" "${second_node_burst_cost:-0}")
+
+  if [[ "${FIRST_GPU_CAPACITY_TYPE}" == "spot" ]]; then
+    ESTIMATED_BURST_COST_SPOT=$(sum_decimal_values "${ESTIMATED_BURST_COST_SPOT}" "${first_node_burst_cost:-0}")
+  else
+    ESTIMATED_BURST_COST_ONDEMAND=$(sum_decimal_values "${ESTIMATED_BURST_COST_ONDEMAND}" "${first_node_burst_cost:-0}")
+  fi
+
+  if [[ "${SECOND_GPU_CAPACITY_TYPE}" == "spot" ]]; then
+    ESTIMATED_BURST_COST_SPOT=$(sum_decimal_values "${ESTIMATED_BURST_COST_SPOT}" "${second_node_burst_cost:-0}")
+  else
+    ESTIMATED_BURST_COST_ONDEMAND=$(sum_decimal_values "${ESTIMATED_BURST_COST_ONDEMAND}" "${second_node_burst_cost:-0}")
+  fi
 }
 
 collect_production_metrics() {
@@ -799,13 +1055,17 @@ collect_production_metrics() {
   local ttft_query
   local throughput_query
   local nodeclaim_query
+  local ondemand_nodeclaim_query
+  local spot_nodeclaim_query
 
   window=$(lookback_window)
   running_query="max_over_time((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])"
   latency_query="quantile_over_time(0.95, (histogram_quantile(0.95, sum by (le) (rate(vllm:e2e_request_latency_seconds_bucket{namespace=\"${APP_NAMESPACE}\"}[1m]))))[${window}:1m])"
   ttft_query="quantile_over_time(0.95, (histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{namespace=\"${APP_NAMESPACE}\"}[1m]))))[${window}:1m])"
   throughput_query="avg_over_time((sum(rate(vllm:generation_tokens_total{namespace=\"${APP_NAMESPACE}\"}[1m])))[${window}:1m])"
-  nodeclaim_query="max_over_time(((sum(karpenter_nodeclaims_created_total{nodepool=~\"${KARPENTER_NODEPOOL_NAME}|${KARPENTER_WARM_NODEPOOL_NAME}\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=~\"${KARPENTER_NODEPOOL_NAME}|${KARPENTER_WARM_NODEPOOL_NAME}\"})))[${window}:1m])"
+  nodeclaim_query="max_over_time(((sum(karpenter_nodeclaims_created_total{nodepool=~\"${KARPENTER_SERVING_NODEPOOL_REGEX}\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=~\"${KARPENTER_SERVING_NODEPOOL_REGEX}\"})))[${window}:1m])"
+  ondemand_nodeclaim_query="max_over_time(((sum(karpenter_nodeclaims_created_total{nodepool=\"${KARPENTER_ONDEMAND_NODEPOOL_NAME}\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=\"${KARPENTER_ONDEMAND_NODEPOOL_NAME}\"})))[${window}:1m])"
+  spot_nodeclaim_query="max_over_time(((sum(karpenter_nodeclaims_created_total{nodepool=\"${KARPENTER_SPOT_NODEPOOL_NAME}\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=\"${KARPENTER_SPOT_NODEPOOL_NAME}\"})))[${window}:1m])"
 
   P95_REQUEST_LATENCY_SECONDS=$(prometheus_query_scalar "${latency_query}") || return 1
   P95_TTFT_SECONDS=$(prometheus_query_scalar "${ttft_query}") || return 1
@@ -814,6 +1074,8 @@ collect_production_metrics() {
   AVG_GPU_UTILIZATION_PERCENT=$(prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])") || return 1
   MAX_GPU_UTILIZATION_PERCENT=$(prometheus_query_scalar "max_over_time((max(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])") || return 1
   PEAK_ACTIVE_NODECLAIMS=$(prometheus_query_scalar "${nodeclaim_query}") || return 1
+  PEAK_ACTIVE_ONDEMAND_NODECLAIMS=$(prometheus_query_scalar "${ondemand_nodeclaim_query}") || return 1
+  PEAK_ACTIVE_SPOT_NODECLAIMS=$(prometheus_query_scalar "${spot_nodeclaim_query}") || return 1
 
   estimate_costs
 }
@@ -828,6 +1090,20 @@ append_pushgateway_metric() {
   fi
 
   printf '%s %s\n' "${metric_name}" "${metric_value}" >> "${output_file}"
+}
+
+append_pushgateway_labeled_metric() {
+  local output_file=$1
+  local metric_name=$2
+  local label_key=$3
+  local label_value=${4:-}
+  local metric_value=${5:-}
+
+  if [[ -z "${label_value}" || -z "${metric_value}" ]]; then
+    return 0
+  fi
+
+  printf '%s{%s="%s"} %s\n' "${metric_name}" "${label_key}" "${label_value}" "${metric_value}" >> "${output_file}"
 }
 
 push_summary_metrics() {
@@ -849,6 +1125,15 @@ push_summary_metrics() {
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_estimated_burst_cost" "${ESTIMATED_BURST_COST}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_request_latency_seconds" "${P95_REQUEST_LATENCY_SECONDS}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_average_gpu_utilization_percent" "${AVG_GPU_UTILIZATION_PERCENT}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_peak_active_nodeclaims" "${PEAK_ACTIVE_NODECLAIMS}"
+  append_pushgateway_labeled_metric "${payload_file}" "gpu_serving_measure_peak_active_nodeclaims" "capacity_type" "on-demand" "${PEAK_ACTIVE_ONDEMAND_NODECLAIMS}"
+  append_pushgateway_labeled_metric "${payload_file}" "gpu_serving_measure_peak_active_nodeclaims" "capacity_type" "spot" "${PEAK_ACTIVE_SPOT_NODECLAIMS}"
+  append_pushgateway_labeled_metric "${payload_file}" "gpu_serving_measure_estimated_idle_cost_per_hour" "capacity_type" "on-demand" "${ESTIMATED_IDLE_COST_ONDEMAND_PER_HOUR}"
+  append_pushgateway_labeled_metric "${payload_file}" "gpu_serving_measure_estimated_idle_cost_per_hour" "capacity_type" "spot" "${ESTIMATED_IDLE_COST_SPOT_PER_HOUR}"
+  append_pushgateway_labeled_metric "${payload_file}" "gpu_serving_measure_estimated_burst_cost" "capacity_type" "on-demand" "${ESTIMATED_BURST_COST_ONDEMAND}"
+  append_pushgateway_labeled_metric "${payload_file}" "gpu_serving_measure_estimated_burst_cost" "capacity_type" "spot" "${ESTIMATED_BURST_COST_SPOT}"
+  append_pushgateway_labeled_metric "${payload_file}" "gpu_serving_measure_first_gpu_node_capacity_type" "capacity_type" "${FIRST_GPU_CAPACITY_TYPE}" "1"
+  append_pushgateway_labeled_metric "${payload_file}" "gpu_serving_measure_second_gpu_node_capacity_type" "capacity_type" "${SECOND_GPU_CAPACITY_TYPE}" "1"
 
   if [[ ! -s "${payload_file}" ]]; then
     rm -f "${payload_file}"
@@ -949,7 +1234,9 @@ write_reports() {
 - Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 - Profile: ${EVALUATION_PROFILE}
 - Public endpoint: ${PUBLIC_INFERENCE_URL}
+- First GPU capacity type: ${FIRST_GPU_CAPACITY_TYPE:-n/a}
 - First GPU instance type: ${FIRST_GPU_INSTANCE_TYPE:-n/a}
+- Second GPU capacity type: ${SECOND_GPU_CAPACITY_TYPE:-n/a}
 - Second GPU instance type: ${SECOND_GPU_INSTANCE_TYPE:-n/a}
 
 ## Timeline
@@ -990,16 +1277,23 @@ write_reports() {
 - Average GPU utilization: $(display_metric "${AVG_GPU_UTILIZATION_PERCENT}" "%")
 - Max GPU utilization: $(display_metric "${MAX_GPU_UTILIZATION_PERCENT}" "%")
 - Peak active NodeClaims: $(display_metric "${PEAK_ACTIVE_NODECLAIMS}")
+- Peak active on-demand NodeClaims: $(display_metric "${PEAK_ACTIVE_ONDEMAND_NODECLAIMS}")
+- Peak active spot NodeClaims: $(display_metric "${PEAK_ACTIVE_SPOT_NODECLAIMS}")
 
 ## Cost
 
 - Estimated idle cost per hour for profile: ${ESTIMATED_IDLE_COST_PER_HOUR:-n/a}
+- Estimated idle on-demand cost per hour: ${ESTIMATED_IDLE_COST_ONDEMAND_PER_HOUR:-n/a}
+- Estimated idle spot cost per hour: ${ESTIMATED_IDLE_COST_SPOT_PER_HOUR:-n/a}
 - Estimated burst cost for this run: ${ESTIMATED_BURST_COST:-n/a}
+- Estimated burst on-demand cost for this run: ${ESTIMATED_BURST_COST_ONDEMAND:-n/a}
+- Estimated burst spot cost for this run: ${ESTIMATED_BURST_COST_SPOT:-n/a}
 
 ## Notes
 
 - \`Container started -> Ready\` is reported as the model-load proxy because the baseline experiment does not rely on a separate vLLM model-load completion metric.
 - The HPA is validated from the custom metric \`vllm_requests_running\`, not CPU utilization.
+- Spot prices use the repo's fixed conservative estimate table so reports stay deterministic across runs.
 - The script cleans up the warm profile at the end so the environment returns to zero GPU nodes after reporting.
 EOF
 
@@ -1008,8 +1302,12 @@ EOF
   "generated_at": $(json_escape "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"),
   "profile": $(json_escape "${EVALUATION_PROFILE}"),
   "public_endpoint": $(json_escape "${PUBLIC_INFERENCE_URL}"),
+  "first_gpu_capacity_type": $(json_nullable_string "${FIRST_GPU_CAPACITY_TYPE}"),
   "first_gpu_instance_type": $(json_nullable_string "${FIRST_GPU_INSTANCE_TYPE}"),
+  "first_gpu_nodepool": $(json_nullable_string "${FIRST_GPU_NODEPOOL_NAME}"),
+  "second_gpu_capacity_type": $(json_nullable_string "${SECOND_GPU_CAPACITY_TYPE}"),
   "second_gpu_instance_type": $(json_nullable_string "${SECOND_GPU_INSTANCE_TYPE}"),
+  "second_gpu_nodepool": $(json_nullable_string "${SECOND_GPU_NODEPOOL_NAME}"),
   "timeline": {
     "first_nodeclaim_seconds": $(json_nullable_number "$(seconds_since_start "${FIRST_NODECLAIM_TIME}")"),
     "first_gpu_node_seconds": $(json_nullable_number "$(seconds_since_start "${FIRST_GPU_NODE_TIME}")"),
@@ -1036,11 +1334,23 @@ EOF
     "average_generation_tokens_per_second": $(json_nullable_number "${AVG_GENERATION_TOKENS_PER_SECOND}"),
     "average_gpu_utilization_percent": $(json_nullable_number "${AVG_GPU_UTILIZATION_PERCENT}"),
     "max_gpu_utilization_percent": $(json_nullable_number "${MAX_GPU_UTILIZATION_PERCENT}"),
-    "peak_active_nodeclaims": $(json_nullable_number "${PEAK_ACTIVE_NODECLAIMS}")
+    "peak_active_nodeclaims": $(json_nullable_number "${PEAK_ACTIVE_NODECLAIMS}"),
+    "peak_active_nodeclaims_by_capacity_type": {
+      "on_demand": $(json_nullable_number "${PEAK_ACTIVE_ONDEMAND_NODECLAIMS}"),
+      "spot": $(json_nullable_number "${PEAK_ACTIVE_SPOT_NODECLAIMS}")
+    }
   },
   "cost": {
     "estimated_idle_cost_per_hour": $(json_nullable_number "${ESTIMATED_IDLE_COST_PER_HOUR}"),
-    "estimated_burst_cost": $(json_nullable_number "${ESTIMATED_BURST_COST}")
+    "estimated_idle_cost_per_hour_by_capacity_type": {
+      "on_demand": $(json_nullable_number "${ESTIMATED_IDLE_COST_ONDEMAND_PER_HOUR}"),
+      "spot": $(json_nullable_number "${ESTIMATED_IDLE_COST_SPOT_PER_HOUR}")
+    },
+    "estimated_burst_cost": $(json_nullable_number "${ESTIMATED_BURST_COST}"),
+    "estimated_burst_cost_by_capacity_type": {
+      "on_demand": $(json_nullable_number "${ESTIMATED_BURST_COST_ONDEMAND}"),
+      "spot": $(json_nullable_number "${ESTIMATED_BURST_COST_SPOT}")
+    }
   }
 }
 EOF
@@ -1123,6 +1433,8 @@ main() {
 
   printf '\nEvaluated:\n'
   printf '  Profile: %s\n' "${EVALUATION_PROFILE}"
+  printf '  First GPU capacity type: %s\n' "${FIRST_GPU_CAPACITY_TYPE:-n/a}"
+  printf '  Second GPU capacity type: %s\n' "${SECOND_GPU_CAPACITY_TYPE:-n/a}"
   printf '  First public response: %s\n' "$(display_duration "$(seconds_since_start "${FIRST_RESPONSE_TIME}")")"
   printf '  Second ready replica: %s\n' "$(display_duration "$(seconds_since_start "${SECOND_READY_TIME}")")"
   printf '  p95 request latency: %s\n' "$(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")"

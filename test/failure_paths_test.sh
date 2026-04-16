@@ -135,8 +135,10 @@ run_up_ingress_timeout_test() {
 "  'rollout status deployment/karpenter -n karpenter --timeout=10m') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/karpenter/nodeclass-gpu-serving.yaml') exit 0 ;;" \
 "  'wait --for=condition=Ready ec2nodeclass/gpu-serving --timeout=10m') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving.yaml') exit 0 ;;" \
-"  'wait --for=condition=Ready nodepool/gpu-serving --timeout=10m') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml') exit 0 ;;" \
+"  'wait --for=condition=Ready nodepool/gpu-serving-ondemand --timeout=10m') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml') exit 0 ;;" \
+"  'wait --for=condition=Ready nodepool/gpu-serving-spot --timeout=10m') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml') exit 0 ;;" \
 "  'rollout status daemonset/nvidia-device-plugin-daemonset -n kube-system --timeout=10m') exit 0 ;;" \
 "  'get namespace app') exit 1 ;;" \
@@ -167,7 +169,7 @@ run_verify_gpu_timeout_test() {
 "set -euo pipefail" \
 "case \"\$*\" in" \
 "  'apply -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml') exit 0 ;;" \
-"  'get nodes -l karpenter.sh/nodepool=gpu-serving -o name') exit 0 ;;" \
+"  'get nodes -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
 "  *) exit 0 ;;" \
 "esac"
@@ -196,7 +198,7 @@ run_verify_ready_timeout_test() {
 "set -euo pipefail" \
 "case \"\$*\" in" \
 "  'apply -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml') exit 0 ;;" \
-"  'get nodes -l karpenter.sh/nodepool=gpu-serving -o name') printf '%s\n' 'node/gpu-serving-1' ;;" \
+"  'get nodes -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name') printf '%s\n' 'node/gpu-serving-1' ;;" \
 "  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
 "  *) exit 0 ;;" \
@@ -222,7 +224,7 @@ run_verify_response_timeout_test() {
 "set -euo pipefail" \
 "case \"\$*\" in" \
 "  'apply -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml') exit 0 ;;" \
-"  'get nodes -l karpenter.sh/nodepool=gpu-serving -o name') printf '%s\n' 'node/gpu-serving-1' ;;" \
+"  'get nodes -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name') printf '%s\n' 'node/gpu-serving-1' ;;" \
 "  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com' ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -278,7 +280,7 @@ run_evaluate_scale_out_timeout_test() {
 "    fi" \
 "    exit 0" \
 "    ;;" \
-"  'get nodeclaims -o name')" \
+"  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
 "      printf '%s\n' 'nodeclaim/gpu-serving-1'" \
 "    fi" \
@@ -291,6 +293,8 @@ run_evaluate_scale_out_timeout_test() {
 "    exit 0" \
 "    ;;" \
 "  'get node gpu-serving-1 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g5.xlarge'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-ondemand'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'on-demand'; exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml')" \
 "    : > \"${TEST_TMPDIR}/deployment-applied\"" \
 "    exit 0" \
@@ -366,7 +370,7 @@ run_evaluate_metric_pipeline_timeout_test() {
 "    fi" \
 "    exit 0" \
 "    ;;" \
-"  'get nodeclaims -o name')" \
+"  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
 "      printf '%s\n' 'nodeclaim/gpu-serving-1'" \
 "    fi" \
@@ -379,6 +383,8 @@ run_evaluate_metric_pipeline_timeout_test() {
 "    exit 0" \
 "    ;;" \
 "  'get node gpu-serving-1 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g5.xlarge'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-ondemand'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'on-demand'; exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml')" \
 "    : > \"${TEST_TMPDIR}/deployment-applied\"" \
 "    exit 0" \
