@@ -1,18 +1,28 @@
 # platform/tests
 
-This directory contains validation manifests for the platform.
+This directory contains the manual and scripted validation manifests for the
+platform.
 
-Active validation manifests:
+## Files
 
-- `gpu-test.yaml` to verify GPU scheduling and `nvidia-smi`
-- `gpu-load-test.yaml` to drive `vllm_requests_running` high enough for HPA scale-out
-- `gpu-warm-placeholder.yaml` to keep one on-demand serving GPU node alive for
-  the `warm-1` evaluation profile without consuming the GPU
+- `gpu-test.yaml`: manual GPU smoke test that validates scheduling and
+  `nvidia-smi`
+- `gpu-load-test.yaml`: k6 burst job used by `./scripts/evaluate`
+- `gpu-warm-placeholder.yaml`: tiny deployment that keeps one on-demand serving
+  node alive for the `warm-1` profile without requesting a GPU
 
-`gpu-load-test.yaml` is now part of the scripted evaluation path:
+## How They Are Used
 
-- `./scripts/evaluate --profile zero-idle`
-- `./scripts/evaluate --profile warm-1`
+`./scripts/verify` is the fast default cold-start proof and does not use the
+manifests in this directory.
 
-Use `./scripts/verify` for the fast cold-start smoke test and the manifests in
-this directory when you want additional manual checks.
+`./scripts/evaluate` does use them:
+
+- `gpu-load-test.yaml` is the burst generator that drives the autoscaling path
+- `gpu-warm-placeholder.yaml` is applied only for the `warm-1` profile
+
+## Why The Load Test Matters
+
+The k6 job uses a ramping arrival-rate pattern so it keeps pressure on the
+service even as latency rises. That makes HPA scale-out and second-node
+provisioning much easier to measure consistently.

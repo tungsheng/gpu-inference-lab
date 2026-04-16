@@ -1,26 +1,60 @@
-# Dynamic GPU Serving Path
+# Dynamic GPU Serving
 
-This doc summarizes the current serving milestone. For the runnable workflow,
-use [dev-environment.md](dev-environment.md).
+This document captures the milestone the repo has already reached: GPU serving
+is no longer a static manifest exercise. It is a scripted, measurable, and
+publicly reachable serving workflow.
 
-## What The Repo Now Proves
+## What Is Proven
 
-- cold-start serving from zero GPU nodes
-- load-aware scale-out to a second replica and second GPU node
-- operator-grade visibility into latency, queue depth, and GPU utilization
+The project now proves all of the following in one repo:
+
+- a public inference edge through ALB plus Kubernetes ingress
+- a real vLLM deployment instead of a placeholder GPU pod
+- Karpenter-owned GPU capacity with no managed GPU node group
+- observability and custom metrics in the default scripted path
+- two experiment profiles: `zero-idle` and `warm-1`
+
+That makes the repository a credible ML platform lab rather than only a cluster
+bootstrap demo.
+
+## Why This Milestone Matters
+
+The important improvement is not just that GPU nodes launch. It is that the
+repo can now answer operational questions:
+
+- can the first public request succeed from a zero-GPU baseline?
+- can burst traffic drive replica scale-out?
+- does scale-out trigger a second GPU node?
+- what do latency, throughput, and GPU utilization look like during the burst?
+- what is the latency-versus-idle-cost tradeoff of keeping one warm GPU node?
 
 ## Where The Pieces Live
 
-- `platform/inference/` contains the vLLM deployment, service, ingress, and HPA
-- `platform/karpenter/` contains the serving and warm-profile GPU capacity manifests
-- `platform/observability/` contains Prometheus, Grafana, Prometheus Adapter, dashboards, Pushgateway, and GPU metrics exporters
-- `platform/tests/` contains the manual GPU smoke manifest and the burst load job
-- `scripts/evaluate` is the report-producing proof path for burst behavior
+- `platform/inference/`: vLLM deployment, service, ingress, and HPA
+- `platform/karpenter/`: shared GPU node class and serving `NodePool`s
+- `platform/observability/`: Prometheus, Grafana, adapter, dashboards,
+  Pushgateway, and GPU exporters
+- `platform/tests/`: load generator, warm placeholder, and manual GPU smoke
+  manifest
+- `scripts/verify`: cold-start validation path
+- `scripts/evaluate`: burst evaluation and report generation path
 
-## What Success Looks Like
+## What The Current Proof Chain Looks Like
 
-- `kubectl get hpa -n app` shows desired replicas increase to `2`
-- `kubectl get nodeclaims` shows a second `NodeClaim` during the burst
-- `kubectl get nodes -l workload=gpu` grows to two GPU nodes
-- the second vLLM replica becomes `Ready`
-- the report captures first-response latency, p95 latency, queue depth, GPU utilization, and cost tradeoffs
+Success for the dynamic serving path looks like:
+
+- one pending vLLM pod triggers Karpenter capacity
+- one GPU node joins and exposes `nvidia.com/gpu`
+- one vLLM replica becomes Ready
+- the public `/v1/completions` path returns `200`
+- the HPA raises desired replicas to `2`
+- a second serving `NodeClaim` and second GPU node appear
+- the second replica becomes Ready
+- the report captures timing, latency, utilization, and cost
+
+## What Is Still Missing
+
+The repo has dynamic GPU serving, but it does not yet have the right autoscaling
+signal. The HPA still scales from `vllm_requests_running`, which means it reacts
+to admitted work instead of total pressure. The next milestone is to make the
+control loop capacity-aware, not merely to add more AWS surface area.

@@ -1,27 +1,49 @@
 # GPU Bin Packing
 
-## Objective
+## Why This Matters
 
-GPU bin packing is about placing workloads so expensive accelerator capacity is used efficiently instead of being stranded on oversized nodes.
+Once capacity-aware autoscaling is in place, the next question is no longer
+"can I launch another GPU node?" It becomes "am I using the GPU nodes I launch
+efficiently?"
 
-## Problem example
+That is the bin-packing problem for this repo.
+
+## The Failure Mode
 
 Bad outcome:
 
-- One pod that needs a single GPU lands on a node with four GPUs.
-- The remaining capacity stays unusable because requests, memory, or scheduling rules prevent additional pods from sharing the node.
+- one inference pod lands on a node shape that has much more GPU capacity than
+  the workload can use
+- the remaining GPU, memory, or CPU headroom is stranded
+- cost rises without a proportional latency or throughput gain
 
 Better outcome:
 
-- Node size and pod shape are aligned so several inference workers can share a larger node when that reduces waste.
+- pod shape and node shape are intentionally matched
+- one GPU can serve multiple useful active requests
+- scaling decisions reflect capacity per GPU, not just pod count
 
-## What this project should eventually demonstrate
+## What This Repo Should Eventually Prove
 
-- Intentional pod resource requests
-- NodePool constraints that allow several useful GPU shapes
-- Scheduling rules that avoid leaving large nodes mostly empty
-- Observability that shows per-node GPU utilization instead of only pod counts
+The project will be ready to claim a stronger efficiency story when it can show:
 
-## Documentation checkpoint
+- one GPU can sustain a measurable number of active requests
+- per-node GPU utilization explains whether a node was saturated or underused
+- multiple node shapes or placement patterns reveal useful packing tradeoffs
+- cost per burst improves when the platform uses capacity more efficiently
 
-Milestone 11 is complete only when the repository can explain not just that nodes launch, but that the launched nodes are a sensible fit for the workload mix.
+## Good Follow-On Experiments
+
+After Milestone 9, likely experiments include:
+
+- comparing one-pod-per-GPU against multi-request-per-GPU tuning
+- introducing larger node shapes where packing tradeoffs are visible
+- reporting useful work per GPU alongside latency and cost
+- using dashboards and reports to explain stranded capacity, not just launched
+  capacity
+
+## Success Criteria
+
+This milestone is complete only when the repo can explain not just that GPU
+nodes launched, but that the chosen node shapes and serving settings were a
+sensible fit for the observed workload.

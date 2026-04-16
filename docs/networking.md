@@ -1,32 +1,42 @@
 # Networking
 
-## Current Network Design
+## Current Network Layout
 
-The current dev environment provisions:
+The dev environment provisions one VPC in `us-west-2` with:
 
-- one VPC in `us-west-2`
 - two public subnets
 - two private subnets
 - one Internet Gateway
 - one NAT Gateway
-- public and private route tables
+- separate public and private route tables
 
-The current CIDR layout in `infra/env/dev/main.tf` is:
+Current CIDR plan from `infra/env/dev/main.tf`:
 
 - VPC: `10.0.0.0/16`
 - public subnets: `10.0.1.0/24`, `10.0.2.0/24`
 - private subnets: `10.0.11.0/24`, `10.0.12.0/24`
 - availability zones: `us-west-2a`, `us-west-2c`
 
-## Packet Flow
+## Why The Layout Matters
 
-Ingress flow:
+The repo is testing a public inference edge without putting worker nodes
+directly on the public internet:
+
+- the ALB is created in public subnets
+- EKS worker nodes live in private subnets
+- outbound internet access from worker nodes uses the NAT Gateway
+
+That gives the project a realistic edge-to-private-workload topology.
+
+## Traffic Paths
+
+Inbound inference traffic:
 
 ```text
 Client
    |
    v
-AWS ALB
+Internet-facing ALB
    |
    v
 Kubernetes Ingress
@@ -35,10 +45,10 @@ Kubernetes Ingress
 ClusterIP Service
    |
    v
-Pods in private-subnet worker nodes
+Pods on private-subnet worker nodes
 ```
 
-Egress flow from worker nodes:
+Outbound traffic from worker nodes:
 
 ```text
 Private subnet node
@@ -56,46 +66,51 @@ Internet Gateway
 Internet
 ```
 
-## Public vs Private Subnets
+## Subnet Tagging
 
-Public subnets:
+The VPC module applies the tags the platform needs:
 
-- host the NAT Gateway
-- are tagged for internet-facing load balancers
-- allow ALB resources to be created by the AWS Load Balancer Controller
+- public subnets are tagged for internet-facing load balancers
+- private subnets are tagged for internal load balancers and Karpenter
+  discovery
+- the cluster tag is applied to both public and private subnets
 
-Private subnets:
+Those tags are what let the AWS Load Balancer Controller and Karpenter place
+their resources correctly.
 
-- host the EKS worker nodes
-- host both system and GPU nodes
-- keep node networking off the public internet even when the application is publicly reachable
+## Inference Edge
 
-## Current Dev Endpoint Choice
+The public inference path is assembled from:
 
-The dev environment keeps the EKS API public:
+- the AWS Load Balancer Controller Helm release
+- `platform/inference/service.yaml`
+- `platform/inference/ingress.yaml`
+
+The ingress is configured as:
+
+- ALB-backed
+- internet-facing
+- path prefix `/v1`
+- target type `ip`
+
+That means the repo is validating a real HTTP serving edge, not just cluster
+reachability or controller installation.
+
+## Dev Control Plane Boundary
+
+The active environment keeps the EKS API public:
 
 - `endpoint_public_access = true`
 - `endpoint_public_access_cidrs = ["0.0.0.0/0"]`
 
-That choice is intentional for fast local iteration and easier demos, but it is
-**not** the production recommendation.
+This is a deliberate dev convenience for local iteration and demos. It should
+not be mistaken for the production answer.
 
-## Production Alternative
+## Production Direction
 
-A production-ready access model should move toward:
+A harder production posture should move toward:
 
 - private cluster endpoint access
-- SSM Session Manager, bastion, or VPN-based admin access
-- narrower CIDR allowlists for any remaining public exposure
-
-## Inference Edge
-
-The current public inference path is implemented with:
-
-- `platform/controller/aws-load-balancer-controller/service-account.yaml`
-- Helm release `aws-load-balancer-controller`
-- `platform/inference/service.yaml`
-- `platform/inference/ingress.yaml`
-
-This validates the real inference traffic path from ALB to the GPU-backed
-service, not just controller installation.
+- SSM Session Manager, bastion, or VPN-based administration
+- narrower public CIDR allowlists
+- a clearer split between public inference traffic and private operator access

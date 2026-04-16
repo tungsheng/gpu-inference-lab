@@ -1,74 +1,96 @@
 # Cost Optimization
 
-## Baseline Cost Posture
+## Cost Posture Today
 
-The repo still defaults to a **zero-idle GPU baseline**:
+The repo is built around a zero-idle default:
 
 - system nodes stay up all the time
-- GPU nodes appear only when a workload requests `nvidia.com/gpu`
-- when the workload disappears, Karpenter can consolidate the empty GPU node
-  back down
+- serving GPU nodes appear only when a workload requests `nvidia.com/gpu`
+- empty GPU nodes are eligible for Karpenter consolidation
 
-That gives you low idle GPU cost at the price of cold-start latency.
+That keeps idle GPU spend low, but it pushes first-request latency into the
+user experience.
 
-## The Tradeoff This Milestone Measures
+## The Main Tradeoff
 
-The repository now automates the first real cost/latency comparison:
+The scripted evaluation compares two practical postures:
 
-- `./scripts/evaluate --profile zero-idle`
-- `./scripts/evaluate --profile warm-1`
+| Profile | Idle GPU cost | First-response latency | When it makes sense |
+| --- | --- | --- | --- |
+| `zero-idle` | lowest | highest | sparse traffic, aggressive cost control |
+| `warm-1` | higher | lower | frequent bursts, faster first response matters |
 
-The `zero-idle` profile measures:
+Run both with:
 
-- first GPU node latency from zero
-- first public response latency from zero
-- burst behavior when the HPA scales from one to two replicas
-- return to zero GPU nodes after cleanup
+```bash
+./scripts/evaluate --profile zero-idle
+./scripts/evaluate --profile warm-1
+```
 
-The `warm-1` profile measures:
+## Mixed Capacity Story
 
-- the same burst path with one warm GPU node already present
-- lower first-response latency because node launch is already paid
-- the explicit idle-cost penalty of keeping one GPU node warm
+The serving path is no longer all on-demand:
 
-## What The Reports Capture
+- `gpu-serving-spot` is the preferred path for fresh burst capacity
+- `gpu-serving-ondemand` remains available for the warm baseline and fallback
+- `warm-1` intentionally keeps the baseline on on-demand capacity so the idle
+  anchor is stable
 
-Each evaluation report writes:
+That is the right framing for an ML serving lab: cost and latency are tied to
+both how many nodes you keep warm and what capacity type you use when bursts
+arrive.
 
-- first GPU node timing
-- first GPU capacity type
-- first Ready replica timing
-- first public response timing
+## What The Reports Measure
+
+Each evaluation report includes:
+
+- first and second GPU node timing
+- first and second GPU capacity type
+- first response timing
 - HPA scale-out timing
-- second GPU node timing
-- second GPU capacity type
-- second Ready replica timing
-- p95 latency during burst
-- GPU utilization during burst
-- peak active nodeclaims overall and by capacity type
-- estimated idle cost per hour for the profile, split by capacity type
-- estimated burst cost for the measured run, split by capacity type
+- p95 request latency and p95 time to first token
+- generation throughput
+- average and max GPU utilization
+- peak active serving `NodeClaim` count, split by capacity type
+- estimated idle cost per hour for the profile
+- estimated burst cost for the run, split by capacity type
 
-## Capacity Mix
+## What The Cost Estimate Actually Covers
 
-Both serving `NodePool`s currently allow:
+The estimate is intentionally narrow and deterministic:
 
-- `g4dn.xlarge`
-- `g5.xlarge`
+- it covers serving GPU node cost only
+- it uses a fixed conservative hourly price table in `scripts/evaluate`
+- it splits values by on-demand versus spot when capacity types differ
 
-The repo prefers `gpu-serving-spot` for fresh burst nodes, while
-`gpu-serving-ondemand` remains available for the warm baseline and spot
-fallback.
+It does **not** attempt to model the full AWS bill. It excludes:
 
-## Reading The Warm-Node Tradeoff
+- EKS control plane cost
+- system node cost
+- NAT Gateway and ALB cost
+- storage and data transfer
+- any pricing drift beyond the fixed table in the script
 
-The warm profile is better when:
+That makes the reports useful for relative serving experiments, not for exact
+cloud billing reconciliation.
 
-- first-response latency matters more than pure idle efficiency
-- bursts are frequent enough that you want one GPU already in the cluster
+## How To Read Results
 
-The zero-idle profile is better when:
+Prefer `zero-idle` when:
 
 - traffic is sparse
-- cost discipline matters more than the first-request penalty
-- you are comfortable paying the cold-start tax on the first burst
+- cold-start latency is acceptable
+- the main goal is minimizing idle GPU spend
+
+Prefer `warm-1` when:
+
+- cold-start latency is painful
+- bursts are frequent enough that one warm GPU node is justified
+- you want a stable on-demand baseline and can tolerate the idle cost
+
+## What Comes Next
+
+The next cost optimization step is not another pricing table. It is a better
+capacity signal. Once autoscaling is based on active pressure rather than only
+running requests, the repo will be able to reason about cost per useful unit of
+work instead of cost per launched GPU node.

@@ -1,24 +1,36 @@
 # platform/observability
 
-This directory contains the observability resources used by the default
+This directory contains the observability assets used by the default scripted
 workflow.
 
-Key pieces:
+## What Lives Here
 
-- `kube-prometheus-stack-values.yaml` for Prometheus, Grafana, node metrics, and
-  kube-state-metrics
-- `prometheus-adapter-values.yaml` for the custom-metrics API used by the vLLM
-  HPA
-- `vllm-podmonitor.yaml` for scraping vLLM request and queue metrics
-- `karpenter-podmonitor.yaml` for scraping Karpenter controller metrics
-- `dcgm-exporter.yaml` for GPU utilization metrics on GPU nodes
-- `pushgateway.yaml` for experiment summary metrics
-- `dashboards/*.yaml` for Grafana dashboards imported by the Grafana sidecar
+- `kube-prometheus-stack-values.yaml`: Prometheus, Grafana, kube-state-metrics,
+  and cluster metrics configuration
+- `prometheus-adapter-values.yaml`: custom-metrics API rule configuration
+- `vllm-podmonitor.yaml`: vLLM scrape target
+- `karpenter-podmonitor.yaml`: Karpenter scrape target
+- `dcgm-exporter.yaml`: GPU utilization exporter and `ServiceMonitor`
+- `pushgateway.yaml`: experiment summary metric sink
+- `dashboards/*.yaml`: Grafana dashboards imported through the sidecar
 
-`./scripts/up` installs this stack.
+## How The Repo Uses It
 
-`./scripts/evaluate` depends on it to prove:
+`./scripts/up` installs this stack by default so the repo can treat
+observability as part of the main platform story rather than a manual add-on.
 
-- running-request-driven HPA scale-out
-- burst latency and throughput measurements
-- GPU utilization and saturation visibility
+`./scripts/evaluate` depends on it for:
+
+- HPA metric preflight through Prometheus Adapter
+- latency, TTFT, throughput, and queue-related metrics
+- GPU utilization visibility through DCGM exporter
+- experiment summary metrics pushed to Pushgateway
+
+## Current Custom Metric Limitation
+
+Today the adapter exposes `vllm_requests_running` to the HPA. Prometheus and the
+serving dashboard already observe more than that, including waiting requests,
+but the autoscaling pipeline has not yet been upgraded to use a capacity-aware
+active-pressure metric.
+
+That gap is intentional documentation now, not drift.

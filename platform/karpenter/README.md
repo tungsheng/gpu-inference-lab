@@ -1,33 +1,50 @@
 # platform/karpenter
 
-This directory contains the Kubernetes manifests for the repo's Karpenter-managed
-GPU capacity:
+This directory contains the Kubernetes manifests for Karpenter-managed GPU
+capacity:
 
 - `serviceaccount.yaml`
 - `nodeclass-gpu-serving.yaml`
 - `nodepool-gpu-serving-ondemand.yaml`
 - `nodepool-gpu-serving-spot.yaml`
-- `nodepool-gpu-warm.yaml` (legacy cleanup compatibility)
+- `nodepool-gpu-warm.yaml` for legacy cleanup compatibility
 
-These manifests assume the current dev cluster name `gpu-inference` and the
-Terraform-created Karpenter node role `gpu-inference-karpenter-node`.
+## Current Capacity Story
 
-The GPU `EC2NodeClass` is pinned to the Amazon EKS AL2023 NVIDIA AMI release
-`amazon-eks-node-al2023-x86_64-nvidia-1.35-v20260304` so the dynamic path
-stays reproducible instead of drifting to the latest GPU image automatically.
-
-The serving path now uses two dynamic `NodePool`s that share the same
+The active serving path uses two real `NodePool`s that share one GPU
 `EC2NodeClass`:
 
-- `gpu-serving-ondemand` for warm baseline and fallback capacity
-- `gpu-serving-spot` for preferred burst capacity
+- `gpu-serving-ondemand`: warm baseline and fallback serving path
+- `gpu-serving-spot`: preferred burst capacity
 
-Both pools launch `g4dn.xlarge` or `g5.xlarge`, apply `workload=gpu` /
-`serving=vllm`, taint nodes with `gpu=true:NoSchedule`, and consolidate them
-away after they empty.
+Both pools:
 
-`./scripts/evaluate --profile warm-1` now warms capacity with
-`platform/tests/gpu-warm-placeholder.yaml` so it exercises the same dynamic
-mixed-capacity provisioning path used by the real inference deployment. The
-legacy warm `NodePool` manifest remains here so `./scripts/down` can clean up
-older experiments safely.
+- allow `g4dn.xlarge` and `g5.xlarge`
+- label nodes with `workload=gpu` and `serving=vllm`
+- taint nodes with `gpu=true:NoSchedule`
+- rely on the same GPU AMI and node role
+
+The spot pool has a higher weight, so fresh burst capacity should prefer spot
+when the market allows it.
+
+## Shared GPU NodeClass
+
+`nodeclass-gpu-serving.yaml` pins the serving fleet to:
+
+- AL2023 NVIDIA EKS AMI
+- encrypted `120Gi` root volume
+- IMDSv2-required metadata settings
+- subnets and security groups discovered through cluster tags
+
+That keeps the dynamic path reproducible instead of drifting to the latest GPU
+AMI automatically.
+
+## Warm Profile Note
+
+The active `warm-1` workflow does **not** rely on `nodepool-gpu-warm.yaml`.
+Instead, `./scripts/evaluate --profile warm-1` uses
+`platform/tests/gpu-warm-placeholder.yaml` to keep one on-demand serving node
+alive through the same serving path as the real workload.
+
+The legacy warm `NodePool` manifest remains here so `./scripts/down` can clean
+up older experiments safely.

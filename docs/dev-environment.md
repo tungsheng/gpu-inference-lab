@@ -1,12 +1,37 @@
 # Dev Environment Workflow
 
-This repository supports one active environment at `infra/env/dev`.
+This repository has one active environment: `infra/env/dev`. The dev workflow
+is intentionally opinionated:
+
+1. bring up the cluster and platform services
+2. prove the cold-start path with `./scripts/verify`
+3. measure burst behavior with `./scripts/evaluate`
+4. tear the environment down cleanly
 
 ## Prerequisites
 
-- Terraform, AWS CLI, `kubectl`, and `helm`
+- Terraform
+- AWS CLI
+- `kubectl`
+- `helm`
 - AWS credentials for the target account
-- the current region `us-west-2`
+- access to `us-west-2`
+
+## Happy Path
+
+```bash
+./scripts/up
+./scripts/verify
+./scripts/evaluate --profile zero-idle
+./scripts/evaluate --profile warm-1
+./scripts/down
+```
+
+Run the local shell tests at any point with:
+
+```bash
+./test/run.sh
+```
 
 ## Bring The Environment Up
 
@@ -21,74 +46,102 @@ Common variants:
 ./scripts/up -var-file=dev.tfvars
 ```
 
-What `./scripts/up` does:
+`./scripts/up` performs the full platform bootstrap:
 
-1. Runs `terraform -chdir=infra/env/dev init -input=false`
-2. Runs `terraform -chdir=infra/env/dev apply`
-3. Updates local kubeconfig from Terraform outputs
-4. Installs the AWS Load Balancer Controller
-5. Installs Prometheus, Grafana, Prometheus Adapter, dashboards, and GPU metrics exporters
-6. Installs Karpenter CRDs and controller
-7. Applies the GPU `EC2NodeClass` plus both serving `NodePool`s
-8. Applies the NVIDIA device plugin
-9. Ensures the `app` namespace exists
-10. Applies the inference service and public ingress
-11. Waits for the ingress hostname and prints the public URL
+1. runs `terraform init` and `terraform apply` in `infra/env/dev`
+2. loads cluster outputs and updates local kubeconfig
+3. installs the AWS Load Balancer Controller
+4. installs Prometheus, Grafana, Prometheus Adapter, Pushgateway, dashboards,
+   and GPU exporters
+5. installs Karpenter CRDs and controller
+6. applies the shared GPU `EC2NodeClass` and both serving `NodePool`s
+7. applies the NVIDIA device plugin
+8. ensures the `app` namespace exists
+9. applies the public inference service and ingress
+10. waits for the ingress hostname and prints the public URL
 
-Expected result:
+Expected state after `./scripts/up`:
 
-- system nodes are present
+- system nodes are present and labeled `workload=system`
 - Prometheus, Grafana, and the custom metrics API are Ready
 - Karpenter is Ready
 - the public inference ingress has a hostname
-- there are still zero GPU worker nodes until a GPU workload is applied
+- GPU node count is still `0`
 
-## Run The Cold-Start Smoke Test
+## Prove The Cold-Start Path
 
 ```bash
 ./scripts/verify
 ```
 
-The verify flow:
+`./scripts/verify` is the fastest proof that the platform works end to end:
 
-1. Applies the deployment-only vLLM manifest
-2. Waits for one GPU node to appear
-3. Waits for the deployment to become Ready
-4. Repeats a public `/v1/completions` request until it gets a `200`
-5. Deletes the deployment
-6. Waits for the GPU node count to return to zero
-7. Prints a short timing summary
+1. applies only `platform/inference/vllm-openai.yaml`
+2. waits for the first GPU node and first Ready replica
+3. retries the public `/v1/completions` path until it gets a `200`
+4. deletes the deployment
+5. waits for GPU capacity to return to `0`
+6. prints timing for first node, Ready replica, first response, and cleanup
 
-## Run The Load-Aware Evaluation
+Use this path when you want to validate:
 
-Compare the zero-idle baseline:
+- GPU provisioning from a zero-idle baseline
+- vLLM startup and readiness
+- public ingress routing
+- cleanup back to zero GPU nodes
+
+## Run The Burst Evaluation
+
+Zero-idle baseline:
 
 ```bash
 ./scripts/evaluate --profile zero-idle
 ```
 
-Compare the one-warm-node profile:
+One warm GPU node baseline:
 
 ```bash
 ./scripts/evaluate --profile warm-1
 ```
 
-The evaluate flow:
+The evaluation workflow is the deeper platform exercise:
 
-1. Confirms the public edge and custom metrics API are ready
-2. Applies the vLLM deployment
-3. Waits for the first replica and first successful public response
-4. Preflights the `vllm_requests_running` metric and then applies the HPA
-5. Runs the checked-in k6 load job
-6. Waits for HPA desired replicas to reach `2`, plus the second `NodeClaim`,
-   GPU node, and Ready replica
-7. Waits for the burst to complete and then scale back in
-8. Cleans up the workload and returns the cluster to zero GPU nodes
-9. Writes Markdown and JSON reports under `docs/reports/`
+1. confirms the public edge and custom metrics API are available
+2. applies the vLLM deployment
+3. waits for the first Ready replica and first successful public response
+4. preflights the `vllm_requests_running` custom metric and applies the HPA
+5. runs the checked-in k6 burst job from `platform/tests/gpu-load-test.yaml`
+6. waits for HPA desired replicas to reach `2`
+7. waits for the second serving `NodeClaim`, second GPU node, and second Ready
+   replica
+8. waits for the burst to finish and scale back in
+9. deletes the workload and profile-specific warm capacity
+10. collects Prometheus and DCGM metrics and writes reports
+
+Profile behavior:
+
+| Profile | Baseline | What it measures |
+| --- | --- | --- |
+| `zero-idle` | zero GPU nodes before the run | lowest idle cost, highest cold-start penalty |
+| `warm-1` | one on-demand serving node held by `gpu-warm-placeholder` | lower first-response latency, higher idle spend |
+
+Reports are written to:
+
+- `docs/reports/evaluate-<profile>-<timestamp>.md`
+- `docs/reports/evaluate-<profile>-<timestamp>.json`
+
+Those reports capture:
+
+- timeline events for node launch, readiness, scale-out, scale-in, and cleanup
+- p95 request latency and p95 time to first token
+- generation throughput
+- average and max GPU utilization
+- peak serving `NodeClaim` count, split by capacity type
+- estimated serving GPU cost for the run
 
 ## Manual Checks
 
-Watch the platform after `./scripts/up`:
+After `./scripts/up`, inspect the platform with:
 
 ```bash
 kubectl get nodes -L workload,node.kubernetes.io/instance-type -o wide
@@ -96,32 +149,22 @@ kubectl get deployment karpenter -n karpenter
 kubectl get pods -n monitoring
 kubectl get apiservice v1beta1.custom.metrics.k8s.io
 kubectl get ingress -n app -o wide
+kubectl get nodepool,ec2nodeclass
 ```
 
-Open Grafana:
+Open Grafana locally:
 
 ```bash
 kubectl port-forward -n monitoring deployment/kube-prometheus-stack-grafana 3000:3000
 ```
 
-Run a manual GPU smoke test:
+Run the manual GPU smoke manifest:
 
 ```bash
 kubectl apply -f platform/tests/gpu-test.yaml
 kubectl logs -n app gpu-test
 kubectl delete -f platform/tests/gpu-test.yaml
 ```
-
-## Dev Access Boundary
-
-The dev environment intentionally keeps a public EKS API endpoint so local
-iteration stays simple. Treat that as a dev-only choice.
-
-The production direction should be:
-
-- private endpoint access
-- SSM, bastion, or VPN-based cluster administration
-- tighter public-access CIDR controls
 
 ## Tear The Environment Down
 
@@ -135,16 +178,30 @@ Common variant:
 ./scripts/down -auto-approve
 ```
 
-What `./scripts/down` does:
+`./scripts/down` performs the inverse lifecycle:
 
-1. Runs `terraform -chdir=infra/env/dev init -input=false`
-2. Reconnects to the cluster from Terraform outputs
-3. Deletes load-test, HPA, ingress, service, and deployment resources
-4. Waits for the ALB to disappear
-5. Deletes the warm legacy `NodePool`, both serving `NodePool`s, and the `EC2NodeClass`
-6. Removes the observability stack
-7. Uninstalls Karpenter and the NVIDIA device plugin
-8. Runs `terraform -chdir=infra/env/dev destroy`
+1. runs `terraform init` in `infra/env/dev`
+2. reconnects to the cluster from Terraform outputs
+3. removes the load job, warm placeholder, HPA, ingress, service, and vLLM
+   deployment
+4. waits for the ALB to be deleted
+5. removes the legacy warm `NodePool`, both serving `NodePool`s, and the shared
+   GPU `EC2NodeClass`
+6. uninstalls the observability stack
+7. uninstalls Karpenter and the NVIDIA device plugin
+8. runs `terraform destroy`
 
-If the script cannot reach the cluster, it stops before `terraform destroy` and
-prints the exact fallback destroy command to run manually.
+If the script cannot reconnect to the cluster, it stops before Terraform
+destroy and prints the exact fallback destroy command.
+
+## Dev Boundary
+
+This environment is optimized for iteration, not hardening. In particular, the
+EKS API stays public:
+
+- `endpoint_public_access = true`
+- `endpoint_public_access_cidrs = ["0.0.0.0/0"]`
+
+Treat that as a dev-only choice. Production direction should include private
+cluster access, tighter allowlists, and a documented SSM, bastion, or VPN-based
+administration path.
