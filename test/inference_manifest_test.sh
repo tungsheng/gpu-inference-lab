@@ -7,7 +7,10 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "${SCRIPT_DIR}/helpers/test-helpers.sh"
 
 DEPLOYMENT_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/inference/vllm-openai.yaml")
-HPA_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/inference/hpa.yaml")
+RUNNING_HPA_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/inference/hpa.yaml")
+ACTIVE_PRESSURE_HPA_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/inference/hpa-active-pressure.yaml")
+ADAPTER_VALUES_CONTENT=$(cat "${REPO_ROOT}/platform/observability/prometheus-adapter-values.yaml")
+DASHBOARD_CONTENT=$(cat "${REPO_ROOT}/platform/observability/dashboards/experiment-dashboard.yaml")
 LOAD_TEST_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/tests/gpu-load-test.yaml")
 WARM_PLACEHOLDER_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml")
 ONDEMAND_NODEPOOL_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml")
@@ -16,16 +19,27 @@ SCRIPT_CONTENT=$(cat "${REPO_ROOT}/scripts/_common.sh" "${REPO_ROOT}/scripts/up"
 
 assert_contains "${DEPLOYMENT_MANIFEST_CONTENT}" 'kind: Deployment' "the default inference manifest should remain the deployment entrypoint"
 assert_not_contains "${DEPLOYMENT_MANIFEST_CONTENT}" 'kind: HorizontalPodAutoscaler' "the default inference manifest should no longer include the HPA"
-assert_contains "${HPA_MANIFEST_CONTENT}" 'kind: HorizontalPodAutoscaler' "the optional autoscaling manifest should define the HPA"
-assert_contains "${HPA_MANIFEST_CONTENT}" 'name: vllm_requests_running' "the optional autoscaling manifest should use the running-request metric target"
-assert_contains "${HPA_MANIFEST_CONTENT}" 'averageValue: "128"' "the optional autoscaling manifest should scale out once a single replica is carrying sustained high concurrency"
-assert_contains "$(cat "${REPO_ROOT}/platform/observability/prometheus-adapter-values.yaml")" 'vllm:num_requests_running' "the adapter should expose the running-request metric the HPA depends on"
-assert_contains "$(cat "${REPO_ROOT}/platform/observability/prometheus-adapter-values.yaml")" 'max_over_time' "the adapter should keep a short running-request window so the HPA can see transient saturation"
+assert_contains "${RUNNING_HPA_MANIFEST_CONTENT}" 'kind: HorizontalPodAutoscaler' "the running-policy manifest should define the HPA"
+assert_contains "${RUNNING_HPA_MANIFEST_CONTENT}" 'name: vllm_requests_running' "the running-policy HPA should use the running-request metric target"
+assert_contains "${RUNNING_HPA_MANIFEST_CONTENT}" 'averageValue: "128"' "the running-policy HPA should preserve the existing concurrency target"
+assert_contains "${ACTIVE_PRESSURE_HPA_MANIFEST_CONTENT}" 'kind: HorizontalPodAutoscaler' "the active-pressure manifest should define the HPA"
+assert_contains "${ACTIVE_PRESSURE_HPA_MANIFEST_CONTENT}" 'name: vllm_requests_active' "the active-pressure HPA should target the combined active-request metric"
+assert_contains "${ACTIVE_PRESSURE_HPA_MANIFEST_CONTENT}" 'averageValue: "4"' "the active-pressure HPA should keep the checked-in default target"
+assert_contains "${ADAPTER_VALUES_CONTENT}" 'vllm:num_requests_running' "the adapter should keep exposing the running-request metric"
+assert_contains "${ADAPTER_VALUES_CONTENT}" 'vllm:num_requests_waiting' "the adapter should reference the waiting-request metric for active pressure"
+assert_contains "${ADAPTER_VALUES_CONTENT}" 'vllm_requests_active' "the adapter should expose the combined active-request metric"
+assert_contains "${ADAPTER_VALUES_CONTENT}" 'max_over_time' "the adapter should keep a short smoothing window so the HPA can see transient saturation"
+assert_contains "${DASHBOARD_CONTENT}" 'max by (profile, policy)' "the experiment dashboard should group series by both profile and policy"
+assert_contains "${DASHBOARD_CONTENT}" '{{profile}}/{{policy}}' "the experiment dashboard legend should distinguish policies inside the same profile"
 assert_contains "${SCRIPT_CONTENT}" 'platform/observability' "the platform lifecycle should now reference observability manifests"
 assert_contains "${SCRIPT_CONTENT}" 'platform/tests/gpu-load-test.yaml' "the evaluation flow should reference the load test manifest"
 assert_contains "${SCRIPT_CONTENT}" 'platform/tests/gpu-warm-placeholder.yaml' "the evaluation flow should reference the warm placeholder workload"
 assert_contains "${SCRIPT_CONTENT}" 'platform/karpenter/nodepool-gpu-serving-ondemand.yaml' "the platform lifecycle should install the on-demand serving NodePool"
 assert_contains "${SCRIPT_CONTENT}" 'platform/karpenter/nodepool-gpu-serving-spot.yaml' "the platform lifecycle should install the spot serving NodePool"
+assert_contains "${SCRIPT_CONTENT}" 'platform/inference/hpa-active-pressure.yaml' "the evaluation flow should know about the active-pressure HPA manifest"
+assert_contains "${SCRIPT_CONTENT}" '--policy running|active-pressure|compare' "the evaluation CLI should expose the policy selector"
+assert_contains "${SCRIPT_CONTENT}" '--active-target' "the evaluation CLI should expose the active-pressure target override"
+assert_contains "${SCRIPT_CONTENT}" '/metrics/job/gpu-serving-measure/profile/${EVALUATION_PROFILE}/policy/${CURRENT_POLICY}' "the evaluation flow should push summary metrics with policy labels"
 assert_not_contains "${SCRIPT_CONTENT}" 'platform/test-app' "the baseline scripts should not reference the sample app"
 assert_not_contains "${LOAD_TEST_MANIFEST_CONTENT}" 'CPU-based HPA scale-out' "the load test should no longer describe the old CPU-based scale-out path"
 assert_contains "${LOAD_TEST_MANIFEST_CONTENT}" 'executor: "ramping-arrival-rate"' "the load test should use an arrival-rate executor so latency does not suppress the generated backlog"

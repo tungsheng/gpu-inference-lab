@@ -10,8 +10,9 @@ results.
 | --- | --- | --- |
 | `./scripts/up` | you need the platform online | cluster, controllers, observability, Karpenter, GPU prerequisites, and public edge are ready |
 | `./scripts/verify` | you want the fastest end-to-end validation | cold-start from zero GPU nodes, first Ready replica, first successful public completion, cleanup back to zero |
-| `./scripts/evaluate --profile zero-idle` | you want the lowest-idle-cost burst experiment | HPA-driven scale-out from a true zero-GPU baseline |
-| `./scripts/evaluate --profile warm-1` | you want to compare latency against a warm baseline | same burst experiment with one on-demand serving node already present |
+| `./scripts/evaluate --profile zero-idle` | you want the original baseline experiment | running-request HPA from a true zero-GPU baseline |
+| `./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4` | you want the capacity-aware experiment directly | active-pressure HPA from the same zero-GPU baseline |
+| `./scripts/evaluate --profile warm-1 --policy compare --active-target 6` | you want the most informative operator readout | sequential running versus active-pressure comparison with one warm on-demand serving node |
 | `./scripts/down` | you want a clean teardown | runtime surface, observability, capacity definitions, and Terraform infrastructure are removed |
 
 ## Expected States
@@ -34,8 +35,10 @@ After `./scripts/evaluate`:
 
 - one burst caused the HPA to scale from `1` to `2`
 - a second serving `NodeClaim` and second GPU node appeared
-- Markdown and JSON reports were written under `docs/reports/`
-- profile-specific warm capacity was cleaned up
+- single-policy runs wrote `evaluate-<profile>-<policy>-<timestamp>.md` and
+  `.json`
+- compare runs wrote the two per-policy artifacts plus a compare summary report
+- the overall workflow returned profile-specific warm capacity to zero GPU nodes
 
 ## Questions This Repo Can Answer Today
 
@@ -43,10 +46,11 @@ After `./scripts/evaluate`:
 - Can a pending GPU workload trigger Karpenter provisioning?
 - How long does the first GPU node take to appear?
 - How long does the first pod take to become Ready?
-- Can `vllm_requests_running` drive HPA scale-out?
+- How does `vllm_requests_running` compare with
+  `vllm_requests_active = waiting + running` as the HPA signal?
 - Does scale-out trigger a second serving node?
-- What do p95 latency, TTFT, throughput, and GPU utilization look like during a
-  controlled burst?
+- What do p95 latency, TTFT, peak waiting requests, peak active requests,
+  throughput, and GPU utilization look like during a controlled burst?
 - What do you gain or pay by keeping one warm GPU node around?
 
 ## Observability And Artifacts
@@ -60,6 +64,7 @@ The scripted workflow ships with:
 - DCGM exporter metrics for GPU utilization
 - `docs/reports/*.md` and `docs/reports/*.json` outputs from
   `./scripts/evaluate`
+- Pushgateway experiment metrics labeled by both `profile` and `policy`
 
 ## What To Watch During A Run
 
@@ -80,11 +85,14 @@ kubectl port-forward -n monitoring deployment/kube-prometheus-stack-grafana 3000
 
 ## Current Limitation
 
-The current HPA uses `vllm_requests_running`. That is good enough to prove a
-working scale-out loop, but it scales from admitted work instead of total
-pressure. Queue buildup is visible in Prometheus and Grafana today, yet it is
-not the primary autoscaling signal. The roadmap moves next toward a
-capacity-aware metric such as `waiting + running`.
+The repo now compares both autoscaling policies, but the control loop is still
+intentionally simple:
+
+- queue reporting is still inferred from p95 TTFT plus peak waiting requests
+- the active-pressure target is manually tuned per experiment through
+  `--active-target`
+- the next scaling question is GPU efficiency and bin packing, not whether the
+  HPA can see pressure at all
 
 ## Dev Boundary
 

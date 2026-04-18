@@ -3,7 +3,8 @@
 This directory contains the manifests for the public inference surface:
 
 - `vllm-openai.yaml`: GPU-bound vLLM deployment
-- `hpa.yaml`: HPA for the deployment
+- `hpa.yaml`: running-request HPA baseline
+- `hpa-active-pressure.yaml`: active-pressure HPA baseline
 - `service.yaml`: stable in-cluster `ClusterIP` service
 - `ingress.yaml`: public ALB-backed `/v1` route
 
@@ -21,7 +22,8 @@ The scripts consume these manifests in different ways:
 - `./scripts/up` applies only the service and ingress so the public edge exists
   before any GPU pod is launched
 - `./scripts/verify` applies the deployment only to prove the cold-start path
-- `./scripts/evaluate` applies the deployment and HPA to prove burst scale-out
+- `./scripts/evaluate` applies the deployment plus the selected HPA policy to
+  prove burst scale-out, or runs both policies sequentially in compare mode
 
 ## Scheduling Contract
 
@@ -36,13 +38,15 @@ to land on system nodes.
 
 ## Autoscaling Today
 
-The HPA depends on the observability stack because its current target metric is
-`vllm_requests_running` from Prometheus Adapter.
+The HPA depends on the observability stack because both policies read custom pod
+metrics from Prometheus Adapter:
+
+- `hpa.yaml` uses `vllm_requests_running`
+- `hpa-active-pressure.yaml` uses `vllm_requests_active = waiting + running`
 
 That is the current repo truth:
 
-- it proves the custom-metrics control loop works
-- it does not yet represent the best autoscaling signal for bursty inference
-
-The next docs and roadmap step is to promote an active-pressure metric such as
-`waiting + running` into the HPA.
+- it proves the custom-metrics control loop works with two signals
+- it lets `./scripts/evaluate --policy compare` compare those signals directly
+- the next question is GPU efficiency, not whether active pressure can drive the
+  HPA

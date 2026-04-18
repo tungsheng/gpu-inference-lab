@@ -67,6 +67,7 @@ KARPENTER_WARM_NODEPOOL_MANIFEST="${REPO_ROOT}/platform/karpenter/nodepool-gpu-w
 NVIDIA_DEVICE_PLUGIN_MANIFEST="${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml"
 GPU_INFERENCE_DEPLOYMENT_MANIFEST="${REPO_ROOT}/platform/inference/vllm-openai.yaml"
 GPU_INFERENCE_HPA_MANIFEST="${REPO_ROOT}/platform/inference/hpa.yaml"
+GPU_INFERENCE_ACTIVE_PRESSURE_HPA_MANIFEST="${REPO_ROOT}/platform/inference/hpa-active-pressure.yaml"
 GPU_INFERENCE_SERVICE_MANIFEST="${REPO_ROOT}/platform/inference/service.yaml"
 GPU_INFERENCE_INGRESS_MANIFEST="${REPO_ROOT}/platform/inference/ingress.yaml"
 GPU_LOAD_TEST_MANIFEST="${REPO_ROOT}/platform/tests/gpu-load-test.yaml"

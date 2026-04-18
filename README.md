@@ -8,9 +8,10 @@ The repo proves two real operator paths today:
 
 - `./scripts/verify` cold-starts the public inference edge from zero GPU nodes
   and returns the cluster to zero GPU nodes after cleanup.
-- `./scripts/evaluate --profile zero-idle|warm-1` applies vLLM plus HPA, runs
-  burst load, captures latency and utilization signals, and writes Markdown and
-  JSON reports under `docs/reports/`.
+- `./scripts/evaluate --profile zero-idle|warm-1 --policy running|active-pressure|compare`
+  applies vLLM plus the selected HPA policy, runs burst load, captures latency
+  and utilization signals, and writes Markdown and JSON reports under
+  `docs/reports/`.
 
 ## Platform At A Glance
 
@@ -29,7 +30,7 @@ ClusterIP Service
    v
 vLLM Deployment
    |
-   +--> HPA on vllm_requests_running
+   +--> HPA on vllm_requests_running or vllm_requests_active
    |
    +--> Prometheus / Grafana / Prometheus Adapter / Pushgateway
    |
@@ -87,7 +88,8 @@ Run the burst evaluation path:
 
 ```bash
 ./scripts/evaluate --profile zero-idle
-./scripts/evaluate --profile warm-1
+./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
+./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ```
 
 Tear everything down:
@@ -110,9 +112,12 @@ Run the local shell tests:
 - `./scripts/verify` applies only the vLLM deployment, waits for one GPU node,
   one Ready replica, and one successful external completion, then deletes the
   workload and waits for GPU cleanup back to `0`.
-- `./scripts/evaluate` applies the vLLM deployment and HPA, runs the checked-in
-  burst load, waits for a second replica and second GPU node, collects
-  Prometheus and DCGM metrics, estimates serving-node cost, and writes reports.
+- `./scripts/evaluate` applies the vLLM deployment, selects the running or
+  active-pressure HPA policy, runs the checked-in burst load, waits for a
+  second replica and second GPU node, collects Prometheus and DCGM metrics,
+  estimates serving-node cost, and writes reports. `--policy compare` runs the
+  running baseline first and the active-pressure policy second, then writes a
+  side-by-side compare report.
 - `./scripts/down` removes runtime resources, observability, GPU capacity
   definitions, controllers, and Terraform-managed infrastructure.
 
@@ -120,21 +125,29 @@ Run the local shell tests:
 
 - How long does the first GPU node take to appear from a zero-idle baseline?
 - How long does the first public completion take to succeed?
-- Can `vllm_requests_running` drive HPA scale-out from one to two replicas?
+- How do the running-request and active-pressure HPAs compare under the same
+  burst profile?
 - Does replica growth trigger a second Karpenter `NodeClaim` and second GPU
   node?
-- What do p95 request latency, p95 time to first token, token throughput, and
-  GPU utilization look like during a controlled burst?
+- What do p95 request latency, p95 time to first token, peak waiting requests,
+  peak active requests, token throughput, and GPU utilization look like during
+  a controlled burst?
 - What is the tradeoff between `zero-idle` and `warm-1` for latency and serving
   cost?
 
-## Current Limitation
+## Current Autoscaling Story
 
-The HPA currently scales from `vllm_requests_running`. That proves the control
-loop works, but it reacts to admitted work rather than total pressure. The next
-high-leverage step for the project is capacity-aware autoscaling based on
-active pressure such as `waiting + running`, then comparing the current and new
-policies in `./scripts/evaluate`.
+The repo now ships with two HPA policies:
+
+- `running`: the original baseline that scales from `vllm_requests_running`
+- `active-pressure`: the new capacity-aware policy that scales from
+  `vllm_requests_active = waiting + running`
+
+`./scripts/evaluate --policy compare` runs both sequentially and writes
+per-policy plus side-by-side comparison reports. The remaining gap is no longer
+"can this scale?" but "is the target calibrated well enough per GPU?" Queue
+reporting still uses TTFT as a v1 proxy, and the next leverage point is
+GPU bin packing plus per-GPU efficiency work.
 
 ## Dev Boundary
 

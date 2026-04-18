@@ -39,8 +39,8 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile) (gpu_serving_measure_first_gpu_node_seconds{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}",
+              "expr": "max by (profile, policy) (gpu_serving_measure_first_gpu_node_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}",
               "refId": "A"
             }
           ],
@@ -72,8 +72,8 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile) (gpu_serving_measure_model_ready_seconds{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}",
+              "expr": "max by (profile, policy) (gpu_serving_measure_model_ready_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}",
               "refId": "A"
             }
           ],
@@ -105,8 +105,8 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile) (gpu_serving_measure_first_external_completion_seconds{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}",
+              "expr": "max by (profile, policy) (gpu_serving_measure_first_external_completion_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}",
               "refId": "A"
             }
           ],
@@ -138,8 +138,8 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile) (gpu_serving_measure_scale_down_to_zero_gpu_nodes_seconds{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}",
+              "expr": "max by (profile, policy) (gpu_serving_measure_scale_down_to_zero_gpu_nodes_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}",
               "refId": "A"
             }
           ],
@@ -171,8 +171,8 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile) (gpu_serving_measure_estimated_idle_cost_per_hour{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}",
+              "expr": "max by (profile, policy) (gpu_serving_measure_estimated_idle_cost_per_hour{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}",
               "refId": "A"
             }
           ],
@@ -204,8 +204,8 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile) (gpu_serving_measure_estimated_burst_cost{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}",
+              "expr": "max by (profile, policy) (gpu_serving_measure_estimated_burst_cost{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}",
               "refId": "A"
             }
           ],

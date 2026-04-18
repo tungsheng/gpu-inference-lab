@@ -6,7 +6,8 @@ The repo serves a real GPU-backed model through vLLM. The inference assets live
 under `platform/inference/`:
 
 - `vllm-openai.yaml`: deployment-only vLLM manifest
-- `hpa.yaml`: HPA targeting a custom pod metric
+- `hpa.yaml`: running-request HPA baseline
+- `hpa-active-pressure.yaml`: active-pressure HPA baseline
 - `service.yaml`: stable in-cluster `ClusterIP` service
 - `ingress.yaml`: public ALB-backed `/v1` path
 
@@ -15,7 +16,8 @@ The scripts use them intentionally:
 - `./scripts/up` installs the public service and ingress but does not start the
   vLLM deployment
 - `./scripts/verify` applies only the deployment
-- `./scripts/evaluate` applies both the deployment and the HPA
+- `./scripts/evaluate` applies the deployment and the selected HPA policy, or
+  both policies sequentially in compare mode
 
 ## Current Serving Stack
 
@@ -61,19 +63,22 @@ The ingress is created during `./scripts/up`, so the public edge exists before
 GPU workloads are launched. That makes `./scripts/verify` a true cold-start test
 of the serving workload instead of a mixed infrastructure bootstrap.
 
-## Autoscaling Contract Today
+## Autoscaling Policies
 
-The current HPA in `platform/inference/hpa.yaml`:
+Both HPA manifests scale the same `vllm-openai` deployment, keep
+`minReplicas: 1`, and cap at `maxReplicas: 2`.
 
-- scales the `vllm-openai` deployment
-- keeps `minReplicas: 1`
-- caps at `maxReplicas: 2`
+Running baseline in `platform/inference/hpa.yaml`:
+
 - uses the custom pod metric `vllm_requests_running`
 - targets an average value of `128`
 
-This is enough to prove a working control loop, but it is not yet the ideal
-signal. `vllm_requests_running` tracks admitted work, so it can lag behind
-queue buildup during bursty traffic.
+Active-pressure baseline in `platform/inference/hpa-active-pressure.yaml`:
+
+- uses the custom pod metric `vllm_requests_active`
+- computes pressure as `waiting + running`
+- checks in with a default average target of `4`
+- can be re-rendered at runtime through `./scripts/evaluate --active-target`
 
 ## Why `warm-1` Exists
 
@@ -98,16 +103,19 @@ With the scripted path:
 ./scripts/up
 ./scripts/verify
 ./scripts/evaluate --profile zero-idle
-./scripts/evaluate --profile warm-1
+./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
+./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ```
 
 The repo proves:
 
 - cold-start serving from zero GPU nodes
 - public ingress routing to the real inference workload
-- HPA-driven scale-out from one to two replicas
+- HPA-driven scale-out from one to two replicas with two different policy
+  signals
 - second-node provisioning through Karpenter
-- report generation for latency, throughput, utilization, and cost
+- report generation for latency, TTFT queue proxy, waiting pressure,
+  utilization, and cost
 
 ## Manual Validation
 
@@ -116,6 +124,7 @@ Apply the serving stack yourself:
 ```bash
 kubectl apply -f platform/inference/vllm-openai.yaml
 kubectl apply -f platform/inference/hpa.yaml
+kubectl apply -f platform/inference/hpa-active-pressure.yaml
 ```
 
 Watch scheduling and autoscaling:
@@ -138,8 +147,6 @@ curl "http://${EDGE_HOST}/v1/completions" \
 
 ## Next Improvement
 
-The next step is not another serving component. It is a better autoscaling
-signal. Prometheus already scrapes both waiting and running request metrics; the
-project should next promote a capacity-aware pressure metric such as
-`waiting + running` into the HPA and compare it against the current
-`vllm_requests_running` policy.
+The next step is not another serving component. It is GPU efficiency work:
+learning how many concurrent requests a single GPU-backed pod can handle before
+latency, queue pressure, or utilization say it is time to scale.

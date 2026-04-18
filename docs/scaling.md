@@ -50,37 +50,35 @@ This path answers whether the zero-idle story works at all.
 `./scripts/evaluate` is the burst-scale experiment:
 
 - applies the same vLLM deployment
-- waits for the custom metrics pipeline
-- applies the HPA
+- waits for the chosen custom-metrics pipeline
+- applies the matching HPA policy
 - runs the checked-in k6 burst job
 - waits for desired replicas to hit `2`
 - waits for a second serving `NodeClaim`, second GPU node, and second Ready
   replica
 - waits for scale-in and cleanup
-- writes reports with timing, utilization, and cost fields
+- writes per-policy or compare reports with timing, utilization, queue proxy,
+  and cost fields
 
 This path answers whether the control loop can add capacity fast enough to
 handle bursty inference traffic.
 
-## Current Autoscaling Signal
+## Current Autoscaling Signals
 
-Today the HPA scales on:
+Today the repo supports two HPA policies:
 
-- metric: `vllm_requests_running`
-- target type: pod average value
-- target value: `128`
-- replica range: `1` to `2`
+| Policy | Metric | Target type | Default target | Replica range | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| `running` | `vllm_requests_running` | pod average value | `128` | `1` to `2` | preserve the original admitted-work baseline |
+| `active-pressure` | `vllm_requests_active` | pod average value | `4` | `1` to `2` | scale from `waiting + running` pressure |
 
 That is a meaningful milestone because it proves:
 
 - Prometheus is scraping real vLLM metrics
-- Prometheus Adapter is exposing a working custom metric
-- the HPA is acting on that metric
-- replica growth can force Karpenter to launch another GPU node
-
-The weak point is the signal itself. `vllm_requests_running` is admitted work,
-not total pressure. Inference queues can build before that number captures the
-real problem.
+- Prometheus Adapter is exposing both autoscaling metrics
+- the HPA can act on either metric without changing the serving deployment
+- `./scripts/evaluate --policy compare` can run both policies against the same
+  profile and emit a side-by-side summary
 
 ## Why `warm-1` Matters
 
@@ -91,21 +89,23 @@ alive so the experiment can isolate the tradeoff between:
 - lower idle cost and slower first response
 - higher idle cost and faster first response
 
-The placeholder is removed at the end of the run, so the environment still
+In compare mode, the workflow restores that warm baseline between the two
+policy runs and then removes it at the very end so the environment still
 returns to zero GPU nodes after reporting.
 
-## Milestone 9 Direction
+## Next Scaling Direction
 
-The next scaling milestone should be capacity-aware autoscaling and saturation
-control. Concretely:
+Milestone 9 is now implemented. The next scaling milestone should be GPU
+bin packing and multi-request efficiency. Concretely:
 
-- promote an active-pressure signal such as `waiting + running`
-- scale to a fixed capacity target per pod, for example `4` active requests
-- compare the current HPA against the new policy in `./scripts/evaluate`
-- report p95 latency, queue time, GPU utilization, GPU nodes, and burst cost
+- measure how many active requests one GPU can sustain before latency or
+  utilization breaks down
+- reason about cost per useful unit of work rather than cost per launched node
+- show whether the current pod-per-GPU shape leaves headroom stranded during
+  moderate bursts
 
-That would turn the repo from a good scale-out demo into a stronger control-loop
-experiment.
+That would push the repo from a good autoscaling control-loop experiment into a
+stronger serving-efficiency study.
 
 ## Version Pins
 

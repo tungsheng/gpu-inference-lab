@@ -25,12 +25,20 @@ observability as part of the main platform story rather than a manual add-on.
 - latency, TTFT, throughput, and queue-related metrics
 - GPU utilization visibility through DCGM exporter
 - experiment summary metrics pushed to Pushgateway
+- Grafana experiment summaries grouped by both `profile` and `policy`
 
-## Current Custom Metric Limitation
+## Current Custom Metric Surface
 
-Today the adapter exposes `vllm_requests_running` to the HPA. Prometheus and the
-serving dashboard already observe more than that, including waiting requests,
-but the autoscaling pipeline has not yet been upgraded to use a capacity-aware
-active-pressure metric.
+Today the adapter exposes both autoscaling metrics:
 
-That gap is intentional documentation now, not drift.
+- `vllm_requests_running`
+- `vllm_requests_active`, computed from `max_over_time(running[1m]) + max_over_time(waiting[1m])`
+
+That means the repo can compare the original running-request HPA against the
+new active-pressure policy without changing the serving deployment itself.
+
+## Current Limitation
+
+The main observability gap is now queue precision, not signal availability. The
+repo still uses p95 TTFT as a v1 queue/TTFT proxy because it does not yet scrape
+a dedicated queue-wait histogram.

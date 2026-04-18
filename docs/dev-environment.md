@@ -23,7 +23,8 @@ is intentionally opinionated:
 ./scripts/up
 ./scripts/verify
 ./scripts/evaluate --profile zero-idle
-./scripts/evaluate --profile warm-1
+./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
+./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ./scripts/down
 ```
 
@@ -98,10 +99,16 @@ Zero-idle baseline:
 ./scripts/evaluate --profile zero-idle
 ```
 
-One warm GPU node baseline:
+Capacity-aware policy on the same zero-idle baseline:
 
 ```bash
-./scripts/evaluate --profile warm-1
+./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
+```
+
+Warm baseline compare:
+
+```bash
+./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ```
 
 The evaluation workflow is the deeper platform exercise:
@@ -109,14 +116,16 @@ The evaluation workflow is the deeper platform exercise:
 1. confirms the public edge and custom metrics API are available
 2. applies the vLLM deployment
 3. waits for the first Ready replica and first successful public response
-4. preflights the `vllm_requests_running` custom metric and applies the HPA
+4. preflights the selected custom metric and applies the matching HPA
 5. runs the checked-in k6 burst job from `platform/tests/gpu-load-test.yaml`
 6. waits for HPA desired replicas to reach `2`
 7. waits for the second serving `NodeClaim`, second GPU node, and second Ready
    replica
 8. waits for the burst to finish and scale back in
-9. deletes the workload and profile-specific warm capacity
-10. collects Prometheus and DCGM metrics and writes reports
+9. deletes the workload and profile-specific warm capacity, or restores the
+   warm baseline between policy runs in compare mode
+10. collects Prometheus and DCGM metrics and writes per-policy plus optional
+    compare reports
 
 Profile behavior:
 
@@ -125,15 +134,27 @@ Profile behavior:
 | `zero-idle` | zero GPU nodes before the run | lowest idle cost, highest cold-start penalty |
 | `warm-1` | one on-demand serving node held by `gpu-warm-placeholder` | lower first-response latency, higher idle spend |
 
+Policy behavior:
+
+| Policy | What it does |
+| --- | --- |
+| `running` | preserves the original HPA on `vllm_requests_running` |
+| `active-pressure` | uses `vllm_requests_active = waiting + running` with a configurable `--active-target` |
+| `compare` | runs `running` first, then `active-pressure`, and emits a side-by-side compare report |
+
 Reports are written to:
 
-- `docs/reports/evaluate-<profile>-<timestamp>.md`
-- `docs/reports/evaluate-<profile>-<timestamp>.json`
+- single policy: `docs/reports/evaluate-<profile>-<policy>-<timestamp>.md`
+- single policy: `docs/reports/evaluate-<profile>-<policy>-<timestamp>.json`
+- compare mode: the two per-policy artifacts plus
+  `docs/reports/evaluate-<profile>-compare-<timestamp>.md` and `.json`
 
 Those reports capture:
 
+- selected policy, HPA metric name, and HPA target average value
 - timeline events for node launch, readiness, scale-out, scale-in, and cleanup
-- p95 request latency and p95 time to first token
+- p95 request latency and p95 time to first token as the queue/TTFT proxy
+- peak waiting requests and peak active requests
 - generation throughput
 - average and max GPU utilization
 - peak serving `NodeClaim` count, split by capacity type

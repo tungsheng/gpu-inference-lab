@@ -8,14 +8,22 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 TOTAL_STAGES=10
 EVALUATION_PROFILE="zero-idle"
+EVALUATION_POLICY="running"
+ACTIVE_PRESSURE_TARGET=4
+EVALUATION_TIMESTAMP=""
+USER_REPORT_PATH=""
+USER_JSON_REPORT_PATH=""
 REPORT_PATH=""
 JSON_REPORT_PATH=""
+COMPARE_REPORT_PATH=""
+COMPARE_JSON_REPORT_PATH=""
 
 DEPLOYMENT_APPLIED=0
 HPA_APPLIED=0
 LOAD_TEST_APPLIED=0
 WARM_PLACEHOLDER_APPLIED=0
 PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS=0
+PRESERVE_PROFILE_BASELINE=0
 
 PUBLIC_INFERENCE_URL=""
 PROMETHEUS_LOCAL_PORT=""
@@ -25,7 +33,12 @@ PUSHGATEWAY_LOCAL_PORT=""
 PUSHGATEWAY_PORT_FORWARD_PID=""
 PUSHGATEWAY_PORT_FORWARD_LOG=""
 METRIC_SEED_REQUEST_PIDS=()
+TEMP_FILES=()
 WAIT_CONTEXT_LOG_INTERVAL_SECONDS="${WAIT_CONTEXT_LOG_INTERVAL_SECONDS:-30}"
+CURRENT_POLICY=""
+CURRENT_HPA_MANIFEST_PATH=""
+CURRENT_HPA_METRIC_NAME=""
+CURRENT_HPA_TARGET_AVERAGE_VALUE=""
 
 EVALUATION_START_TIME=""
 FIRST_NODECLAIM_TIME=""
@@ -52,9 +65,12 @@ LOAD_FINISH_TIME=""
 SCALE_IN_TIME=""
 PROFILE_BASELINE_RESTORED_TIME=""
 CLEANUP_FINISH_TIME=""
+POLICY_FINISH_TIME=""
 
 P95_REQUEST_LATENCY_SECONDS=""
 P95_TTFT_SECONDS=""
+PEAK_WAITING_REQUESTS=""
+PEAK_ACTIVE_REQUESTS=""
 PEAK_RUNNING_REQUESTS=""
 AVG_GENERATION_TOKENS_PER_SECOND=""
 AVG_GPU_UTILIZATION_PERCENT=""
@@ -72,11 +88,13 @@ ESTIMATED_BURST_COST_SPOT=""
 usage() {
   cat <<EOF
 Usage:
-  ./scripts/evaluate [--profile zero-idle|warm-1] [--report path] [--json-report path]
+  ./scripts/evaluate [--profile zero-idle|warm-1] [--policy running|active-pressure|compare] [--active-target requests] [--report path] [--json-report path]
 
 Examples:
   ./scripts/evaluate --profile zero-idle
   ./scripts/evaluate --profile warm-1
+  ./scripts/evaluate --profile zero-idle --policy active-pressure
+  ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
   ./scripts/evaluate --profile zero-idle --report docs/reports/latest.md
 EOF
 }
@@ -101,12 +119,20 @@ parse_args() {
         EVALUATION_PROFILE=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
+      --policy)
+        EVALUATION_POLICY=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --active-target)
+        ACTIVE_PRESSURE_TARGET=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
       --report)
-        REPORT_PATH=$(require_option_value "$1" "${2-}")
+        USER_REPORT_PATH=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       --json-report)
-        JSON_REPORT_PATH=$(require_option_value "$1" "${2-}")
+        USER_JSON_REPORT_PATH=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       -h|--help)
@@ -131,16 +157,155 @@ parse_args() {
       ;;
   esac
 
-  if [[ -z "${REPORT_PATH}" ]]; then
-    REPORT_PATH="${REPO_ROOT}/docs/reports/evaluate-${EVALUATION_PROFILE}-$(date +%Y%m%d-%H%M%S).md"
+  case "${EVALUATION_POLICY}" in
+    running|active-pressure|compare)
+      ;;
+    *)
+      printf 'Unsupported policy: %s\n' "${EVALUATION_POLICY}" >&2
+      printf 'Supported policies: running, active-pressure, compare\n' >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ ! "${ACTIVE_PRESSURE_TARGET}" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'Unsupported active target: %s\n' "${ACTIVE_PRESSURE_TARGET}" >&2
+    printf 'Expected a positive integer for --active-target\n' >&2
+    exit 1
   fi
 
-  if [[ -z "${JSON_REPORT_PATH}" ]]; then
-    JSON_REPORT_PATH="${REPORT_PATH%.md}.json"
+  EVALUATION_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+}
+
+strip_report_extension() {
+  local path=$1
+
+  case "${path}" in
+    *.md)
+      printf '%s\n' "${path%.md}"
+      ;;
+    *.json)
+      printf '%s\n' "${path%.json}"
+      ;;
+    *)
+      printf '%s\n' "${path}"
+      ;;
+  esac
+}
+
+compare_policy_name() {
+  local policy=$1
+
+  case "${policy}" in
+    running|active-pressure)
+      printf '%s\n' "${policy}"
+      ;;
+    *)
+      printf 'compare\n'
+      ;;
+  esac
+}
+
+default_report_stem() {
+  local policy=$1
+
+  printf '%s/docs/reports/evaluate-%s-%s-%s\n' \
+    "${REPO_ROOT}" \
+    "${EVALUATION_PROFILE}" \
+    "$(compare_policy_name "${policy}")" \
+    "${EVALUATION_TIMESTAMP}"
+}
+
+user_report_stem() {
+  local preferred_path=$1
+  local default_policy=$2
+
+  if [[ -n "${preferred_path}" ]]; then
+    strip_report_extension "${preferred_path}"
+    return 0
   fi
+
+  if [[ -n "${USER_REPORT_PATH}" ]]; then
+    strip_report_extension "${USER_REPORT_PATH}"
+    return 0
+  fi
+
+  default_report_stem "${default_policy}"
+}
+
+resolve_report_path_for_policy() {
+  local policy=$1
+  local stem
+
+  if [[ "${EVALUATION_POLICY}" == "compare" ]]; then
+    stem=$(user_report_stem "${USER_REPORT_PATH}" "${policy}")
+    printf '%s-%s.md\n' "${stem}" "$(compare_policy_name "${policy}")"
+    return 0
+  fi
+
+  if [[ -n "${USER_REPORT_PATH}" ]]; then
+    printf '%s\n' "${USER_REPORT_PATH}"
+    return 0
+  fi
+
+  printf '%s.md\n' "$(default_report_stem "${policy}")"
+}
+
+resolve_json_report_path_for_policy() {
+  local policy=$1
+  local stem
+
+  if [[ "${EVALUATION_POLICY}" == "compare" ]]; then
+    stem=$(user_report_stem "${USER_JSON_REPORT_PATH:-${USER_REPORT_PATH}}" "${policy}")
+    printf '%s-%s.json\n' "${stem}" "$(compare_policy_name "${policy}")"
+    return 0
+  fi
+
+  if [[ -n "${USER_JSON_REPORT_PATH}" ]]; then
+    printf '%s\n' "${USER_JSON_REPORT_PATH}"
+    return 0
+  fi
+
+  if [[ -n "${USER_REPORT_PATH}" ]]; then
+    printf '%s.json\n' "$(strip_report_extension "${USER_REPORT_PATH}")"
+    return 0
+  fi
+
+  printf '%s.json\n' "$(default_report_stem "${policy}")"
+}
+
+resolve_compare_report_path() {
+  local stem
+
+  if [[ -n "${USER_REPORT_PATH}" ]]; then
+    stem=$(strip_report_extension "${USER_REPORT_PATH}")
+    printf '%s-compare.md\n' "${stem}"
+    return 0
+  fi
+
+  printf '%s.md\n' "$(default_report_stem compare)"
+}
+
+resolve_compare_json_report_path() {
+  local stem
+
+  if [[ -n "${USER_JSON_REPORT_PATH}" ]]; then
+    stem=$(strip_report_extension "${USER_JSON_REPORT_PATH}")
+    printf '%s-compare.json\n' "${stem}"
+    return 0
+  fi
+
+  if [[ -n "${USER_REPORT_PATH}" ]]; then
+    stem=$(strip_report_extension "${USER_REPORT_PATH}")
+    printf '%s-compare.json\n' "${stem}"
+    return 0
+  fi
+
+  printf '%s.json\n' "$(default_report_stem compare)"
 }
 
 cleanup_evaluate() {
+  local temporary_file
+
   if [[ -n "${PROMETHEUS_PORT_FORWARD_PID}" ]]; then
     kill "${PROMETHEUS_PORT_FORWARD_PID}" 2>/dev/null || true
     wait "${PROMETHEUS_PORT_FORWARD_PID}" 2>/dev/null || true
@@ -159,13 +324,19 @@ cleanup_evaluate() {
     kubectl delete -f "${GPU_LOAD_TEST_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
   fi
   if [[ "${HPA_APPLIED}" == "1" ]]; then
-    kubectl delete -f "${GPU_INFERENCE_HPA_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+    kubectl delete hpa "${GPU_INFERENCE_HPA_NAME}" -n "${APP_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
   fi
   if [[ "${DEPLOYMENT_APPLIED}" == "1" ]]; then
     kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
   fi
   if [[ "${WARM_PLACEHOLDER_APPLIED}" == "1" && "${PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS}" != "1" ]]; then
     kubectl delete -f "${GPU_WARM_PLACEHOLDER_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+
+  if ((${#TEMP_FILES[@]} > 0)); then
+    for temporary_file in "${TEMP_FILES[@]}"; do
+      rm -f "${temporary_file}" >/dev/null 2>&1 || true
+    done
   fi
 }
 
@@ -175,6 +346,95 @@ evaluate_prereqs() {
 
 is_warm_profile() {
   [[ "${EVALUATION_PROFILE}" == "warm-1" ]]
+}
+
+is_compare_mode() {
+  [[ "${EVALUATION_POLICY}" == "compare" ]]
+}
+
+is_active_pressure_policy() {
+  [[ "${CURRENT_POLICY}" == "active-pressure" ]]
+}
+
+policy_stage_label() {
+  local label=$1
+
+  if [[ "${CURRENT_POLICY}" == "running" && "${EVALUATION_POLICY}" != "compare" ]]; then
+    printf '%s\n' "${label}"
+    return 0
+  fi
+
+  printf '%s: %s\n' "${CURRENT_POLICY}" "${label}"
+}
+
+reset_policy_measurements() {
+  DEPLOYMENT_APPLIED=0
+  HPA_APPLIED=0
+  LOAD_TEST_APPLIED=0
+  PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS=0
+  PRESERVE_PROFILE_BASELINE=0
+  CURRENT_HPA_MANIFEST_PATH=""
+  CURRENT_HPA_METRIC_NAME=""
+  CURRENT_HPA_TARGET_AVERAGE_VALUE=""
+
+  EVALUATION_START_TIME=""
+  FIRST_NODECLAIM_TIME=""
+  FIRST_GPU_NODE_TIME=""
+  FIRST_READY_TIME=""
+  FIRST_RESPONSE_TIME=""
+  FIRST_POD_NAME=""
+  FIRST_POD_SCHEDULED_TIME=""
+  FIRST_CONTAINER_STARTED_TIME=""
+  FIRST_GPU_NODE_NAME=""
+  FIRST_GPU_NODEPOOL_NAME=""
+  FIRST_GPU_INSTANCE_TYPE=""
+  FIRST_GPU_CAPACITY_TYPE=""
+  LOAD_START_TIME=""
+  HPA_SCALE_OUT_TIME=""
+  SECOND_NODECLAIM_TIME=""
+  SECOND_GPU_NODE_TIME=""
+  SECOND_READY_TIME=""
+  SECOND_GPU_NODE_NAME=""
+  SECOND_GPU_NODEPOOL_NAME=""
+  SECOND_GPU_INSTANCE_TYPE=""
+  SECOND_GPU_CAPACITY_TYPE=""
+  LOAD_FINISH_TIME=""
+  SCALE_IN_TIME=""
+  PROFILE_BASELINE_RESTORED_TIME=""
+  CLEANUP_FINISH_TIME=""
+  POLICY_FINISH_TIME=""
+
+  P95_REQUEST_LATENCY_SECONDS=""
+  P95_TTFT_SECONDS=""
+  PEAK_WAITING_REQUESTS=""
+  PEAK_ACTIVE_REQUESTS=""
+  PEAK_RUNNING_REQUESTS=""
+  AVG_GENERATION_TOKENS_PER_SECOND=""
+  AVG_GPU_UTILIZATION_PERCENT=""
+  MAX_GPU_UTILIZATION_PERCENT=""
+  PEAK_ACTIVE_NODECLAIMS=""
+  PEAK_ACTIVE_ONDEMAND_NODECLAIMS=""
+  PEAK_ACTIVE_SPOT_NODECLAIMS=""
+  ESTIMATED_IDLE_COST_PER_HOUR=""
+  ESTIMATED_BURST_COST=""
+  ESTIMATED_IDLE_COST_ONDEMAND_PER_HOUR=""
+  ESTIMATED_IDLE_COST_SPOT_PER_HOUR=""
+  ESTIMATED_BURST_COST_ONDEMAND=""
+  ESTIMATED_BURST_COST_SPOT=""
+}
+
+set_policy_context() {
+  CURRENT_POLICY=$1
+  REPORT_PATH=$(resolve_report_path_for_policy "${CURRENT_POLICY}")
+  JSON_REPORT_PATH=$(resolve_json_report_path_for_policy "${CURRENT_POLICY}")
+
+  if is_active_pressure_policy; then
+    CURRENT_HPA_METRIC_NAME="vllm_requests_active"
+    CURRENT_HPA_TARGET_AVERAGE_VALUE="${ACTIVE_PRESSURE_TARGET}"
+  else
+    CURRENT_HPA_METRIC_NAME="vllm_requests_running"
+    CURRENT_HPA_TARGET_AVERAGE_VALUE="128"
+  fi
 }
 
 set_if_unset() {
@@ -584,7 +844,7 @@ prepare_edge_and_profile() {
   PUBLIC_INFERENCE_URL=$(public_inference_url "$(wait_for_ingress_hostname "${INGRESS_HOSTNAME_TIMEOUT_SECONDS}")") || return 1
 
   kubectl delete -f "${GPU_LOAD_TEST_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete -f "${GPU_INFERENCE_HPA_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete hpa "${GPU_INFERENCE_HPA_NAME}" -n "${APP_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1 || true
   kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
 
   if is_warm_profile; then
@@ -705,7 +965,7 @@ remove_load_and_wait_for_scale_in() {
 }
 
 delete_inference_and_clean_profile_capacity() {
-  kubectl delete -f "${GPU_INFERENCE_HPA_MANIFEST}" --ignore-not-found=true || return 1
+  kubectl delete hpa "${GPU_INFERENCE_HPA_NAME}" -n "${APP_NAMESPACE}" --ignore-not-found=true || return 1
   HPA_APPLIED=0
   wait_for_resource_deletion hpa "${GPU_INFERENCE_HPA_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
 
@@ -716,6 +976,12 @@ delete_inference_and_clean_profile_capacity() {
   if is_warm_profile; then
     wait_for_serving_gpu_nodes_at_most_with_progress 1 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
     PROFILE_BASELINE_RESTORED_TIME=$(date +%s)
+
+    if [[ "${PRESERVE_PROFILE_BASELINE}" == "1" ]]; then
+      POLICY_FINISH_TIME=${PROFILE_BASELINE_RESTORED_TIME}
+      return 0
+    fi
+
     kubectl delete -f "${GPU_WARM_PLACEHOLDER_MANIFEST}" --ignore-not-found=true || return 1
     WARM_PLACEHOLDER_APPLIED=0
     wait_for_resource_deletion deployment "${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
@@ -723,6 +989,7 @@ delete_inference_and_clean_profile_capacity() {
 
   wait_for_serving_gpu_nodes_at_most_with_progress 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   CLEANUP_FINISH_TIME=$(date +%s)
+  POLICY_FINISH_TIME=${CLEANUP_FINISH_TIME}
 }
 
 normalize_rfc3339() {
@@ -775,7 +1042,7 @@ lookback_window() {
   local end_time
   local window_seconds
 
-  end_time=${CLEANUP_FINISH_TIME:-$(date +%s)}
+  end_time=${POLICY_FINISH_TIME:-$(date +%s)}
   window_seconds=$((end_time - EVALUATION_START_TIME + 120))
   if (( window_seconds < 300 )); then
     window_seconds=300
@@ -937,6 +1204,16 @@ wait_for_custom_pod_metric() {
   done
 }
 
+render_active_pressure_hpa_manifest() {
+  local rendered_manifest
+
+  rendered_manifest=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-active-hpa.XXXXXX")
+  sed -e '/averageValue:/s/"[0-9][0-9]*"/"'"${ACTIVE_PRESSURE_TARGET}"'"/' \
+    "${GPU_INFERENCE_ACTIVE_PRESSURE_HPA_MANIFEST}" > "${rendered_manifest}"
+  TEMP_FILES+=("${rendered_manifest}")
+  CURRENT_HPA_MANIFEST_PATH=${rendered_manifest}
+}
+
 wait_for_hpa_metric_pipeline() {
   if [[ -z "${FIRST_POD_NAME}" ]]; then
     printf 'First vLLM pod name is unavailable for metric checks\n' >&2
@@ -944,10 +1221,16 @@ wait_for_hpa_metric_pipeline() {
   fi
 
   start_metric_seed_requests 4 || return 1
-  wait_for_custom_pod_metric "${APP_NAMESPACE}" "${FIRST_POD_NAME}" "vllm_requests_running" "${MONITORING_TIMEOUT_SECONDS}" || return 1
+  wait_for_custom_pod_metric "${APP_NAMESPACE}" "${FIRST_POD_NAME}" "${CURRENT_HPA_METRIC_NAME}" "${MONITORING_TIMEOUT_SECONDS}" || return 1
   stop_metric_seed_requests || true
 
-  kubectl apply -f "${GPU_INFERENCE_HPA_MANIFEST}" || return 1
+  if is_active_pressure_policy; then
+    render_active_pressure_hpa_manifest || return 1
+  else
+    CURRENT_HPA_MANIFEST_PATH=${GPU_INFERENCE_HPA_MANIFEST}
+  fi
+
+  kubectl apply -f "${CURRENT_HPA_MANIFEST_PATH}" || return 1
   HPA_APPLIED=1
 }
 
@@ -1024,10 +1307,10 @@ estimate_costs() {
     else
       ESTIMATED_IDLE_COST_ONDEMAND_PER_HOUR=${first_node_hourly_cost}
     fi
-    first_node_active_seconds=$(seconds_between "${EVALUATION_START_TIME}" "${CLEANUP_FINISH_TIME}")
+    first_node_active_seconds=$(seconds_between "${EVALUATION_START_TIME}" "${POLICY_FINISH_TIME}")
   else
     ESTIMATED_IDLE_COST_PER_HOUR="0"
-    first_node_active_seconds=$(seconds_between "${FIRST_GPU_NODE_TIME}" "${CLEANUP_FINISH_TIME}")
+    first_node_active_seconds=$(seconds_between "${FIRST_GPU_NODE_TIME}" "${POLICY_FINISH_TIME}")
   fi
 
   second_node_active_seconds=$(seconds_between "${SECOND_GPU_NODE_TIME}" "${SCALE_IN_TIME}")
@@ -1050,6 +1333,8 @@ estimate_costs() {
 
 collect_production_metrics() {
   local window
+  local waiting_query
+  local active_query
   local running_query
   local latency_query
   local ttft_query
@@ -1059,6 +1344,8 @@ collect_production_metrics() {
   local spot_nodeclaim_query
 
   window=$(lookback_window)
+  waiting_query="max_over_time((sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])"
+  active_query="max_over_time(((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}) + sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s]))"
   running_query="max_over_time((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])"
   latency_query="quantile_over_time(0.95, (histogram_quantile(0.95, sum by (le) (rate(vllm:e2e_request_latency_seconds_bucket{namespace=\"${APP_NAMESPACE}\"}[1m]))))[${window}:1m])"
   ttft_query="quantile_over_time(0.95, (histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{namespace=\"${APP_NAMESPACE}\"}[1m]))))[${window}:1m])"
@@ -1067,8 +1354,12 @@ collect_production_metrics() {
   ondemand_nodeclaim_query="max_over_time(((sum(karpenter_nodeclaims_created_total{nodepool=\"${KARPENTER_ONDEMAND_NODEPOOL_NAME}\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=\"${KARPENTER_ONDEMAND_NODEPOOL_NAME}\"})))[${window}:1m])"
   spot_nodeclaim_query="max_over_time(((sum(karpenter_nodeclaims_created_total{nodepool=\"${KARPENTER_SPOT_NODEPOOL_NAME}\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=\"${KARPENTER_SPOT_NODEPOOL_NAME}\"})))[${window}:1m])"
 
+  ensure_prometheus_local_port || return 1
+
   P95_REQUEST_LATENCY_SECONDS=$(prometheus_query_scalar "${latency_query}") || return 1
   P95_TTFT_SECONDS=$(prometheus_query_scalar "${ttft_query}") || return 1
+  PEAK_WAITING_REQUESTS=$(prometheus_query_scalar "${waiting_query}") || return 1
+  PEAK_ACTIVE_REQUESTS=$(prometheus_query_scalar "${active_query}") || return 1
   PEAK_RUNNING_REQUESTS=$(prometheus_query_scalar "${running_query}") || return 1
   AVG_GENERATION_TOKENS_PER_SECOND=$(prometheus_query_scalar "${throughput_query}") || return 1
   AVG_GPU_UTILIZATION_PERCENT=$(prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])") || return 1
@@ -1113,17 +1404,20 @@ push_summary_metrics() {
   ensure_pushgateway_local_port || return 0
 
   payload_file=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-pushgateway.XXXXXX")
-  push_path="http://127.0.0.1:${PUSHGATEWAY_LOCAL_PORT}/metrics/job/gpu-serving-measure/profile/${EVALUATION_PROFILE}"
+  push_path="http://127.0.0.1:${PUSHGATEWAY_LOCAL_PORT}/metrics/job/gpu-serving-measure/profile/${EVALUATION_PROFILE}/policy/${CURRENT_POLICY}"
 
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_first_gpu_node_seconds" "$(seconds_since_start "${FIRST_GPU_NODE_TIME}")"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_model_ready_seconds" "$(seconds_since_start "${FIRST_READY_TIME}")"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_first_external_completion_seconds" "$(seconds_since_start "${FIRST_RESPONSE_TIME}")"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_second_gpu_node_seconds" "$(seconds_since_start "${SECOND_GPU_NODE_TIME}")"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_second_ready_replica_seconds" "$(seconds_since_start "${SECOND_READY_TIME}")"
-  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_scale_down_to_zero_gpu_nodes_seconds" "$(seconds_between "${LOAD_FINISH_TIME}" "${CLEANUP_FINISH_TIME}")"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_scale_down_to_zero_gpu_nodes_seconds" "$(seconds_between "${LOAD_FINISH_TIME}" "${POLICY_FINISH_TIME}")"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_estimated_idle_cost_per_hour" "${ESTIMATED_IDLE_COST_PER_HOUR}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_estimated_burst_cost" "${ESTIMATED_BURST_COST}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_request_latency_seconds" "${P95_REQUEST_LATENCY_SECONDS}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_ttft_seconds" "${P95_TTFT_SECONDS}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_peak_waiting_requests" "${PEAK_WAITING_REQUESTS}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_peak_active_requests" "${PEAK_ACTIVE_REQUESTS}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_average_gpu_utilization_percent" "${AVG_GPU_UTILIZATION_PERCENT}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_peak_active_nodeclaims" "${PEAK_ACTIVE_NODECLAIMS}"
   append_pushgateway_labeled_metric "${payload_file}" "gpu_serving_measure_peak_active_nodeclaims" "capacity_type" "on-demand" "${PEAK_ACTIVE_ONDEMAND_NODECLAIMS}"
@@ -1221,9 +1515,16 @@ container_started_to_ready_seconds() {
 write_reports() {
   local pod_schedule_ready_seconds
   local container_ready_seconds
+  local cleanup_note='- The script cleans up the profile at the end so the environment returns to zero GPU nodes after reporting.'
+  local compare_mode_cleanup_note=""
 
   pod_schedule_ready_seconds=$(pod_schedule_to_ready_seconds)
   container_ready_seconds=$(container_started_to_ready_seconds)
+
+  if [[ "${PRESERVE_PROFILE_BASELINE}" == "1" && -z "${CLEANUP_FINISH_TIME}" ]]; then
+    cleanup_note='- This policy run restores the warm baseline after reporting so the compare workflow can execute the next policy before final cleanup.'
+    compare_mode_cleanup_note='- This compare-mode policy run restores the warm baseline between policies, so final cleanup to zero GPU nodes is deferred until the last policy run.'
+  fi
 
   mkdir -p "$(dirname "${REPORT_PATH}")"
   mkdir -p "$(dirname "${JSON_REPORT_PATH}")"
@@ -1233,6 +1534,9 @@ write_reports() {
 
 - Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 - Profile: ${EVALUATION_PROFILE}
+- Policy: ${CURRENT_POLICY}
+- HPA metric name: ${CURRENT_HPA_METRIC_NAME}
+- HPA target average value: ${CURRENT_HPA_TARGET_AVERAGE_VALUE}
 - Public endpoint: ${PUBLIC_INFERENCE_URL}
 - First GPU capacity type: ${FIRST_GPU_CAPACITY_TYPE:-n/a}
 - First GPU instance type: ${FIRST_GPU_INSTANCE_TYPE:-n/a}
@@ -1271,7 +1575,9 @@ write_reports() {
 ## Metrics
 
 - p95 request latency during burst: $(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")
-- p95 time to first token during burst: $(display_metric "${P95_TTFT_SECONDS}" "s")
+- p95 queue/TTFT proxy during burst: $(display_metric "${P95_TTFT_SECONDS}" "s")
+- Peak waiting requests: $(display_metric "${PEAK_WAITING_REQUESTS}")
+- Peak active requests: $(display_metric "${PEAK_ACTIVE_REQUESTS}")
 - Peak running requests: $(display_metric "${PEAK_RUNNING_REQUESTS}")
 - Average generation tokens per second: $(display_metric "${AVG_GENERATION_TOKENS_PER_SECOND}")
 - Average GPU utilization: $(display_metric "${AVG_GPU_UTILIZATION_PERCENT}" "%")
@@ -1292,15 +1598,20 @@ write_reports() {
 ## Notes
 
 - \`Container started -> Ready\` is reported as the model-load proxy because the baseline experiment does not rely on a separate vLLM model-load completion metric.
-- The HPA is validated from the custom metric \`vllm_requests_running\`, not CPU utilization.
+- \`p95 queue/TTFT proxy\` uses \`time_to_first_token_seconds\` because the current telemetry does not expose a dedicated queue-wait histogram.
+- The HPA is validated from the custom metric \`${CURRENT_HPA_METRIC_NAME}\` with target average value \`${CURRENT_HPA_TARGET_AVERAGE_VALUE}\`, not CPU utilization.
 - Spot prices use the repo's fixed conservative estimate table so reports stay deterministic across runs.
-- The script cleans up the warm profile at the end so the environment returns to zero GPU nodes after reporting.
+- ${cleanup_note#- }
+${compare_mode_cleanup_note}
 EOF
 
   cat > "${JSON_REPORT_PATH}" <<EOF
 {
   "generated_at": $(json_escape "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"),
   "profile": $(json_escape "${EVALUATION_PROFILE}"),
+  "policy": $(json_escape "${CURRENT_POLICY}"),
+  "hpa_metric_name": $(json_escape "${CURRENT_HPA_METRIC_NAME}"),
+  "hpa_target_average_value": $(json_escape "${CURRENT_HPA_TARGET_AVERAGE_VALUE}"),
   "public_endpoint": $(json_escape "${PUBLIC_INFERENCE_URL}"),
   "first_gpu_capacity_type": $(json_nullable_string "${FIRST_GPU_CAPACITY_TYPE}"),
   "first_gpu_instance_type": $(json_nullable_string "${FIRST_GPU_INSTANCE_TYPE}"),
@@ -1330,6 +1641,8 @@ EOF
   "metrics": {
     "p95_request_latency_seconds": $(json_nullable_number "${P95_REQUEST_LATENCY_SECONDS}"),
     "p95_ttft_seconds": $(json_nullable_number "${P95_TTFT_SECONDS}"),
+    "peak_waiting_requests": $(json_nullable_number "${PEAK_WAITING_REQUESTS}"),
+    "peak_active_requests": $(json_nullable_number "${PEAK_ACTIVE_REQUESTS}"),
     "peak_running_requests": $(json_nullable_number "${PEAK_RUNNING_REQUESTS}"),
     "average_generation_tokens_per_second": $(json_nullable_number "${AVG_GENERATION_TOKENS_PER_SECOND}"),
     "average_gpu_utilization_percent": $(json_nullable_number "${AVG_GPU_UTILIZATION_PERCENT}"),
@@ -1356,21 +1669,156 @@ EOF
 EOF
 }
 
+policy_snapshot_key() {
+  local policy=$1
+  local policy_key
+
+  policy_key=${policy//-/_}
+  printf '%s\n' "${policy_key}" | tr '[:lower:]' '[:upper:]'
+}
+
+set_policy_snapshot_value() {
+  local policy=$1
+  local field=$2
+  local value=${3-}
+  local variable_name
+
+  variable_name="COMPARE_$(policy_snapshot_key "${policy}")_${field}"
+  printf -v "${variable_name}" '%s' "${value}"
+}
+
+get_policy_snapshot_value() {
+  local policy=$1
+  local field=$2
+  local variable_name
+
+  variable_name="COMPARE_$(policy_snapshot_key "${policy}")_${field}"
+  printf '%s\n' "${!variable_name:-}"
+}
+
+capture_compare_policy_result() {
+  local policy=$1
+
+  set_policy_snapshot_value "${policy}" REPORT_PATH "${REPORT_PATH}"
+  set_policy_snapshot_value "${policy}" JSON_REPORT_PATH "${JSON_REPORT_PATH}"
+  set_policy_snapshot_value "${policy}" HPA_METRIC_NAME "${CURRENT_HPA_METRIC_NAME}"
+  set_policy_snapshot_value "${policy}" HPA_TARGET_AVERAGE_VALUE "${CURRENT_HPA_TARGET_AVERAGE_VALUE}"
+  set_policy_snapshot_value "${policy}" P95_REQUEST_LATENCY_SECONDS "${P95_REQUEST_LATENCY_SECONDS}"
+  set_policy_snapshot_value "${policy}" P95_TTFT_SECONDS "${P95_TTFT_SECONDS}"
+  set_policy_snapshot_value "${policy}" PEAK_WAITING_REQUESTS "${PEAK_WAITING_REQUESTS}"
+  set_policy_snapshot_value "${policy}" PEAK_ACTIVE_REQUESTS "${PEAK_ACTIVE_REQUESTS}"
+  set_policy_snapshot_value "${policy}" AVG_GPU_UTILIZATION_PERCENT "${AVG_GPU_UTILIZATION_PERCENT}"
+  set_policy_snapshot_value "${policy}" MAX_GPU_UTILIZATION_PERCENT "${MAX_GPU_UTILIZATION_PERCENT}"
+  set_policy_snapshot_value "${policy}" PEAK_ACTIVE_NODECLAIMS "${PEAK_ACTIVE_NODECLAIMS}"
+  set_policy_snapshot_value "${policy}" SECOND_READY_SECONDS "$(seconds_since_start "${SECOND_READY_TIME}")"
+  set_policy_snapshot_value "${policy}" ESTIMATED_BURST_COST "${ESTIMATED_BURST_COST}"
+}
+
+compare_duration_value() {
+  display_duration "$(get_policy_snapshot_value "$1" "$2")"
+}
+
+compare_metric_value() {
+  display_metric "$(get_policy_snapshot_value "$1" "$2")" "$3"
+}
+
+write_compare_reports() {
+  mkdir -p "$(dirname "${COMPARE_REPORT_PATH}")"
+  mkdir -p "$(dirname "${COMPARE_JSON_REPORT_PATH}")"
+
+  cat > "${COMPARE_REPORT_PATH}" <<EOF
+# Capacity-Aware Autoscaling Compare Report
+
+- Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+- Profile: ${EVALUATION_PROFILE}
+- Running report: $(get_policy_snapshot_value running REPORT_PATH)
+- Active-pressure report: $(get_policy_snapshot_value active-pressure REPORT_PATH)
+
+## Policy Settings
+
+| Policy | HPA metric name | HPA target average value |
+| --- | --- | --- |
+| running | $(get_policy_snapshot_value running HPA_METRIC_NAME) | $(get_policy_snapshot_value running HPA_TARGET_AVERAGE_VALUE) |
+| active-pressure | $(get_policy_snapshot_value active-pressure HPA_METRIC_NAME) | $(get_policy_snapshot_value active-pressure HPA_TARGET_AVERAGE_VALUE) |
+
+## Side-By-Side Metrics
+
+| Metric | running | active-pressure |
+| --- | --- | --- |
+| p95 request latency | $(compare_metric_value running P95_REQUEST_LATENCY_SECONDS "s") | $(compare_metric_value active-pressure P95_REQUEST_LATENCY_SECONDS "s") |
+| p95 queue/TTFT proxy | $(compare_metric_value running P95_TTFT_SECONDS "s") | $(compare_metric_value active-pressure P95_TTFT_SECONDS "s") |
+| Peak waiting requests | $(compare_metric_value running PEAK_WAITING_REQUESTS "") | $(compare_metric_value active-pressure PEAK_WAITING_REQUESTS "") |
+| Peak active requests | $(compare_metric_value running PEAK_ACTIVE_REQUESTS "") | $(compare_metric_value active-pressure PEAK_ACTIVE_REQUESTS "") |
+| Average GPU utilization | $(compare_metric_value running AVG_GPU_UTILIZATION_PERCENT "%") | $(compare_metric_value active-pressure AVG_GPU_UTILIZATION_PERCENT "%") |
+| Max GPU utilization | $(compare_metric_value running MAX_GPU_UTILIZATION_PERCENT "%") | $(compare_metric_value active-pressure MAX_GPU_UTILIZATION_PERCENT "%") |
+| Peak active NodeClaims | $(compare_metric_value running PEAK_ACTIVE_NODECLAIMS "") | $(compare_metric_value active-pressure PEAK_ACTIVE_NODECLAIMS "") |
+| Second ready replica | $(compare_duration_value running SECOND_READY_SECONDS) | $(compare_duration_value active-pressure SECOND_READY_SECONDS) |
+| Burst cost | $(compare_metric_value running ESTIMATED_BURST_COST "") | $(compare_metric_value active-pressure ESTIMATED_BURST_COST "") |
+EOF
+
+  cat > "${COMPARE_JSON_REPORT_PATH}" <<EOF
+{
+  "generated_at": $(json_escape "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"),
+  "profile": $(json_escape "${EVALUATION_PROFILE}"),
+  "running": {
+    "report_path": $(json_escape "$(get_policy_snapshot_value running REPORT_PATH)"),
+    "json_report_path": $(json_escape "$(get_policy_snapshot_value running JSON_REPORT_PATH)"),
+    "hpa_metric_name": $(json_escape "$(get_policy_snapshot_value running HPA_METRIC_NAME)"),
+    "hpa_target_average_value": $(json_escape "$(get_policy_snapshot_value running HPA_TARGET_AVERAGE_VALUE)"),
+    "metrics": {
+      "p95_request_latency_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_REQUEST_LATENCY_SECONDS)"),
+      "p95_ttft_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_TTFT_SECONDS)"),
+      "peak_waiting_requests": $(json_nullable_number "$(get_policy_snapshot_value running PEAK_WAITING_REQUESTS)"),
+      "peak_active_requests": $(json_nullable_number "$(get_policy_snapshot_value running PEAK_ACTIVE_REQUESTS)"),
+      "average_gpu_utilization_percent": $(json_nullable_number "$(get_policy_snapshot_value running AVG_GPU_UTILIZATION_PERCENT)"),
+      "max_gpu_utilization_percent": $(json_nullable_number "$(get_policy_snapshot_value running MAX_GPU_UTILIZATION_PERCENT)"),
+      "peak_active_nodeclaims": $(json_nullable_number "$(get_policy_snapshot_value running PEAK_ACTIVE_NODECLAIMS)"),
+      "second_ready_seconds": $(json_nullable_number "$(get_policy_snapshot_value running SECOND_READY_SECONDS)"),
+      "estimated_burst_cost": $(json_nullable_number "$(get_policy_snapshot_value running ESTIMATED_BURST_COST)")
+    }
+  },
+  "active_pressure": {
+    "report_path": $(json_escape "$(get_policy_snapshot_value active-pressure REPORT_PATH)"),
+    "json_report_path": $(json_escape "$(get_policy_snapshot_value active-pressure JSON_REPORT_PATH)"),
+    "hpa_metric_name": $(json_escape "$(get_policy_snapshot_value active-pressure HPA_METRIC_NAME)"),
+    "hpa_target_average_value": $(json_escape "$(get_policy_snapshot_value active-pressure HPA_TARGET_AVERAGE_VALUE)"),
+    "metrics": {
+      "p95_request_latency_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_REQUEST_LATENCY_SECONDS)"),
+      "p95_ttft_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_TTFT_SECONDS)"),
+      "peak_waiting_requests": $(json_nullable_number "$(get_policy_snapshot_value active-pressure PEAK_WAITING_REQUESTS)"),
+      "peak_active_requests": $(json_nullable_number "$(get_policy_snapshot_value active-pressure PEAK_ACTIVE_REQUESTS)"),
+      "average_gpu_utilization_percent": $(json_nullable_number "$(get_policy_snapshot_value active-pressure AVG_GPU_UTILIZATION_PERCENT)"),
+      "max_gpu_utilization_percent": $(json_nullable_number "$(get_policy_snapshot_value active-pressure MAX_GPU_UTILIZATION_PERCENT)"),
+      "peak_active_nodeclaims": $(json_nullable_number "$(get_policy_snapshot_value active-pressure PEAK_ACTIVE_NODECLAIMS)"),
+      "second_ready_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure SECOND_READY_SECONDS)"),
+      "estimated_burst_cost": $(json_nullable_number "$(get_policy_snapshot_value active-pressure ESTIMATED_BURST_COST)")
+    }
+  }
+}
+EOF
+}
+
 collect_metrics_and_write_reports() {
   collect_production_metrics || return 1
   push_summary_metrics || true
   write_reports
 }
 
-main() {
-  parse_args "$@"
-  trap cleanup_evaluate EXIT
+run_single_policy_evaluation() {
+  local policy=$1
+
+  reset_policy_measurements
+  set_policy_context "${policy}"
+
+  if is_compare_mode && is_warm_profile && [[ "${CURRENT_POLICY}" == "running" ]]; then
+    PRESERVE_PROFILE_BASELINE=1
+  fi
 
   set_failure_hints \
     "command -v kubectl curl awk" \
     "kubectl config current-context" \
     "kubectl get apiservice ${PROMETHEUS_ADAPTER_APISERVICE_NAME}"
-  run_stage 1 "${TOTAL_STAGES}" "checking prerequisites" evaluate_prereqs
+  run_stage 1 "${TOTAL_STAGES}" "$(policy_stage_label "checking prerequisites")" evaluate_prereqs
 
   set_failure_hints \
     "kubectl get ingress,service -n ${APP_NAMESPACE}" \
@@ -1378,69 +1826,108 @@ main() {
     "kubectl get deployment,pods -n ${APP_NAMESPACE} -l app=${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME}" \
     "kubectl get nodeclaims,nodes -o wide" \
     "kubectl logs -n ${KARPENTER_NAMESPACE} deployment/karpenter --since=10m"
-  run_stage 2 "${TOTAL_STAGES}" "prepare evaluation edge and profile" prepare_edge_and_profile
+  run_stage 2 "${TOTAL_STAGES}" "$(policy_stage_label "prepare evaluation edge and profile")" prepare_edge_and_profile
 
   set_failure_hints \
     "kubectl get deployment,hpa -n ${APP_NAMESPACE}" \
     "kubectl describe hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE}" \
     "kubectl get pods -n ${APP_NAMESPACE}"
-  run_stage 3 "${TOTAL_STAGES}" "apply inference deployment" apply_inference_stack
+  run_stage 3 "${TOTAL_STAGES}" "$(policy_stage_label "apply inference deployment")" apply_inference_stack
 
   set_failure_hints \
     "kubectl get pods -n ${APP_NAMESPACE} -o wide" \
     "kubectl get nodeclaims" \
     "kubectl logs -n ${APP_NAMESPACE} deployment/${GPU_INFERENCE_DEPLOYMENT_NAME} --tail=100"
-  run_stage 4 "${TOTAL_STAGES}" "wait for first ready replica and first public response" wait_for_first_ready_and_response
+  run_stage 4 "${TOTAL_STAGES}" "$(policy_stage_label "wait for first ready replica and first public response")" wait_for_first_ready_and_response
 
   set_failure_hints \
     "kubectl get deployment,pods -n ${APP_NAMESPACE}" \
-    "kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/${APP_NAMESPACE}/pods/${FIRST_POD_NAME:-<pod-name>}/vllm_requests_running" \
+    "kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/${APP_NAMESPACE}/pods/${FIRST_POD_NAME:-<pod-name>}/${CURRENT_HPA_METRIC_NAME}" \
     "kubectl logs -n ${APP_NAMESPACE} deployment/${GPU_INFERENCE_DEPLOYMENT_NAME} --tail=100" \
     "kubectl port-forward -n ${MONITORING_NAMESPACE} service/${KUBE_PROMETHEUS_STACK_PROMETHEUS_SERVICE} 9090:9090"
-  run_stage 5 "${TOTAL_STAGES}" "wait for hpa metric pipeline and apply hpa" wait_for_hpa_metric_pipeline
+  run_stage 5 "${TOTAL_STAGES}" "$(policy_stage_label "wait for hpa metric pipeline and apply hpa")" wait_for_hpa_metric_pipeline
 
   set_failure_hints \
-    "kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/${APP_NAMESPACE}/pods/${FIRST_POD_NAME:-<pod-name>}/vllm_requests_running" \
+    "kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/${APP_NAMESPACE}/pods/${FIRST_POD_NAME:-<pod-name>}/${CURRENT_HPA_METRIC_NAME}" \
     "kubectl describe hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE}" \
     "kubectl port-forward -n ${MONITORING_NAMESPACE} service/${KUBE_PROMETHEUS_STACK_PROMETHEUS_SERVICE} 9090:9090" \
     "kubectl get nodeclaims,nodes" \
     "kubectl logs -n ${APP_NAMESPACE} job/${GPU_LOAD_TEST_JOB_NAME} --tail=100"
-  run_stage 6 "${TOTAL_STAGES}" "run load and wait for scale-out" run_load_and_wait_for_scale_out
+  run_stage 6 "${TOTAL_STAGES}" "$(policy_stage_label "run load and wait for scale-out")" run_load_and_wait_for_scale_out
 
   set_failure_hints \
     "kubectl get job ${GPU_LOAD_TEST_JOB_NAME} -n ${APP_NAMESPACE} -o yaml" \
     "kubectl logs -n ${APP_NAMESPACE} job/${GPU_LOAD_TEST_JOB_NAME}" \
     "kubectl get hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE} -o yaml"
-  run_stage 7 "${TOTAL_STAGES}" "wait for the burst to complete" wait_for_burst_completion
+  run_stage 7 "${TOTAL_STAGES}" "$(policy_stage_label "wait for the burst to complete")" wait_for_burst_completion
 
   set_failure_hints \
     "kubectl get hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE}" \
     "kubectl get deployment ${GPU_INFERENCE_DEPLOYMENT_NAME} -n ${APP_NAMESPACE} -o yaml" \
     "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
-  run_stage 8 "${TOTAL_STAGES}" "remove load and wait for scale-in" remove_load_and_wait_for_scale_in
+  run_stage 8 "${TOTAL_STAGES}" "$(policy_stage_label "remove load and wait for scale-in")" remove_load_and_wait_for_scale_in
 
   set_failure_hints \
     "kubectl get deployment,hpa -n ${APP_NAMESPACE}" \
     "kubectl get deployment ${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME} -n ${APP_NAMESPACE}" \
     "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
-  run_stage 9 "${TOTAL_STAGES}" "delete inference workload and clean profile capacity" delete_inference_and_clean_profile_capacity
+  run_stage 9 "${TOTAL_STAGES}" "$(policy_stage_label "delete inference workload and clean profile capacity")" delete_inference_and_clean_profile_capacity
 
   set_failure_hints \
     "kubectl get svc -n ${MONITORING_NAMESPACE}" \
     "kubectl get pods -n ${MONITORING_NAMESPACE}" \
     "kubectl get podmonitor,servicemonitor -n ${MONITORING_NAMESPACE}"
-  run_stage 10 "${TOTAL_STAGES}" "collect metrics and write reports" collect_metrics_and_write_reports
+  run_stage 10 "${TOTAL_STAGES}" "$(policy_stage_label "collect metrics and write reports")" collect_metrics_and_write_reports
+}
 
+print_single_policy_summary() {
   printf '\nEvaluated:\n'
   printf '  Profile: %s\n' "${EVALUATION_PROFILE}"
+  printf '  Policy: %s\n' "${CURRENT_POLICY}"
+  printf '  HPA metric: %s\n' "${CURRENT_HPA_METRIC_NAME}"
+  printf '  HPA target average value: %s\n' "${CURRENT_HPA_TARGET_AVERAGE_VALUE}"
   printf '  First GPU capacity type: %s\n' "${FIRST_GPU_CAPACITY_TYPE:-n/a}"
   printf '  Second GPU capacity type: %s\n' "${SECOND_GPU_CAPACITY_TYPE:-n/a}"
   printf '  First public response: %s\n' "$(display_duration "$(seconds_since_start "${FIRST_RESPONSE_TIME}")")"
   printf '  Second ready replica: %s\n' "$(display_duration "$(seconds_since_start "${SECOND_READY_TIME}")")"
   printf '  p95 request latency: %s\n' "$(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")"
+  printf '  Peak waiting requests: %s\n' "$(display_metric "${PEAK_WAITING_REQUESTS}")"
+  printf '  Peak active requests: %s\n' "$(display_metric "${PEAK_ACTIVE_REQUESTS}")"
   printf '  Average GPU utilization: %s\n' "$(display_metric "${AVG_GPU_UTILIZATION_PERCENT}" "%")"
   printf '  Markdown report: %s\n' "${REPORT_PATH}"
   printf '  JSON report: %s\n' "${JSON_REPORT_PATH}"
+}
+
+print_compare_summary() {
+  printf '\nCompared:\n'
+  printf '  Profile: %s\n' "${EVALUATION_PROFILE}"
+  printf '  Running report: %s\n' "$(get_policy_snapshot_value running REPORT_PATH)"
+  printf '  Active-pressure report: %s\n' "$(get_policy_snapshot_value active-pressure REPORT_PATH)"
+  printf '  Compare report: %s\n' "${COMPARE_REPORT_PATH}"
+  printf '  Compare JSON report: %s\n' "${COMPARE_JSON_REPORT_PATH}"
+}
+
+main() {
+  parse_args "$@"
+  trap cleanup_evaluate EXIT
+
+  if is_compare_mode; then
+    COMPARE_REPORT_PATH=$(resolve_compare_report_path)
+    COMPARE_JSON_REPORT_PATH=$(resolve_compare_json_report_path)
+
+    run_single_policy_evaluation running
+    capture_compare_policy_result running
+
+    run_single_policy_evaluation active-pressure
+    capture_compare_policy_result active-pressure
+
+    write_compare_reports
+    print_compare_summary
+    return 0
+  fi
+
+  run_single_policy_evaluation "${EVALUATION_POLICY}"
+  print_single_policy_summary
 }
 
 main "$@"

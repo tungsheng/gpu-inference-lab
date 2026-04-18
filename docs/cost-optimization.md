@@ -25,6 +25,7 @@ Run both with:
 ```bash
 ./scripts/evaluate --profile zero-idle
 ./scripts/evaluate --profile warm-1
+./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ```
 
 ## Mixed Capacity Story
@@ -90,7 +91,7 @@ Prefer `warm-1` when:
 
 ## What Comes Next
 
-The next cost optimization step is not another pricing table. It is a better
-capacity signal. Once autoscaling is based on active pressure rather than only
-running requests, the repo will be able to reason about cost per useful unit of
-work instead of cost per launched GPU node.
+The next cost optimization step is not another pricing table. It is better
+per-GPU efficiency data. Now that the repo can compare the running baseline with
+the active-pressure policy, the next cost question is how many useful requests a
+single GPU-backed pod should absorb before scaling.

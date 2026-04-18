@@ -15,8 +15,9 @@ infrastructure lessons:
 The repo is now in a much stronger place. It proves two clear operator paths:
 
 - `./scripts/verify` cold-starts the public inference edge from zero GPU nodes
-- `./scripts/evaluate --profile zero-idle|warm-1` drives HPA scale-out, triggers
-  a second GPU node, and writes latency, utilization, and cost reports
+- `./scripts/evaluate --profile zero-idle|warm-1 --policy running|active-pressure|compare`
+  drives HPA scale-out, compares autoscaling signals, triggers a second GPU
+  node, and writes latency, utilization, and cost reports
 
 What is already implemented:
 
@@ -33,7 +34,10 @@ What is already implemented:
 What is still not true:
 
 - the environment is still dev-oriented, not production-hardened
-- the HPA signal is not yet capacity-aware
+- queue time is still represented through a TTFT proxy rather than a dedicated
+  queue-wait histogram
+- the active-pressure target is still hand-tuned rather than derived from
+  per-GPU efficiency data
 - the repo does not yet prove GPU bin-packing efficiency
 - spot interruption handling and deeper resilience experiments are still ahead
 
@@ -124,22 +128,15 @@ Outcome:
 
 ### Milestone 9 - Capacity-aware autoscaling and saturation control
 
-Status: planned.
+Status: implemented.
 
-Why this is next:
+Outcome:
 
-- the repo already proves dynamic provisioning, mixed capacity, and
-  metrics-backed experiments
-- the highest-value gap is the autoscaling signal itself
-- `vllm_requests_running` captures admitted work, not total pressure
-
-Completion should look like:
-
-- a new active-pressure metric such as `waiting + running`
-- an HPA target based on per-pod capacity instead of only running requests
-- `./scripts/evaluate` comparing the current HPA and the new policy
-- reports that highlight p95 latency, queue time, GPU utilization, number of
-  GPU nodes, and burst cost
+- a new active-pressure metric `vllm_requests_active = waiting + running`
+- a second HPA manifest for the active-pressure policy
+- `./scripts/evaluate --policy running|active-pressure|compare`
+- per-policy plus compare reports with queue proxy, waiting pressure, GPU
+  utilization, NodeClaim count, and burst cost
 
 ### Milestone 10 - GPU bin packing and multi-request efficiency
 

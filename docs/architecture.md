@@ -70,9 +70,11 @@ There are three important feedback loops in the repo:
    Karpenter launches a matching node, and then becomes Ready once the NVIDIA
    device plugin exposes the GPU resource.
 3. **Autoscaling loop**
-   Prometheus Adapter exposes `vllm_requests_running` as a custom pod metric,
-   and the HPA uses that metric to scale the deployment from `1` to `2`
-   replicas during `./scripts/evaluate`.
+   Prometheus Adapter exposes both `vllm_requests_running` and
+   `vllm_requests_active` as custom pod metrics, and
+   `./scripts/evaluate --policy running|active-pressure|compare` uses those
+   metrics to scale the deployment from `1` to `2` replicas during the burst
+   experiment.
 
 ## Why The Workflow Is Split
 
@@ -91,8 +93,10 @@ That split keeps the default story clear:
 
 ## Current Limitation
 
-The architecture already exposes both waiting and running request metrics in
-Prometheus, but only `vllm_requests_running` is wired into the HPA today. That
-means autoscaling reacts to work that is already admitted instead of total
-pressure. The next architectural step is to promote a capacity-aware active
-pressure metric into the control loop.
+The architecture now exposes and exercises both autoscaling signals, but it is
+still a v1 control-loop experiment:
+
+- active pressure is tuned with a simple per-pod target rather than a
+  GPU-efficiency model
+- queue behavior is inferred through TTFT plus waiting pressure
+- the next architectural step is GPU bin packing and per-GPU capacity reasoning
