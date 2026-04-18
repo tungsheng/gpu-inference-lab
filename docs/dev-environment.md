@@ -25,6 +25,7 @@ is intentionally opinionated:
 ./scripts/evaluate --profile zero-idle
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
+./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ./scripts/down
 ```
 
@@ -111,6 +112,12 @@ Warm baseline compare:
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ```
 
+Active-target sweep:
+
+```bash
+./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
+```
+
 The evaluation workflow is the deeper platform exercise:
 
 1. confirms the public edge and custom metrics API are available
@@ -123,9 +130,9 @@ The evaluation workflow is the deeper platform exercise:
    replica
 8. waits for the burst to finish and scale back in
 9. deletes the workload and profile-specific warm capacity, or restores the
-   warm baseline between policy runs in compare mode
-10. collects Prometheus and DCGM metrics and writes per-policy plus optional
-    compare reports
+   warm baseline between policy or target runs in compare and sweep mode
+10. collects Prometheus and DCGM metrics and writes per-policy, compare, or
+    sweep reports
 
 Profile behavior:
 
@@ -141,6 +148,7 @@ Policy behavior:
 | `running` | preserves the original HPA on `vllm_requests_running` |
 | `active-pressure` | uses `vllm_requests_active = waiting + running` with a configurable `--active-target` |
 | `compare` | runs `running` first, then `active-pressure`, and emits a side-by-side compare report |
+| `sweep` | runs `active-pressure` repeatedly for the comma-separated `--active-targets` list and emits a recommendation summary |
 
 Reports are written to:
 
@@ -148,17 +156,24 @@ Reports are written to:
 - single policy: `docs/reports/evaluate-<profile>-<policy>-<timestamp>.json`
 - compare mode: the two per-policy artifacts plus
   `docs/reports/evaluate-<profile>-compare-<timestamp>.md` and `.json`
+- sweep mode: the per-target artifacts plus
+  `docs/reports/evaluate-<profile>-active-pressure-sweep-<timestamp>.md` and
+  `.json`
 
 Those reports capture:
 
 - selected policy, HPA metric name, and HPA target average value
 - timeline events for node launch, readiness, scale-out, scale-in, and cleanup
-- p95 request latency and p95 time to first token as the queue/TTFT proxy
+- p95 request latency, p95 estimated queue wait, and p95 time to first token
 - peak waiting requests and peak active requests
+- peak active requests per active GPU node and average completed requests per
+  second
 - generation throughput
-- average and max GPU utilization
+- average GPU utilization, GPU headroom, and max GPU utilization
 - peak serving `NodeClaim` count, split by capacity type
 - estimated serving GPU cost for the run
+- in sweep mode, a summary table plus a recommended active target from the
+  built-in heuristic
 
 ## Manual Checks
 

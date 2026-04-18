@@ -57,8 +57,8 @@ This path answers whether the zero-idle story works at all.
 - waits for a second serving `NodeClaim`, second GPU node, and second Ready
   replica
 - waits for scale-in and cleanup
-- writes per-policy or compare reports with timing, utilization, queue proxy,
-  and cost fields
+- writes per-policy, compare, or sweep reports with timing, utilization,
+  derived queue wait, and cost fields
 
 This path answers whether the control loop can add capacity fast enough to
 handle bursty inference traffic.
@@ -79,6 +79,8 @@ That is a meaningful milestone because it proves:
 - the HPA can act on either metric without changing the serving deployment
 - `./scripts/evaluate --policy compare` can run both policies against the same
   profile and emit a side-by-side summary
+- `./scripts/evaluate --policy sweep --active-targets ...` can calibrate the
+  active-pressure target across multiple runs and emit a recommendation summary
 
 ## Why `warm-1` Matters
 
@@ -95,11 +97,14 @@ returns to zero GPU nodes after reporting.
 
 ## Next Scaling Direction
 
-Milestone 9 is now implemented. The next scaling milestone should be GPU
-bin packing and multi-request efficiency. Concretely:
+Milestone 10 now closes the calibration loop with a derived queue-wait metric,
+per-GPU active-request readouts, and efficiency assessments. The next scaling
+milestone is deeper GPU bin packing and multi-request efficiency. Concretely:
 
 - measure how many active requests one GPU can sustain before latency or
   utilization breaks down
+- replace the derived queue-wait estimate with a first-class queue histogram if
+  the stack can expose one
 - reason about cost per useful unit of work rather than cost per launched node
 - show whether the current pod-per-GPU shape leaves headroom stranded during
   moderate bursts

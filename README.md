@@ -8,10 +8,10 @@ The repo proves two real operator paths today:
 
 - `./scripts/verify` cold-starts the public inference edge from zero GPU nodes
   and returns the cluster to zero GPU nodes after cleanup.
-- `./scripts/evaluate --profile zero-idle|warm-1 --policy running|active-pressure|compare`
-  applies vLLM plus the selected HPA policy, runs burst load, captures latency
-  and utilization signals, and writes Markdown and JSON reports under
-  `docs/reports/`.
+- `./scripts/evaluate --profile zero-idle|warm-1 --policy running|active-pressure|compare|sweep`
+  applies vLLM plus the selected HPA policy, or sweeps multiple active-pressure
+  targets, runs burst load, captures latency and utilization signals, and
+  writes Markdown and JSON reports under `docs/reports/`.
 
 ## Platform At A Glance
 
@@ -90,6 +90,7 @@ Run the burst evaluation path:
 ./scripts/evaluate --profile zero-idle
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
+./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ```
 
 Tear everything down:
@@ -113,11 +114,13 @@ Run the local shell tests:
   one Ready replica, and one successful external completion, then deletes the
   workload and waits for GPU cleanup back to `0`.
 - `./scripts/evaluate` applies the vLLM deployment, selects the running or
-  active-pressure HPA policy, runs the checked-in burst load, waits for a
-  second replica and second GPU node, collects Prometheus and DCGM metrics,
-  estimates serving-node cost, and writes reports. `--policy compare` runs the
-  running baseline first and the active-pressure policy second, then writes a
-  side-by-side compare report.
+  active-pressure HPA policy, or sweeps multiple active-pressure targets, runs
+  the checked-in burst load, waits for a second replica and second GPU node,
+  collects Prometheus and DCGM metrics, estimates serving-node cost, and
+  writes reports. `--policy compare` runs the running baseline first and the
+  active-pressure policy second, then writes a side-by-side compare report.
+  `--policy sweep` runs one active-pressure experiment per target in
+  `--active-targets` and writes a recommendation summary.
 - `./scripts/down` removes runtime resources, observability, GPU capacity
   definitions, controllers, and Terraform-managed infrastructure.
 
@@ -127,11 +130,13 @@ Run the local shell tests:
 - How long does the first public completion take to succeed?
 - How do the running-request and active-pressure HPAs compare under the same
   burst profile?
+- Which active-pressure target best balances queue pressure, latency, GPU
+  utilization, and burst cost for this pod-per-GPU shape?
 - Does replica growth trigger a second Karpenter `NodeClaim` and second GPU
   node?
-- What do p95 request latency, p95 time to first token, peak waiting requests,
-  peak active requests, token throughput, and GPU utilization look like during
-  a controlled burst?
+- What do p95 request latency, p95 estimated queue wait, p95 time to first
+  token, peak waiting requests, peak active requests, token throughput, and GPU
+  utilization look like during a controlled burst?
 - What is the tradeoff between `zero-idle` and `warm-1` for latency and serving
   cost?
 
@@ -143,11 +148,13 @@ The repo now ships with two HPA policies:
 - `active-pressure`: the new capacity-aware policy that scales from
   `vllm_requests_active = waiting + running`
 
-`./scripts/evaluate --policy compare` runs both sequentially and writes
-per-policy plus side-by-side comparison reports. The remaining gap is no longer
-"can this scale?" but "is the target calibrated well enough per GPU?" Queue
-reporting still uses TTFT as a v1 proxy, and the next leverage point is
-GPU bin packing plus per-GPU efficiency work.
+`./scripts/evaluate --policy compare` runs both sequentially and
+`./scripts/evaluate --policy sweep --active-targets ...` calibrates multiple
+active-pressure targets in one pass. The remaining gap is no longer "can this
+scale?" but "is the target calibrated from the right queue and per-GPU
+capacity signals?" Queue reporting now derives a p95 queue-wait estimate from
+waiting depth over request completion rate, and the next leverage points are a
+dedicated queue histogram plus deeper GPU bin packing work.
 
 ## Dev Boundary
 

@@ -17,7 +17,8 @@ The scripts use them intentionally:
   vLLM deployment
 - `./scripts/verify` applies only the deployment
 - `./scripts/evaluate` applies the deployment and the selected HPA policy, or
-  both policies sequentially in compare mode
+  both policies sequentially in compare mode, or multiple active-pressure
+  targets in sweep mode
 
 ## Current Serving Stack
 
@@ -105,6 +106,7 @@ With the scripted path:
 ./scripts/evaluate --profile zero-idle
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
+./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ```
 
 The repo proves:
@@ -113,8 +115,9 @@ The repo proves:
 - public ingress routing to the real inference workload
 - HPA-driven scale-out from one to two replicas with two different policy
   signals
+- target calibration experiments for the active-pressure policy
 - second-node provisioning through Karpenter
-- report generation for latency, TTFT queue proxy, waiting pressure,
+- report generation for latency, derived queue wait, TTFT, waiting pressure,
   utilization, and cost
 
 ## Manual Validation
@@ -147,6 +150,7 @@ curl "http://${EDGE_HOST}/v1/completions" \
 
 ## Next Improvement
 
-The next step is not another serving component. It is GPU efficiency work:
-learning how many concurrent requests a single GPU-backed pod can handle before
-latency, queue pressure, or utilization say it is time to scale.
+The next step is not another serving component. It is better capacity evidence:
+adding a dedicated queue-wait metric if possible, then learning how many
+concurrent requests a single GPU-backed pod can handle before latency, queue
+pressure, or utilization say it is time to scale.

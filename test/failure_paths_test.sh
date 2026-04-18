@@ -765,6 +765,199 @@ run_evaluate_compare_second_policy_failure_test() {
   teardown_test_tmpdir
 }
 
+run_evaluate_sweep_second_target_failure_test() {
+  setup_test_tmpdir
+
+  write_stub kubectl \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/kubectl.log\"" \
+"cmd=\"\$*\"" \
+"if [[ \"\$1\" == 'port-forward' ]]; then" \
+"  if [[ \"\$cmd\" == *'kube-prometheus-stack-prometheus'* ]]; then" \
+"    printf '%s\n' 'Forwarding from 127.0.0.1:39090 -> 9090'" \
+"  else" \
+"    printf '%s\n' 'Forwarding from 127.0.0.1:39091 -> 9091'" \
+"  fi" \
+"  sleep 30" \
+"  exit 0" \
+"fi" \
+"case \"\$cmd\" in" \
+"  'get namespace app') exit 1 ;;" \
+"  'create namespace app') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
+"  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true')" \
+"    rm -f \"${TEST_TMPDIR}/load-applied\" \"${TEST_TMPDIR}/load-finished\"" \
+"    exit 0" \
+"    ;;" \
+"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete hpa vllm-openai -n app --ignore-not-found=true')" \
+"    rm -f \"${TEST_TMPDIR}/hpa-applied\"" \
+"    exit 0" \
+"    ;;" \
+"  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true')" \
+"    rm -f \"${TEST_TMPDIR}/deployment-applied\"" \
+"    exit 0" \
+"    ;;" \
+"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get nodes -l workload=gpu -o name')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'node/gpu-serving-1'" \
+"      if [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+"        printf '%s\n' 'node/gpu-serving-2'" \
+"      fi" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'nodeclaim/gpu-serving-1'" \
+"      if [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+"        printf '%s\n' 'nodeclaim/gpu-serving-2'" \
+"      fi" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get nodes -l workload=gpu --sort-by=.metadata.creationTimestamp -o jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'gpu-serving-1'" \
+"      if [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+"        printf '%s\n' 'gpu-serving-2'" \
+"      fi" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g5.xlarge'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-ondemand'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'on-demand'; exit 0 ;;" \
+"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g4dn.xlarge'; exit 0 ;;" \
+"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-spot'; exit 0 ;;" \
+"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'spot'; exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml')" \
+"    : > \"${TEST_TMPDIR}/deployment-applied\"" \
+"    exit 0" \
+"    ;;" \
+"  apply\ -f\ /tmp/gpu-lab-active-hpa.*)" \
+"    : > \"${TEST_TMPDIR}/hpa-applied\"" \
+"    exit 0" \
+"    ;;" \
+"  'get pods -n app -l app=vllm-openai --sort-by=.metadata.creationTimestamp -o jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'vllm-openai-0'" \
+"      if [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+"        printf '%s\n' 'vllm-openai-1'" \
+"      fi" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  get\ pod\ vllm-openai-0\ -n\ app\ -o\ jsonpath=*PodScheduled* ) printf '%s\n' '2026-04-10T20:00:10Z'; exit 0 ;;" \
+"  get\ pod\ vllm-openai-0\ -n\ app\ -o\ jsonpath=*containerStatuses*running.startedAt* ) printf '%s\n' '2026-04-10T20:01:30Z'; exit 0 ;;" \
+"  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
+"  'get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active')" \
+"    metric_check_count=0" \
+"    if [[ -f \"${TEST_TMPDIR}/active-metric-check-count\" ]]; then" \
+"      metric_check_count=\$(cat \"${TEST_TMPDIR}/active-metric-check-count\")" \
+"    fi" \
+"    metric_check_count=\$((metric_check_count + 1))" \
+"    printf '%s\n' \"\${metric_check_count}\" > \"${TEST_TMPDIR}/active-metric-check-count\"" \
+"    if [[ \"\${metric_check_count}\" == '1' ]]; then" \
+"      printf '%s\n' '{\"kind\":\"MetricValueList\",\"items\":[{\"value\":\"320\"}]}'" \
+"      exit 0" \
+"    fi" \
+"    exit 1" \
+"    ;;" \
+"  'apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml')" \
+"    : > \"${TEST_TMPDIR}/load-applied\"" \
+"    rm -f \"${TEST_TMPDIR}/load-finished\"" \
+"    exit 0" \
+"    ;;" \
+"  'get job gpu-load-test -n app -o jsonpath={.status.conditions[?(@.type=='\"'\"'Complete'\"'\"')].status}')" \
+"    if [[ -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+"      printf '%s\n' 'True'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get hpa vllm-openai -n app -o jsonpath={.status.desiredReplicas}')" \
+"    if [[ -f \"${TEST_TMPDIR}/hpa-applied\" ]]; then" \
+"      if [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+"        printf '%s\n' '2'" \
+"      else" \
+"        printf '%s\n' '1'" \
+"      fi" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get deployment vllm-openai -n app -o jsonpath={.status.readyReplicas}')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      if [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+"        printf '%s\n' '2'" \
+"      else" \
+"        printf '%s\n' '1'" \
+"      fi" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'wait --for=condition=complete job/gpu-load-test -n app --timeout=1200s')" \
+"    rm -f \"${TEST_TMPDIR}/load-applied\"" \
+"    : > \"${TEST_TMPDIR}/load-finished\"" \
+"    exit 0" \
+"    ;;" \
+"  'get hpa vllm-openai -n app') exit 1 ;;" \
+"  'get deployment vllm-openai -n app') exit 1 ;;" \
+"  *) exit 0 ;;" \
+"esac"
+
+  write_stub curl \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/curl.log\"" \
+"cmd=\"\$*\"" \
+"if [[ \"\$cmd\" == *'/api/v1/query'* ]]; then" \
+"  printf '%s' '{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{},\"value\":[1712781000,\"1.25\"]}]}}'" \
+"  exit 0" \
+"fi" \
+"if [[ \"\$cmd\" == *'--data-binary @'* ]]; then" \
+"  exit 0" \
+"fi" \
+"printf '200'"
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" \
+    TMPDIR=/tmp \
+    POLL_INTERVAL_SECONDS=0 \
+    MONITORING_TIMEOUT_SECONDS=1 \
+    /bin/bash "${REPO_ROOT}/scripts/evaluate" --profile zero-idle --policy sweep --active-targets 2,4,8 --report "${TEST_TMPDIR}/sweep.md" --json-report "${TEST_TMPDIR}/sweep.json"
+
+  assert_status 1 "${COMMAND_STATUS}" "sweep mode should stop when a later target cannot resolve its metric"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 5/10 active-pressure@4: wait for hpa metric pipeline and apply hpa" "sweep mode should surface the later target metric preflight failure"
+  assert_not_contains "${COMMAND_OUTPUT}" "Swept:" "sweep mode should not print a sweep summary when a later target fails"
+  assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-target-2.md" "sweep mode should preserve the completed target-2 Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-target-2.json" "sweep mode should preserve the completed target-2 JSON report"
+  assert_file_not_exists "${TEST_TMPDIR}/sweep-active-pressure-target-4.md" "sweep mode should stop before writing the failing target-4 Markdown report"
+  assert_file_not_exists "${TEST_TMPDIR}/sweep-active-pressure-target-4.json" "sweep mode should stop before writing the failing target-4 JSON report"
+  assert_file_not_exists "${TEST_TMPDIR}/sweep-active-pressure-target-8.md" "sweep mode should stop before reaching the target-8 Markdown report"
+  assert_file_not_exists "${TEST_TMPDIR}/sweep-active-pressure-target-8.json" "sweep mode should stop before reaching the target-8 JSON report"
+  assert_file_not_exists "${TEST_TMPDIR}/sweep-active-pressure-sweep.md" "sweep mode should not write the sweep Markdown report when a later target fails"
+  assert_file_not_exists "${TEST_TMPDIR}/sweep-active-pressure-sweep.json" "sweep mode should not write the sweep JSON report when a later target fails"
+
+  KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
+  CURL_LOG=$(cat "${TEST_TMPDIR}/curl.log")
+  ACTIVE_METRIC_CHECK_COUNT=$(printf '%s\n' "${KUBECTL_LOG}" | awk -v needle="get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active" 'index($0, needle) { count++ } END { print count + 0 }')
+  ACTIVE_HPA_APPLY_COUNT=$(printf '%s\n' "${KUBECTL_LOG}" | awk -v needle="apply -f /tmp/gpu-lab-active-hpa." 'index($0, needle) { count++ } END { print count + 0 }')
+
+  if (( ACTIVE_METRIC_CHECK_COUNT < 2 )); then
+    fail "sweep mode should preflight the active metric for the successful and failing targets"
+  fi
+  assert_eq "1" "${ACTIVE_HPA_APPLY_COUNT}" "sweep mode should only apply the rendered active-pressure HPA for the successful first target"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/2" "sweep mode should keep the first successful target push"
+  assert_not_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/4" "sweep mode should stop before pushing the failing target summary"
+
+  teardown_test_tmpdir
+}
+
 run_evaluate_compare_warm_profile_capacity_timeout_test() {
   setup_test_tmpdir
 
@@ -921,5 +1114,6 @@ run_evaluate_metric_pipeline_timeout_test
 run_evaluate_active_pressure_metric_pipeline_timeout_test
 run_evaluate_scale_out_timeout_test
 run_evaluate_compare_second_policy_failure_test
+run_evaluate_sweep_second_target_failure_test
 run_down_alb_timeout_test
 run_down_cluster_unreachable_test

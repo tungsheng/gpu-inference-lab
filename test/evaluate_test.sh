@@ -162,7 +162,11 @@ write_evaluate_curl_stub() {
 "cmd=\"\$*\"" \
 "if [[ \"\$cmd\" == *'/api/v1/query'* ]]; then" \
 "  value='1.25'" \
-"  if [[ \"\$cmd\" == *'sum(vllm:num_requests_running'* && \"\$cmd\" == *'sum(vllm:num_requests_waiting'* ]]; then" \
+"  if [[ \"\$cmd\" == *'num_requests_waiting'* && \"\$cmd\" == *'e2e_request_latency_seconds_count'* ]]; then" \
+"    value='0.420'" \
+"  elif [[ \"\$cmd\" == *'e2e_request_latency_seconds_count'* ]]; then" \
+"    value='18.0'" \
+"  elif [[ \"\$cmd\" == *'sum(vllm:num_requests_running'* && \"\$cmd\" == *'sum(vllm:num_requests_waiting'* ]]; then" \
 "    value='320'" \
 "  elif [[ \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
 "    value='64'" \
@@ -218,12 +222,17 @@ run_running_policy_test() {
   assert_contains "${REPORT_CONTENT}" "Policy: running" "the Markdown report should include the policy metadata"
   assert_contains "${REPORT_CONTENT}" "HPA metric name: vllm_requests_running" "the Markdown report should include the running metric name"
   assert_contains "${REPORT_CONTENT}" "HPA target average value: 128" "the Markdown report should include the running metric target"
-  assert_contains "${REPORT_CONTENT}" "p95 queue/TTFT proxy during burst" "the Markdown report should label TTFT as a proxy"
+  assert_contains "${REPORT_CONTENT}" "p95 estimated queue wait during burst" "the Markdown report should include the derived queue-wait estimate"
+  assert_contains "${REPORT_CONTENT}" "Peak active requests per active GPU node" "the Markdown report should include the per-GPU active-request readout"
+  assert_contains "${REPORT_CONTENT}" "Capacity assessment: balanced" "the Markdown report should summarize the capacity assessment"
   assert_contains "${REPORT_CONTENT}" "Peak waiting requests" "the Markdown report should include peak waiting requests"
   assert_contains "${REPORT_CONTENT}" "Peak active requests" "the Markdown report should include peak active requests"
   assert_contains "${JSON_REPORT_CONTENT}" "\"policy\": \"running\"" "the JSON report should include the running policy"
   assert_contains "${JSON_REPORT_CONTENT}" "\"hpa_metric_name\": \"vllm_requests_running\"" "the JSON report should include the running metric name"
   assert_contains "${JSON_REPORT_CONTENT}" "\"hpa_target_average_value\": \"128\"" "the JSON report should include the running target"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"p95_estimated_queue_wait_seconds\": 0.420" "the JSON report should include the derived queue-wait estimate"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"peak_active_requests_per_gpu_node\": 160.000" "the JSON report should include the per-GPU active-request readout"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"status\": \"balanced\"" "the JSON report should include the capacity assessment status"
   assert_contains "${JSON_REPORT_CONTENT}" "\"peak_waiting_requests\": 64" "the JSON report should include peak waiting requests"
   assert_contains "${JSON_REPORT_CONTENT}" "\"peak_active_requests\": 320" "the JSON report should include peak active requests"
   assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/inference/hpa.yaml" "running policy should apply the checked-in running HPA"
@@ -232,7 +241,7 @@ run_running_policy_test() {
     "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running" \
     "apply -f ${REPO_ROOT}/platform/inference/hpa.yaml" \
     "running policy should wait for the running metric before applying the HPA"
-  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/running" "running policy should push summary metrics with the policy label in the Pushgateway path"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/running/target/128" "running policy should push summary metrics with policy and target labels in the Pushgateway path"
 
   teardown_test_tmpdir
 }
@@ -271,9 +280,12 @@ run_active_pressure_policy_test() {
   assert_contains "${REPORT_CONTENT}" "Policy: active-pressure" "the Markdown report should include the active-pressure policy"
   assert_contains "${REPORT_CONTENT}" "HPA metric name: vllm_requests_active" "the Markdown report should include the active metric name"
   assert_contains "${REPORT_CONTENT}" "HPA target average value: 6" "the Markdown report should include the overridden active target"
+  assert_contains "${REPORT_CONTENT}" "Capacity assessment: saturated" "the Markdown report should call out the saturated active-pressure run"
   assert_contains "${JSON_REPORT_CONTENT}" "\"policy\": \"active-pressure\"" "the JSON report should include the active-pressure policy"
   assert_contains "${JSON_REPORT_CONTENT}" "\"hpa_metric_name\": \"vllm_requests_active\"" "the JSON report should include the active metric name"
   assert_contains "${JSON_REPORT_CONTENT}" "\"hpa_target_average_value\": \"6\"" "the JSON report should include the overridden active target"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"p95_estimated_queue_wait_seconds\": 0.420" "the JSON report should include the derived queue-wait estimate"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"status\": \"saturated\"" "the JSON report should include the capacity assessment status"
   assert_contains "${APPLIED_ACTIVE_HPA_CONTENT}" "name: vllm_requests_active" "the rendered HPA manifest should target the active metric"
   assert_contains "${APPLIED_ACTIVE_HPA_CONTENT}" "averageValue: \"6\"" "the rendered HPA manifest should include the overridden target"
   assert_contains "${KUBECTL_LOG}" "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active" "active-pressure should preflight the active metric"
@@ -282,7 +294,7 @@ run_active_pressure_policy_test() {
     "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active" \
     "apply -f /tmp/gpu-lab-active-hpa." \
     "active-pressure should wait for the active metric before applying the rendered HPA"
-  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure" "active-pressure should push summary metrics with the policy label in the Pushgateway path"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/6" "active-pressure should push summary metrics with policy and target labels in the Pushgateway path"
 
   teardown_test_tmpdir
 }
@@ -321,16 +333,19 @@ run_compare_policy_test() {
   CURL_LOG=$(cat "${TEST_TMPDIR}/curl.log")
 
   assert_contains "${COMPARE_REPORT_CONTENT}" "| p95 request latency |" "the compare report should include the side-by-side metric table"
+  assert_contains "${COMPARE_REPORT_CONTENT}" "| p95 estimated queue wait |" "the compare report should include the derived queue-wait row"
   assert_contains "${COMPARE_REPORT_CONTENT}" "| running | vllm_requests_running | 128 |" "the compare report should include the running policy settings"
   assert_contains "${COMPARE_REPORT_CONTENT}" "| active-pressure | vllm_requests_active | 6 |" "the compare report should include the active-pressure settings"
+  assert_contains "${COMPARE_REPORT_CONTENT}" "| Capacity assessment | balanced | saturated |" "the compare report should compare the efficiency assessment"
   assert_contains "${COMPARE_JSON_CONTENT}" "\"running\":" "the compare JSON report should include the running section"
   assert_contains "${COMPARE_JSON_CONTENT}" "\"active_pressure\":" "the compare JSON report should include the active-pressure section"
+  assert_contains "${COMPARE_JSON_CONTENT}" "\"p95_estimated_queue_wait_seconds\": 0.420" "the compare JSON report should include the derived queue-wait estimate"
   assert_occurs_before "${KUBECTL_LOG}" \
     "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running" \
     "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active" \
     "compare mode should execute the running policy before the active-pressure policy"
-  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/warm-1/policy/running" "compare mode should push running-policy summary metrics with the policy label"
-  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/warm-1/policy/active-pressure" "compare mode should push active-pressure summary metrics with the policy label"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/warm-1/policy/running/target/128" "compare mode should push running-policy summary metrics with policy and target labels"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/warm-1/policy/active-pressure/target/6" "compare mode should push active-pressure summary metrics with policy and target labels"
 
   WARM_PLACEHOLDER_APPLY_COUNT=$(printf '%s\n' "${KUBECTL_LOG}" | awk -v needle="apply -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml" 'index($0, needle) { count++ } END { print count + 0 }')
   assert_eq "2" "${WARM_PLACEHOLDER_APPLY_COUNT}" "compare mode should restore the warm baseline for both policy runs"
@@ -338,6 +353,67 @@ run_compare_policy_test() {
   teardown_test_tmpdir
 }
 
+run_sweep_policy_test() {
+  setup_test_tmpdir
+  write_evaluate_kubectl_stub
+  write_evaluate_curl_stub
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
+    TMPDIR=/tmp \
+    /bin/bash "${REPO_ROOT}/scripts/evaluate" \
+    --profile zero-idle \
+    --policy sweep \
+    --active-targets 2,4,8 \
+    --report "${TEST_TMPDIR}/sweep.md" \
+    --json-report "${TEST_TMPDIR}/sweep.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/evaluate should complete the sweep workflow"
+  assert_contains "${COMMAND_OUTPUT}" "OK 1/10 active-pressure@2: checking prerequisites" "sweep mode should prefix stages with the first target"
+  assert_contains "${COMMAND_OUTPUT}" "OK 1/10 active-pressure@8: checking prerequisites" "sweep mode should execute later active targets in order"
+  assert_contains "${COMMAND_OUTPUT}" "Swept:" "sweep mode should print a sweep summary"
+  assert_contains "${COMMAND_OUTPUT}" "Recommended active target: 8" "sweep mode should print the recommended target"
+  assert_contains "${COMMAND_OUTPUT}" "Sweep report: ${TEST_TMPDIR}/sweep-active-pressure-sweep.md" "sweep mode should print the sweep Markdown report path"
+
+  assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-target-2.md" "sweep mode should write the target-2 Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-target-2.json" "sweep mode should write the target-2 JSON report"
+  assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-target-4.md" "sweep mode should write the target-4 Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-target-4.json" "sweep mode should write the target-4 JSON report"
+  assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-target-8.md" "sweep mode should write the target-8 Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-target-8.json" "sweep mode should write the target-8 JSON report"
+  assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-sweep.md" "sweep mode should write the sweep Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-sweep.json" "sweep mode should write the sweep JSON report"
+
+  SWEEP_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/sweep-active-pressure-sweep.md")
+  SWEEP_JSON_CONTENT=$(cat "${TEST_TMPDIR}/sweep-active-pressure-sweep.json")
+  KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
+  CURL_LOG=$(cat "${TEST_TMPDIR}/curl.log")
+
+  assert_contains "${SWEEP_REPORT_CONTENT}" "| Active target | Status |" "the sweep report should include the per-target summary table"
+  assert_contains "${SWEEP_REPORT_CONTENT}" "p95 estimated queue wait" "the sweep report should include the derived queue-wait column"
+  assert_contains "${SWEEP_REPORT_CONTENT}" "| 2 | saturated |" "the sweep report should include the first evaluated target"
+  assert_contains "${SWEEP_REPORT_CONTENT}" "| 8 | saturated |" "the sweep report should include the last evaluated target"
+  assert_contains "${SWEEP_REPORT_CONTENT}" "Recommended active target: 8" "the sweep report should include the recommended target"
+  assert_contains "${SWEEP_REPORT_CONTENT}" "## Target Interpretation" "the sweep report should explain why each target looked efficient or wasteful"
+  assert_contains "${SWEEP_JSON_CONTENT}" "\"mode\": \"sweep\"" "the sweep JSON report should mark the sweep mode"
+  assert_contains "${SWEEP_JSON_CONTENT}" "\"active_target\": 8" "the sweep JSON report should include the recommended target"
+  assert_contains "${SWEEP_JSON_CONTENT}" "\"active_target\": 2" "the sweep JSON report should include the first target result"
+  assert_contains "${SWEEP_JSON_CONTENT}" "\"active_target\": 4" "the sweep JSON report should include the second target result"
+  assert_contains "${SWEEP_JSON_CONTENT}" "\"p95_estimated_queue_wait_seconds\": 0.420" "the sweep JSON report should include the derived queue-wait estimate"
+  assert_contains "${KUBECTL_LOG}" "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active" "sweep mode should preflight the active metric"
+  assert_occurs_before "${CURL_LOG}" \
+    "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/2" \
+    "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/4" \
+    "sweep mode should push target-2 metrics before target-4 metrics"
+  assert_occurs_before "${CURL_LOG}" \
+    "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/4" \
+    "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/8" \
+    "sweep mode should push target-4 metrics before target-8 metrics"
+
+  teardown_test_tmpdir
+}
+
 run_running_policy_test
 run_active_pressure_policy_test
 run_compare_policy_test
+run_sweep_policy_test

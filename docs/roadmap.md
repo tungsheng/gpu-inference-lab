@@ -15,9 +15,10 @@ infrastructure lessons:
 The repo is now in a much stronger place. It proves two clear operator paths:
 
 - `./scripts/verify` cold-starts the public inference edge from zero GPU nodes
-- `./scripts/evaluate --profile zero-idle|warm-1 --policy running|active-pressure|compare`
-  drives HPA scale-out, compares autoscaling signals, triggers a second GPU
-  node, and writes latency, utilization, and cost reports
+- `./scripts/evaluate --profile zero-idle|warm-1 --policy running|active-pressure|compare|sweep`
+  drives HPA scale-out, compares autoscaling signals, calibrates
+  active-pressure targets, triggers a second GPU node, and writes latency,
+  utilization, and cost reports
 
 What is already implemented:
 
@@ -34,10 +35,10 @@ What is already implemented:
 What is still not true:
 
 - the environment is still dev-oriented, not production-hardened
-- queue time is still represented through a TTFT proxy rather than a dedicated
-  queue-wait histogram
-- the active-pressure target is still hand-tuned rather than derived from
-  per-GPU efficiency data
+- queue time is derived rather than emitted from a dedicated queue-wait
+  histogram
+- the active-pressure target can now be swept heuristically, but it is still
+  not derived from a true per-GPU efficiency model
 - the repo does not yet prove GPU bin-packing efficiency
 - spot interruption handling and deeper resilience experiments are still ahead
 
@@ -135,23 +136,29 @@ Outcome:
 - a new active-pressure metric `vllm_requests_active = waiting + running`
 - a second HPA manifest for the active-pressure policy
 - `./scripts/evaluate --policy running|active-pressure|compare`
-- per-policy plus compare reports with queue proxy, waiting pressure, GPU
+- per-policy plus compare reports with queue, waiting pressure, GPU
   utilization, NodeClaim count, and burst cost
 
-### Milestone 10 - GPU bin packing and multi-request efficiency
+### Milestone 10 - GPU efficiency calibration and bin packing
 
-Status: planned.
+Status: implemented.
+
+Outcome:
+
+- `./scripts/evaluate --policy sweep --active-targets 2,4,6,8`
+- a derived p95 queue-wait estimate built from waiting depth over request
+  completion rate
+- per-target Markdown and JSON artifacts with per-GPU active-request and GPU
+  headroom readouts
+- sweep and compare reports that explain whether the current node shape looked
+  saturated, balanced, or wasteful
+- dashboard and Pushgateway labels that distinguish profile, policy, and
+  target while exposing queue-wait and per-GPU efficiency metrics
 
 Why this follows Milestone 9:
 
 - once scaling is tied to a better pressure signal, the next question is how
   much useful work each GPU node can do
-
-Completion should look like:
-
-- experiments that show one GPU can sustain a measurable active-request load
-- clearer reasoning about per-node GPU utilization and stranded capacity
-- report language that explains why a node shape was efficient or wasteful
 
 ### Milestone 11 - Resilience and interruption handling
 

@@ -13,6 +13,7 @@ results.
 | `./scripts/evaluate --profile zero-idle` | you want the original baseline experiment | running-request HPA from a true zero-GPU baseline |
 | `./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4` | you want the capacity-aware experiment directly | active-pressure HPA from the same zero-GPU baseline |
 | `./scripts/evaluate --profile warm-1 --policy compare --active-target 6` | you want the most informative operator readout | sequential running versus active-pressure comparison with one warm on-demand serving node |
+| `./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8` | you want to tune active-pressure capacity instead of just proving it exists | per-target active-pressure experiments plus a recommendation summary |
 | `./scripts/down` | you want a clean teardown | runtime surface, observability, capacity definitions, and Terraform infrastructure are removed |
 
 ## Expected States
@@ -38,6 +39,7 @@ After `./scripts/evaluate`:
 - single-policy runs wrote `evaluate-<profile>-<policy>-<timestamp>.md` and
   `.json`
 - compare runs wrote the two per-policy artifacts plus a compare summary report
+- sweep runs wrote one per-target report pair plus a sweep summary report
 - the overall workflow returned profile-specific warm capacity to zero GPU nodes
 
 ## Questions This Repo Can Answer Today
@@ -48,9 +50,12 @@ After `./scripts/evaluate`:
 - How long does the first pod take to become Ready?
 - How does `vllm_requests_running` compare with
   `vllm_requests_active = waiting + running` as the HPA signal?
+- Which `--active-target` looks healthiest for this burst shape before latency,
+  queue pressure, or GPU saturation turn ugly?
 - Does scale-out trigger a second serving node?
-- What do p95 latency, TTFT, peak waiting requests, peak active requests,
-  throughput, and GPU utilization look like during a controlled burst?
+- What do p95 latency, estimated queue wait, TTFT, peak waiting requests, peak
+  active requests, throughput, and GPU utilization look like during a
+  controlled burst?
 - What do you gain or pay by keeping one warm GPU node around?
 
 ## Observability And Artifacts
@@ -64,7 +69,7 @@ The scripted workflow ships with:
 - DCGM exporter metrics for GPU utilization
 - `docs/reports/*.md` and `docs/reports/*.json` outputs from
   `./scripts/evaluate`
-- Pushgateway experiment metrics labeled by both `profile` and `policy`
+- Pushgateway experiment metrics labeled by `profile`, `policy`, and target
 
 ## What To Watch During A Run
 
@@ -88,9 +93,10 @@ kubectl port-forward -n monitoring deployment/kube-prometheus-stack-grafana 3000
 The repo now compares both autoscaling policies, but the control loop is still
 intentionally simple:
 
-- queue reporting is still inferred from p95 TTFT plus peak waiting requests
-- the active-pressure target is manually tuned per experiment through
-  `--active-target`
+- queue reporting is derived from waiting depth over request completion rate,
+  not a dedicated queue-wait histogram
+- the sweep recommendation is still heuristic rather than backed by a dedicated
+  queue histogram or full per-GPU capacity model
 - the next scaling question is GPU efficiency and bin packing, not whether the
   HPA can see pressure at all
 

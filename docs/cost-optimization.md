@@ -26,6 +26,7 @@ Run both with:
 ./scripts/evaluate --profile zero-idle
 ./scripts/evaluate --profile warm-1
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
+./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ```
 
 ## Mixed Capacity Story
@@ -49,12 +50,15 @@ Each evaluation report includes:
 - first and second GPU capacity type
 - first response timing
 - HPA scale-out timing
-- p95 request latency and p95 time to first token
+- p95 request latency, p95 estimated queue wait, and p95 time to first token
+- peak active requests per active GPU node
 - generation throughput
 - average and max GPU utilization
 - peak active serving `NodeClaim` count, split by capacity type
 - estimated idle cost per hour for the profile
 - estimated burst cost for the run, split by capacity type
+- and, in sweep mode, the per-target cost and utilization table that supports
+  the recommended active target
 
 ## What The Cost Estimate Actually Covers
 
@@ -92,6 +96,7 @@ Prefer `warm-1` when:
 ## What Comes Next
 
 The next cost optimization step is not another pricing table. It is better
-per-GPU efficiency data. Now that the repo can compare the running baseline with
-the active-pressure policy, the next cost question is how many useful requests a
-single GPU-backed pod should absorb before scaling.
+per-GPU efficiency data. Now that the repo can compare the running baseline,
+sweep active-pressure targets, and score burst cost side by side, the next cost
+question is how many useful requests a single GPU-backed pod should absorb
+before scaling.

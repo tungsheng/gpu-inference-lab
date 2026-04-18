@@ -13,7 +13,7 @@ The project now proves all of the following in one repo:
 - Karpenter-owned GPU capacity with no managed GPU node group
 - observability and custom metrics in the default scripted path
 - two experiment profiles: `zero-idle` and `warm-1`
-- two autoscaling policies plus a compare workflow
+- two autoscaling policies plus compare and sweep workflows
 
 That makes the repository a credible ML platform lab rather than only a cluster
 bootstrap demo.
@@ -55,7 +55,8 @@ Success for the dynamic serving path looks like:
 
 ## What Is Still Missing
 
-The repo now has the capacity-aware signal, so the missing piece is no longer
-"can the HPA see pressure?" It is "how much useful work should one GPU-backed
-pod absorb before scaling?" The next milestone is GPU bin packing and
-per-request efficiency, not more AWS surface area.
+The repo now has the capacity-aware signal and an active-target sweep workflow,
+so the missing piece is no longer "can the HPA see pressure?" It is "how much
+useful work should one GPU-backed pod absorb before scaling?" The next
+milestone is GPU bin packing and per-request efficiency, not more AWS surface
+area.

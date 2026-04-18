@@ -10,6 +10,7 @@ TOTAL_STAGES=10
 EVALUATION_PROFILE="zero-idle"
 EVALUATION_POLICY="running"
 ACTIVE_PRESSURE_TARGET=4
+ACTIVE_TARGETS_INPUT=""
 EVALUATION_TIMESTAMP=""
 USER_REPORT_PATH=""
 USER_JSON_REPORT_PATH=""
@@ -17,6 +18,8 @@ REPORT_PATH=""
 JSON_REPORT_PATH=""
 COMPARE_REPORT_PATH=""
 COMPARE_JSON_REPORT_PATH=""
+SWEEP_REPORT_PATH=""
+SWEEP_JSON_REPORT_PATH=""
 
 DEPLOYMENT_APPLIED=0
 HPA_APPLIED=0
@@ -34,11 +37,14 @@ PUSHGATEWAY_PORT_FORWARD_PID=""
 PUSHGATEWAY_PORT_FORWARD_LOG=""
 METRIC_SEED_REQUEST_PIDS=()
 TEMP_FILES=()
+declare -a ACTIVE_TARGET_SWEEP_VALUES=()
 WAIT_CONTEXT_LOG_INTERVAL_SECONDS="${WAIT_CONTEXT_LOG_INTERVAL_SECONDS:-30}"
 CURRENT_POLICY=""
 CURRENT_HPA_MANIFEST_PATH=""
 CURRENT_HPA_METRIC_NAME=""
 CURRENT_HPA_TARGET_AVERAGE_VALUE=""
+CURRENT_REPORT_KEY=""
+CURRENT_STAGE_PREFIX=""
 
 EVALUATION_START_TIME=""
 FIRST_NODECLAIM_TIME=""
@@ -68,13 +74,17 @@ CLEANUP_FINISH_TIME=""
 POLICY_FINISH_TIME=""
 
 P95_REQUEST_LATENCY_SECONDS=""
+P95_ESTIMATED_QUEUE_WAIT_SECONDS=""
 P95_TTFT_SECONDS=""
 PEAK_WAITING_REQUESTS=""
 PEAK_ACTIVE_REQUESTS=""
 PEAK_RUNNING_REQUESTS=""
+AVG_COMPLETED_REQUESTS_PER_SECOND=""
 AVG_GENERATION_TOKENS_PER_SECOND=""
 AVG_GPU_UTILIZATION_PERCENT=""
+AVG_GPU_HEADROOM_PERCENT=""
 MAX_GPU_UTILIZATION_PERCENT=""
+PEAK_ACTIVE_REQUESTS_PER_GPU_NODE=""
 PEAK_ACTIVE_NODECLAIMS=""
 PEAK_ACTIVE_ONDEMAND_NODECLAIMS=""
 PEAK_ACTIVE_SPOT_NODECLAIMS=""
@@ -84,17 +94,23 @@ ESTIMATED_IDLE_COST_ONDEMAND_PER_HOUR=""
 ESTIMATED_IDLE_COST_SPOT_PER_HOUR=""
 ESTIMATED_BURST_COST_ONDEMAND=""
 ESTIMATED_BURST_COST_SPOT=""
+CAPACITY_ASSESSMENT=""
+CAPACITY_ASSESSMENT_REASON=""
+SWEEP_RECOMMENDED_TARGET=""
+SWEEP_RECOMMENDATION_STATUS=""
+SWEEP_RECOMMENDATION_REASON=""
 
 usage() {
   cat <<EOF
 Usage:
-  ./scripts/evaluate [--profile zero-idle|warm-1] [--policy running|active-pressure|compare] [--active-target requests] [--report path] [--json-report path]
+  ./scripts/evaluate [--profile zero-idle|warm-1] [--policy running|active-pressure|compare|sweep] [--active-target requests] [--active-targets csv] [--report path] [--json-report path]
 
 Examples:
   ./scripts/evaluate --profile zero-idle
   ./scripts/evaluate --profile warm-1
   ./scripts/evaluate --profile zero-idle --policy active-pressure
   ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
+  ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
   ./scripts/evaluate --profile zero-idle --report docs/reports/latest.md
 EOF
 }
@@ -125,6 +141,10 @@ parse_args() {
         ;;
       --active-target)
         ACTIVE_PRESSURE_TARGET=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --active-targets)
+        ACTIVE_TARGETS_INPUT=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       --report)
@@ -158,11 +178,11 @@ parse_args() {
   esac
 
   case "${EVALUATION_POLICY}" in
-    running|active-pressure|compare)
+    running|active-pressure|compare|sweep)
       ;;
     *)
       printf 'Unsupported policy: %s\n' "${EVALUATION_POLICY}" >&2
-      printf 'Supported policies: running, active-pressure, compare\n' >&2
+      printf 'Supported policies: running, active-pressure, compare, sweep\n' >&2
       exit 1
       ;;
   esac
@@ -173,7 +193,64 @@ parse_args() {
     exit 1
   fi
 
+  parse_active_targets_input
+
+  if [[ "${EVALUATION_POLICY}" == "sweep" ]]; then
+    if [[ -z "${ACTIVE_TARGETS_INPUT}" ]]; then
+      printf 'The sweep workflow requires --active-targets with at least two values\n' >&2
+      exit 1
+    fi
+
+    if ((${#ACTIVE_TARGET_SWEEP_VALUES[@]} < 2)); then
+      printf 'The sweep workflow requires at least two distinct active-target values\n' >&2
+      exit 1
+    fi
+  elif [[ -n "${ACTIVE_TARGETS_INPUT}" ]]; then
+    printf '--active-targets is only supported with --policy sweep\n' >&2
+    exit 1
+  fi
+
   EVALUATION_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+}
+
+parse_active_targets_input() {
+  local -a raw_targets=()
+  local raw_target
+  local normalized_target
+  local existing_target
+  local duplicate_found
+
+  ACTIVE_TARGET_SWEEP_VALUES=()
+
+  if [[ -z "${ACTIVE_TARGETS_INPUT}" ]]; then
+    return 0
+  fi
+
+  IFS=',' read -r -a raw_targets <<< "${ACTIVE_TARGETS_INPUT}"
+
+  for raw_target in "${raw_targets[@]}"; do
+    normalized_target=$(printf '%s' "${raw_target}" | tr -d '[:space:]')
+
+    if [[ ! "${normalized_target}" =~ ^[1-9][0-9]*$ ]]; then
+      printf 'Unsupported sweep target: %s\n' "${raw_target}" >&2
+      printf 'Expected --active-targets as a comma-separated list of positive integers\n' >&2
+      exit 1
+    fi
+
+    duplicate_found=0
+    if ((${#ACTIVE_TARGET_SWEEP_VALUES[@]} > 0)); then
+      for existing_target in "${ACTIVE_TARGET_SWEEP_VALUES[@]}"; do
+        if [[ "${existing_target}" == "${normalized_target}" ]]; then
+          duplicate_found=1
+          break
+        fi
+      done
+    fi
+
+    if [[ "${duplicate_found}" == "0" ]]; then
+      ACTIVE_TARGET_SWEEP_VALUES+=("${normalized_target}")
+    fi
+  done
 }
 
 strip_report_extension() {
@@ -192,32 +269,19 @@ strip_report_extension() {
   esac
 }
 
-compare_policy_name() {
-  local policy=$1
-
-  case "${policy}" in
-    running|active-pressure)
-      printf '%s\n' "${policy}"
-      ;;
-    *)
-      printf 'compare\n'
-      ;;
-  esac
-}
-
 default_report_stem() {
-  local policy=$1
+  local report_key=$1
 
   printf '%s/docs/reports/evaluate-%s-%s-%s\n' \
     "${REPO_ROOT}" \
     "${EVALUATION_PROFILE}" \
-    "$(compare_policy_name "${policy}")" \
+    "${report_key}" \
     "${EVALUATION_TIMESTAMP}"
 }
 
 user_report_stem() {
   local preferred_path=$1
-  local default_policy=$2
+  local default_report_key=$2
 
   if [[ -n "${preferred_path}" ]]; then
     strip_report_extension "${preferred_path}"
@@ -229,16 +293,16 @@ user_report_stem() {
     return 0
   fi
 
-  default_report_stem "${default_policy}"
+  default_report_stem "${default_report_key}"
 }
 
-resolve_report_path_for_policy() {
-  local policy=$1
+resolve_report_path_for_key() {
+  local report_key=$1
   local stem
 
-  if [[ "${EVALUATION_POLICY}" == "compare" ]]; then
-    stem=$(user_report_stem "${USER_REPORT_PATH}" "${policy}")
-    printf '%s-%s.md\n' "${stem}" "$(compare_policy_name "${policy}")"
+  if is_multi_run_mode; then
+    stem=$(user_report_stem "${USER_REPORT_PATH}" "${report_key}")
+    printf '%s-%s.md\n' "${stem}" "${report_key}"
     return 0
   fi
 
@@ -247,16 +311,16 @@ resolve_report_path_for_policy() {
     return 0
   fi
 
-  printf '%s.md\n' "$(default_report_stem "${policy}")"
+  printf '%s.md\n' "$(default_report_stem "${report_key}")"
 }
 
-resolve_json_report_path_for_policy() {
-  local policy=$1
+resolve_json_report_path_for_key() {
+  local report_key=$1
   local stem
 
-  if [[ "${EVALUATION_POLICY}" == "compare" ]]; then
-    stem=$(user_report_stem "${USER_JSON_REPORT_PATH:-${USER_REPORT_PATH}}" "${policy}")
-    printf '%s-%s.json\n' "${stem}" "$(compare_policy_name "${policy}")"
+  if is_multi_run_mode; then
+    stem=$(user_report_stem "${USER_JSON_REPORT_PATH:-${USER_REPORT_PATH}}" "${report_key}")
+    printf '%s-%s.json\n' "${stem}" "${report_key}"
     return 0
   fi
 
@@ -270,37 +334,7 @@ resolve_json_report_path_for_policy() {
     return 0
   fi
 
-  printf '%s.json\n' "$(default_report_stem "${policy}")"
-}
-
-resolve_compare_report_path() {
-  local stem
-
-  if [[ -n "${USER_REPORT_PATH}" ]]; then
-    stem=$(strip_report_extension "${USER_REPORT_PATH}")
-    printf '%s-compare.md\n' "${stem}"
-    return 0
-  fi
-
-  printf '%s.md\n' "$(default_report_stem compare)"
-}
-
-resolve_compare_json_report_path() {
-  local stem
-
-  if [[ -n "${USER_JSON_REPORT_PATH}" ]]; then
-    stem=$(strip_report_extension "${USER_JSON_REPORT_PATH}")
-    printf '%s-compare.json\n' "${stem}"
-    return 0
-  fi
-
-  if [[ -n "${USER_REPORT_PATH}" ]]; then
-    stem=$(strip_report_extension "${USER_REPORT_PATH}")
-    printf '%s-compare.json\n' "${stem}"
-    return 0
-  fi
-
-  printf '%s.json\n' "$(default_report_stem compare)"
+  printf '%s.json\n' "$(default_report_stem "${report_key}")"
 }
 
 cleanup_evaluate() {
@@ -352,6 +386,14 @@ is_compare_mode() {
   [[ "${EVALUATION_POLICY}" == "compare" ]]
 }
 
+is_sweep_mode() {
+  [[ "${EVALUATION_POLICY}" == "sweep" ]]
+}
+
+is_multi_run_mode() {
+  is_compare_mode || is_sweep_mode
+}
+
 is_active_pressure_policy() {
   [[ "${CURRENT_POLICY}" == "active-pressure" ]]
 }
@@ -359,12 +401,12 @@ is_active_pressure_policy() {
 policy_stage_label() {
   local label=$1
 
-  if [[ "${CURRENT_POLICY}" == "running" && "${EVALUATION_POLICY}" != "compare" ]]; then
+  if [[ -z "${CURRENT_STAGE_PREFIX}" ]]; then
     printf '%s\n' "${label}"
     return 0
   fi
 
-  printf '%s: %s\n' "${CURRENT_POLICY}" "${label}"
+  printf '%s: %s\n' "${CURRENT_STAGE_PREFIX}" "${label}"
 }
 
 reset_policy_measurements() {
@@ -376,6 +418,8 @@ reset_policy_measurements() {
   CURRENT_HPA_MANIFEST_PATH=""
   CURRENT_HPA_METRIC_NAME=""
   CURRENT_HPA_TARGET_AVERAGE_VALUE=""
+  CURRENT_REPORT_KEY=""
+  CURRENT_STAGE_PREFIX=""
 
   EVALUATION_START_TIME=""
   FIRST_NODECLAIM_TIME=""
@@ -405,13 +449,17 @@ reset_policy_measurements() {
   POLICY_FINISH_TIME=""
 
   P95_REQUEST_LATENCY_SECONDS=""
+  P95_ESTIMATED_QUEUE_WAIT_SECONDS=""
   P95_TTFT_SECONDS=""
   PEAK_WAITING_REQUESTS=""
   PEAK_ACTIVE_REQUESTS=""
   PEAK_RUNNING_REQUESTS=""
+  AVG_COMPLETED_REQUESTS_PER_SECOND=""
   AVG_GENERATION_TOKENS_PER_SECOND=""
   AVG_GPU_UTILIZATION_PERCENT=""
+  AVG_GPU_HEADROOM_PERCENT=""
   MAX_GPU_UTILIZATION_PERCENT=""
+  PEAK_ACTIVE_REQUESTS_PER_GPU_NODE=""
   PEAK_ACTIVE_NODECLAIMS=""
   PEAK_ACTIVE_ONDEMAND_NODECLAIMS=""
   PEAK_ACTIVE_SPOT_NODECLAIMS=""
@@ -421,12 +469,20 @@ reset_policy_measurements() {
   ESTIMATED_IDLE_COST_SPOT_PER_HOUR=""
   ESTIMATED_BURST_COST_ONDEMAND=""
   ESTIMATED_BURST_COST_SPOT=""
+  CAPACITY_ASSESSMENT=""
+  CAPACITY_ASSESSMENT_REASON=""
 }
 
 set_policy_context() {
-  CURRENT_POLICY=$1
-  REPORT_PATH=$(resolve_report_path_for_policy "${CURRENT_POLICY}")
-  JSON_REPORT_PATH=$(resolve_json_report_path_for_policy "${CURRENT_POLICY}")
+  local policy=$1
+  local report_key=${2:-$1}
+  local stage_prefix=${3:-}
+
+  CURRENT_POLICY=${policy}
+  CURRENT_REPORT_KEY=${report_key}
+  CURRENT_STAGE_PREFIX=${stage_prefix}
+  REPORT_PATH=$(resolve_report_path_for_key "${CURRENT_REPORT_KEY}")
+  JSON_REPORT_PATH=$(resolve_json_report_path_for_key "${CURRENT_REPORT_KEY}")
 
   if is_active_pressure_policy; then
     CURRENT_HPA_METRIC_NAME="vllm_requests_active"
@@ -1284,6 +1340,48 @@ sum_decimal_values() {
   awk -v left="${left_value}" -v right="${right_value}" 'BEGIN { printf "%.6f\n", left + right }'
 }
 
+divide_decimal_values() {
+  local numerator=${1:-}
+  local denominator=${2:-}
+  local precision=${3:-6}
+
+  if [[ -z "${numerator}" || -z "${denominator}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  awk -v numerator="${numerator}" -v denominator="${denominator}" -v precision="${precision}" '
+    BEGIN {
+      if ((denominator + 0) == 0) {
+        exit 1
+      }
+
+      format = "%." precision "f\n"
+      printf format, (numerator + 0) / (denominator + 0)
+    }' 2>/dev/null || printf '%s\n' ""
+}
+
+subtract_decimal_from_hundred() {
+  local value=${1:-}
+  local precision=${2:-3}
+
+  if [[ -z "${value}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  awk -v value="${value}" -v precision="${precision}" '
+    BEGIN {
+      remainder = 100 - (value + 0)
+      if (remainder < 0) {
+        remainder = 0
+      }
+
+      format = "%." precision "f\n"
+      printf format, remainder
+    }'
+}
+
 estimate_costs() {
   local first_node_hourly_cost
   local second_node_hourly_cost
@@ -1337,7 +1435,9 @@ collect_production_metrics() {
   local active_query
   local running_query
   local latency_query
+  local queue_wait_query
   local ttft_query
+  local request_completion_query
   local throughput_query
   local nodeclaim_query
   local ondemand_nodeclaim_query
@@ -1348,7 +1448,9 @@ collect_production_metrics() {
   active_query="max_over_time(((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}) + sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s]))"
   running_query="max_over_time((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])"
   latency_query="quantile_over_time(0.95, (histogram_quantile(0.95, sum by (le) (rate(vllm:e2e_request_latency_seconds_bucket{namespace=\"${APP_NAMESPACE}\"}[1m]))))[${window}:1m])"
+  queue_wait_query="quantile_over_time(0.95, ((sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}) / clamp_min(sum(rate(vllm:e2e_request_latency_seconds_count{namespace=\"${APP_NAMESPACE}\"}[1m])), 0.001)))[${window}:15s])"
   ttft_query="quantile_over_time(0.95, (histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{namespace=\"${APP_NAMESPACE}\"}[1m]))))[${window}:1m])"
+  request_completion_query="avg_over_time((sum(rate(vllm:e2e_request_latency_seconds_count{namespace=\"${APP_NAMESPACE}\"}[1m])))[${window}:1m])"
   throughput_query="avg_over_time((sum(rate(vllm:generation_tokens_total{namespace=\"${APP_NAMESPACE}\"}[1m])))[${window}:1m])"
   nodeclaim_query="max_over_time(((sum(karpenter_nodeclaims_created_total{nodepool=~\"${KARPENTER_SERVING_NODEPOOL_REGEX}\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=~\"${KARPENTER_SERVING_NODEPOOL_REGEX}\"})))[${window}:1m])"
   ondemand_nodeclaim_query="max_over_time(((sum(karpenter_nodeclaims_created_total{nodepool=\"${KARPENTER_ONDEMAND_NODEPOOL_NAME}\"}) - sum(karpenter_nodeclaims_terminated_total{nodepool=\"${KARPENTER_ONDEMAND_NODEPOOL_NAME}\"})))[${window}:1m])"
@@ -1357,10 +1459,12 @@ collect_production_metrics() {
   ensure_prometheus_local_port || return 1
 
   P95_REQUEST_LATENCY_SECONDS=$(prometheus_query_scalar "${latency_query}") || return 1
+  P95_ESTIMATED_QUEUE_WAIT_SECONDS=$(prometheus_query_scalar "${queue_wait_query}") || return 1
   P95_TTFT_SECONDS=$(prometheus_query_scalar "${ttft_query}") || return 1
   PEAK_WAITING_REQUESTS=$(prometheus_query_scalar "${waiting_query}") || return 1
   PEAK_ACTIVE_REQUESTS=$(prometheus_query_scalar "${active_query}") || return 1
   PEAK_RUNNING_REQUESTS=$(prometheus_query_scalar "${running_query}") || return 1
+  AVG_COMPLETED_REQUESTS_PER_SECOND=$(prometheus_query_scalar "${request_completion_query}") || return 1
   AVG_GENERATION_TOKENS_PER_SECOND=$(prometheus_query_scalar "${throughput_query}") || return 1
   AVG_GPU_UTILIZATION_PERCENT=$(prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])") || return 1
   MAX_GPU_UTILIZATION_PERCENT=$(prometheus_query_scalar "max_over_time((max(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])") || return 1
@@ -1369,6 +1473,7 @@ collect_production_metrics() {
   PEAK_ACTIVE_SPOT_NODECLAIMS=$(prometheus_query_scalar "${spot_nodeclaim_query}") || return 1
 
   estimate_costs
+  derive_capacity_readout
 }
 
 append_pushgateway_metric() {
@@ -1404,7 +1509,7 @@ push_summary_metrics() {
   ensure_pushgateway_local_port || return 0
 
   payload_file=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-pushgateway.XXXXXX")
-  push_path="http://127.0.0.1:${PUSHGATEWAY_LOCAL_PORT}/metrics/job/gpu-serving-measure/profile/${EVALUATION_PROFILE}/policy/${CURRENT_POLICY}"
+  push_path="http://127.0.0.1:${PUSHGATEWAY_LOCAL_PORT}/metrics/job/gpu-serving-measure/profile/${EVALUATION_PROFILE}/policy/${CURRENT_POLICY}/target/${CURRENT_HPA_TARGET_AVERAGE_VALUE}"
 
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_first_gpu_node_seconds" "$(seconds_since_start "${FIRST_GPU_NODE_TIME}")"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_model_ready_seconds" "$(seconds_since_start "${FIRST_READY_TIME}")"
@@ -1415,10 +1520,14 @@ push_summary_metrics() {
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_estimated_idle_cost_per_hour" "${ESTIMATED_IDLE_COST_PER_HOUR}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_estimated_burst_cost" "${ESTIMATED_BURST_COST}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_request_latency_seconds" "${P95_REQUEST_LATENCY_SECONDS}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_estimated_queue_wait_seconds" "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_ttft_seconds" "${P95_TTFT_SECONDS}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_peak_waiting_requests" "${PEAK_WAITING_REQUESTS}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_peak_active_requests" "${PEAK_ACTIVE_REQUESTS}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_average_completed_requests_per_second" "${AVG_COMPLETED_REQUESTS_PER_SECOND}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_average_gpu_utilization_percent" "${AVG_GPU_UTILIZATION_PERCENT}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_average_gpu_headroom_percent" "${AVG_GPU_HEADROOM_PERCENT}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_peak_active_requests_per_gpu_node" "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_peak_active_nodeclaims" "${PEAK_ACTIVE_NODECLAIMS}"
   append_pushgateway_labeled_metric "${payload_file}" "gpu_serving_measure_peak_active_nodeclaims" "capacity_type" "on-demand" "${PEAK_ACTIVE_ONDEMAND_NODECLAIMS}"
   append_pushgateway_labeled_metric "${payload_file}" "gpu_serving_measure_peak_active_nodeclaims" "capacity_type" "spot" "${PEAK_ACTIVE_SPOT_NODECLAIMS}"
@@ -1492,6 +1601,113 @@ display_metric() {
   fi
 
   printf '%s%s' "${value}" "${suffix}"
+}
+
+capacity_assessment_status() {
+  local target=${1:-}
+  local queue_wait_seconds=${2:-}
+  local ttft_seconds=${3:-}
+  local waiting_requests=${4:-}
+  local average_gpu_utilization=${5:-}
+  local max_gpu_utilization=${6:-}
+
+  awk \
+    -v target="${target}" \
+    -v queue_wait="${queue_wait_seconds}" \
+    -v ttft="${ttft_seconds}" \
+    -v waiting="${waiting_requests}" \
+    -v average_gpu="${average_gpu_utilization}" \
+    -v max_gpu="${max_gpu_utilization}" '
+    BEGIN {
+      if (queue_wait == "" || ttft == "" || waiting == "" || average_gpu == "" || max_gpu == "") {
+        print "unknown"
+        exit 0
+      }
+
+      if ((max_gpu + 0) > 95 || (queue_wait + 0) > 1.0 || (ttft + 0) > 1.0) {
+        print "saturated"
+        exit 0
+      }
+
+      if (target != "" && (waiting + 0) > (target + 0)) {
+        print "saturated"
+        exit 0
+      }
+
+      if ((average_gpu + 0) < 55 && (queue_wait + 0) <= 0.25) {
+        if (target == "" || (waiting + 0) <= ((target + 0) / 2)) {
+          print "underutilized"
+          exit 0
+        }
+      }
+
+      print "balanced"
+    }'
+}
+
+capacity_assessment_reason() {
+  local target=${1:-}
+  local status=${2:-}
+  local queue_wait_seconds=${3:-}
+  local ttft_seconds=${4:-}
+  local waiting_requests=${5:-}
+  local average_gpu_utilization=${6:-}
+  local max_gpu_utilization=${7:-}
+
+  case "${status}" in
+    saturated)
+      if awk -v value="${queue_wait_seconds:-}" 'BEGIN { exit !((value + 0) > 1.0) }'; then
+        printf 'estimated queue wait crossed 1s, so burst pressure outpaced request completions on the current pod-per-GPU shape\n'
+        return 0
+      fi
+
+      if awk -v value="${ttft_seconds:-}" 'BEGIN { exit !((value + 0) > 1.0) }'; then
+        printf 'TTFT crossed 1s, so the serving path showed visible burst pressure even before a dedicated queue histogram is available\n'
+        return 0
+      fi
+
+      if awk -v value="${max_gpu_utilization:-}" 'BEGIN { exit !((value + 0) > 95) }'; then
+        printf 'max GPU utilization crossed 95%%, so the node shape looked capacity-constrained during the burst\n'
+        return 0
+      fi
+
+      if [[ -n "${target}" ]] && awk -v waiting="${waiting_requests:-}" -v target="${target}" 'BEGIN { exit !((waiting + 0) > (target + 0)) }'; then
+        printf 'peak waiting requests exceeded the configured per-pod target, so queue pressure built faster than the current pods drained it\n'
+        return 0
+      fi
+
+      printf 'queue or utilization guardrails were breached, so the current target looked too aggressive for one GPU-backed pod\n'
+      ;;
+    underutilized)
+      printf 'estimated queue wait stayed low while average GPU utilization remained below 55%%, so the run left useful GPU headroom stranded\n'
+      ;;
+    balanced)
+      printf 'estimated queue wait and GPU utilization stayed inside the heuristic guardrails, so the current target looked like a reasonable capacity match\n'
+      ;;
+    *)
+      printf 'the efficiency readout was incomplete because one or more queue or GPU metrics were unavailable\n'
+      ;;
+  esac
+}
+
+derive_capacity_readout() {
+  PEAK_ACTIVE_REQUESTS_PER_GPU_NODE=$(divide_decimal_values "${PEAK_ACTIVE_REQUESTS}" "${PEAK_ACTIVE_NODECLAIMS}" 3)
+  AVG_GPU_HEADROOM_PERCENT=$(subtract_decimal_from_hundred "${AVG_GPU_UTILIZATION_PERCENT}" 3)
+  CAPACITY_ASSESSMENT=$(capacity_assessment_status \
+    "${CURRENT_HPA_TARGET_AVERAGE_VALUE}" \
+    "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}" \
+    "${P95_TTFT_SECONDS}" \
+    "${PEAK_WAITING_REQUESTS}" \
+    "${AVG_GPU_UTILIZATION_PERCENT}" \
+    "${MAX_GPU_UTILIZATION_PERCENT}")
+  CAPACITY_ASSESSMENT_REASON=$(capacity_assessment_reason \
+    "${CURRENT_HPA_TARGET_AVERAGE_VALUE}" \
+    "${CAPACITY_ASSESSMENT}" \
+    "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}" \
+    "${P95_TTFT_SECONDS}" \
+    "${PEAK_WAITING_REQUESTS}" \
+    "${AVG_GPU_UTILIZATION_PERCENT}" \
+    "${MAX_GPU_UTILIZATION_PERCENT}")
 }
 
 pod_schedule_to_ready_seconds() {
@@ -1575,16 +1791,26 @@ write_reports() {
 ## Metrics
 
 - p95 request latency during burst: $(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")
-- p95 queue/TTFT proxy during burst: $(display_metric "${P95_TTFT_SECONDS}" "s")
+- p95 estimated queue wait during burst: $(display_metric "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}" "s")
+- p95 time to first token during burst: $(display_metric "${P95_TTFT_SECONDS}" "s")
 - Peak waiting requests: $(display_metric "${PEAK_WAITING_REQUESTS}")
 - Peak active requests: $(display_metric "${PEAK_ACTIVE_REQUESTS}")
 - Peak running requests: $(display_metric "${PEAK_RUNNING_REQUESTS}")
+- Peak active requests per active GPU node: $(display_metric "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}")
+- Average completed requests per second: $(display_metric "${AVG_COMPLETED_REQUESTS_PER_SECOND}")
 - Average generation tokens per second: $(display_metric "${AVG_GENERATION_TOKENS_PER_SECOND}")
 - Average GPU utilization: $(display_metric "${AVG_GPU_UTILIZATION_PERCENT}" "%")
+- Average GPU headroom: $(display_metric "${AVG_GPU_HEADROOM_PERCENT}" "%")
 - Max GPU utilization: $(display_metric "${MAX_GPU_UTILIZATION_PERCENT}" "%")
 - Peak active NodeClaims: $(display_metric "${PEAK_ACTIVE_NODECLAIMS}")
 - Peak active on-demand NodeClaims: $(display_metric "${PEAK_ACTIVE_ONDEMAND_NODECLAIMS}")
 - Peak active spot NodeClaims: $(display_metric "${PEAK_ACTIVE_SPOT_NODECLAIMS}")
+
+## Efficiency Readout
+
+- Capacity assessment: ${CAPACITY_ASSESSMENT:-n/a}
+- Assessment rationale: ${CAPACITY_ASSESSMENT_REASON:-n/a}
+- Useful work per active GPU node peaked at $(display_metric "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}") active requests while average GPU headroom stayed at $(display_metric "${AVG_GPU_HEADROOM_PERCENT}" "%")
 
 ## Cost
 
@@ -1598,7 +1824,7 @@ write_reports() {
 ## Notes
 
 - \`Container started -> Ready\` is reported as the model-load proxy because the baseline experiment does not rely on a separate vLLM model-load completion metric.
-- \`p95 queue/TTFT proxy\` uses \`time_to_first_token_seconds\` because the current telemetry does not expose a dedicated queue-wait histogram.
+- \`p95 estimated queue wait\` is derived from waiting-request depth divided by request completion rate, so it is a capacity estimate rather than a dedicated queue histogram.
 - The HPA is validated from the custom metric \`${CURRENT_HPA_METRIC_NAME}\` with target average value \`${CURRENT_HPA_TARGET_AVERAGE_VALUE}\`, not CPU utilization.
 - Spot prices use the repo's fixed conservative estimate table so reports stay deterministic across runs.
 - ${cleanup_note#- }
@@ -1640,18 +1866,26 @@ EOF
   },
   "metrics": {
     "p95_request_latency_seconds": $(json_nullable_number "${P95_REQUEST_LATENCY_SECONDS}"),
+    "p95_estimated_queue_wait_seconds": $(json_nullable_number "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}"),
     "p95_ttft_seconds": $(json_nullable_number "${P95_TTFT_SECONDS}"),
     "peak_waiting_requests": $(json_nullable_number "${PEAK_WAITING_REQUESTS}"),
     "peak_active_requests": $(json_nullable_number "${PEAK_ACTIVE_REQUESTS}"),
     "peak_running_requests": $(json_nullable_number "${PEAK_RUNNING_REQUESTS}"),
+    "peak_active_requests_per_gpu_node": $(json_nullable_number "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}"),
+    "average_completed_requests_per_second": $(json_nullable_number "${AVG_COMPLETED_REQUESTS_PER_SECOND}"),
     "average_generation_tokens_per_second": $(json_nullable_number "${AVG_GENERATION_TOKENS_PER_SECOND}"),
     "average_gpu_utilization_percent": $(json_nullable_number "${AVG_GPU_UTILIZATION_PERCENT}"),
+    "average_gpu_headroom_percent": $(json_nullable_number "${AVG_GPU_HEADROOM_PERCENT}"),
     "max_gpu_utilization_percent": $(json_nullable_number "${MAX_GPU_UTILIZATION_PERCENT}"),
     "peak_active_nodeclaims": $(json_nullable_number "${PEAK_ACTIVE_NODECLAIMS}"),
     "peak_active_nodeclaims_by_capacity_type": {
       "on_demand": $(json_nullable_number "${PEAK_ACTIVE_ONDEMAND_NODECLAIMS}"),
       "spot": $(json_nullable_number "${PEAK_ACTIVE_SPOT_NODECLAIMS}")
     }
+  },
+  "capacity_assessment": {
+    "status": $(json_nullable_string "${CAPACITY_ASSESSMENT}"),
+    "reason": $(json_nullable_string "${CAPACITY_ASSESSMENT_REASON}")
   },
   "cost": {
     "estimated_idle_cost_per_hour": $(json_nullable_number "${ESTIMATED_IDLE_COST_PER_HOUR}"),
@@ -1704,14 +1938,20 @@ capture_compare_policy_result() {
   set_policy_snapshot_value "${policy}" HPA_METRIC_NAME "${CURRENT_HPA_METRIC_NAME}"
   set_policy_snapshot_value "${policy}" HPA_TARGET_AVERAGE_VALUE "${CURRENT_HPA_TARGET_AVERAGE_VALUE}"
   set_policy_snapshot_value "${policy}" P95_REQUEST_LATENCY_SECONDS "${P95_REQUEST_LATENCY_SECONDS}"
+  set_policy_snapshot_value "${policy}" P95_ESTIMATED_QUEUE_WAIT_SECONDS "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}"
   set_policy_snapshot_value "${policy}" P95_TTFT_SECONDS "${P95_TTFT_SECONDS}"
   set_policy_snapshot_value "${policy}" PEAK_WAITING_REQUESTS "${PEAK_WAITING_REQUESTS}"
   set_policy_snapshot_value "${policy}" PEAK_ACTIVE_REQUESTS "${PEAK_ACTIVE_REQUESTS}"
+  set_policy_snapshot_value "${policy}" PEAK_ACTIVE_REQUESTS_PER_GPU_NODE "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}"
+  set_policy_snapshot_value "${policy}" AVG_COMPLETED_REQUESTS_PER_SECOND "${AVG_COMPLETED_REQUESTS_PER_SECOND}"
   set_policy_snapshot_value "${policy}" AVG_GPU_UTILIZATION_PERCENT "${AVG_GPU_UTILIZATION_PERCENT}"
+  set_policy_snapshot_value "${policy}" AVG_GPU_HEADROOM_PERCENT "${AVG_GPU_HEADROOM_PERCENT}"
   set_policy_snapshot_value "${policy}" MAX_GPU_UTILIZATION_PERCENT "${MAX_GPU_UTILIZATION_PERCENT}"
   set_policy_snapshot_value "${policy}" PEAK_ACTIVE_NODECLAIMS "${PEAK_ACTIVE_NODECLAIMS}"
   set_policy_snapshot_value "${policy}" SECOND_READY_SECONDS "$(seconds_since_start "${SECOND_READY_TIME}")"
   set_policy_snapshot_value "${policy}" ESTIMATED_BURST_COST "${ESTIMATED_BURST_COST}"
+  set_policy_snapshot_value "${policy}" CAPACITY_ASSESSMENT "${CAPACITY_ASSESSMENT}"
+  set_policy_snapshot_value "${policy}" CAPACITY_ASSESSMENT_REASON "${CAPACITY_ASSESSMENT_REASON}"
 }
 
 compare_duration_value() {
@@ -1720,6 +1960,322 @@ compare_duration_value() {
 
 compare_metric_value() {
   display_metric "$(get_policy_snapshot_value "$1" "$2")" "$3"
+}
+
+decimal_less_than() {
+  local left_value=${1:-}
+  local right_value=${2:-}
+
+  if [[ -z "${left_value}" || -z "${right_value}" ]]; then
+    return 1
+  fi
+
+  awk -v left="${left_value}" -v right="${right_value}" 'BEGIN { exit !(left < right) }'
+}
+
+sweep_target_snapshot_key() {
+  printf 'TARGET_%s\n' "$1"
+}
+
+set_sweep_target_value() {
+  local target=$1
+  local field=$2
+  local value=${3-}
+  local variable_name
+
+  variable_name="SWEEP_$(sweep_target_snapshot_key "${target}")_${field}"
+  printf -v "${variable_name}" '%s' "${value}"
+}
+
+get_sweep_target_value() {
+  local target=$1
+  local field=$2
+  local variable_name
+
+  variable_name="SWEEP_$(sweep_target_snapshot_key "${target}")_${field}"
+  printf '%s\n' "${!variable_name:-}"
+}
+
+sweep_target_status() {
+  local target=$1
+  local queue_wait_seconds=${2:-}
+  local ttft_seconds=${3:-}
+  local waiting_requests=${4:-}
+  local average_gpu_utilization=${5:-}
+  local max_gpu_utilization=${6:-}
+
+  capacity_assessment_status \
+    "${target}" \
+    "${queue_wait_seconds}" \
+    "${ttft_seconds}" \
+    "${waiting_requests}" \
+    "${average_gpu_utilization}" \
+    "${max_gpu_utilization}"
+}
+
+sweep_target_score() {
+  local target=$1
+  local latency_seconds=${2:-}
+  local queue_wait_seconds=${3:-}
+  local ttft_seconds=${4:-}
+  local waiting_requests=${5:-}
+  local active_requests_per_gpu_node=${6:-}
+  local average_gpu_utilization=${7:-}
+  local max_gpu_utilization=${8:-}
+  local burst_cost=${9:-}
+
+  awk \
+    -v target="${target}" \
+    -v latency="${latency_seconds}" \
+    -v queue_wait="${queue_wait_seconds}" \
+    -v ttft="${ttft_seconds}" \
+    -v waiting="${waiting_requests}" \
+    -v per_gpu="${active_requests_per_gpu_node}" \
+    -v average_gpu="${average_gpu_utilization}" \
+    -v max_gpu="${max_gpu_utilization}" \
+    -v burst_cost="${burst_cost}" '
+    BEGIN {
+      score = 0
+
+      if (latency == "") {
+        score += 100000
+      } else {
+        score += (latency + 0) * 100
+      }
+
+      if (queue_wait == "") {
+        score += 100000
+      } else {
+        score += (queue_wait + 0) * 140
+      }
+
+      if (ttft == "") {
+        score += 100000
+      } else {
+        score += (ttft + 0) * 60
+      }
+
+      if (waiting == "") {
+        score += 100000
+      } else {
+        score += (waiting + 0) * 4
+        if ((waiting + 0) > (target + 0)) {
+          score += ((waiting + 0) - (target + 0)) * 8
+        }
+      }
+
+      if (average_gpu == "") {
+        score += 100000
+      } else if ((average_gpu + 0) < 55) {
+        score += (55 - (average_gpu + 0)) * 0.8
+      }
+
+      if (per_gpu == "") {
+        score += 100000
+      } else {
+        score -= (per_gpu + 0) * 0.5
+      }
+
+      if (max_gpu == "") {
+        score += 100000
+      } else if ((max_gpu + 0) > 95) {
+        score += ((max_gpu + 0) - 95) * 6
+      }
+
+      if (burst_cost == "") {
+        score += 100000
+      } else {
+        score += (burst_cost + 0) * 1000
+      }
+
+      printf "%.3f\n", score
+    }'
+}
+
+sweep_target_status_priority() {
+  case "$1" in
+    balanced)
+      printf '3\n'
+      ;;
+    underutilized)
+      printf '2\n'
+      ;;
+    saturated)
+      printf '1\n'
+      ;;
+    *)
+      printf '0\n'
+      ;;
+  esac
+}
+
+capture_sweep_target_result() {
+  local target=$1
+  local status
+  local reason
+  local score
+
+  status=$(sweep_target_status \
+    "${target}" \
+    "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}" \
+    "${P95_TTFT_SECONDS}" \
+    "${PEAK_WAITING_REQUESTS}" \
+    "${AVG_GPU_UTILIZATION_PERCENT}" \
+    "${MAX_GPU_UTILIZATION_PERCENT}")
+  reason=$(capacity_assessment_reason \
+    "${target}" \
+    "${status}" \
+    "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}" \
+    "${P95_TTFT_SECONDS}" \
+    "${PEAK_WAITING_REQUESTS}" \
+    "${AVG_GPU_UTILIZATION_PERCENT}" \
+    "${MAX_GPU_UTILIZATION_PERCENT}")
+  score=$(sweep_target_score \
+    "${target}" \
+    "${P95_REQUEST_LATENCY_SECONDS}" \
+    "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}" \
+    "${P95_TTFT_SECONDS}" \
+    "${PEAK_WAITING_REQUESTS}" \
+    "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}" \
+    "${AVG_GPU_UTILIZATION_PERCENT}" \
+    "${MAX_GPU_UTILIZATION_PERCENT}" \
+    "${ESTIMATED_BURST_COST}")
+
+  set_sweep_target_value "${target}" REPORT_PATH "${REPORT_PATH}"
+  set_sweep_target_value "${target}" JSON_REPORT_PATH "${JSON_REPORT_PATH}"
+  set_sweep_target_value "${target}" HPA_METRIC_NAME "${CURRENT_HPA_METRIC_NAME}"
+  set_sweep_target_value "${target}" HPA_TARGET_AVERAGE_VALUE "${CURRENT_HPA_TARGET_AVERAGE_VALUE}"
+  set_sweep_target_value "${target}" P95_REQUEST_LATENCY_SECONDS "${P95_REQUEST_LATENCY_SECONDS}"
+  set_sweep_target_value "${target}" P95_ESTIMATED_QUEUE_WAIT_SECONDS "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}"
+  set_sweep_target_value "${target}" P95_TTFT_SECONDS "${P95_TTFT_SECONDS}"
+  set_sweep_target_value "${target}" PEAK_WAITING_REQUESTS "${PEAK_WAITING_REQUESTS}"
+  set_sweep_target_value "${target}" PEAK_ACTIVE_REQUESTS "${PEAK_ACTIVE_REQUESTS}"
+  set_sweep_target_value "${target}" PEAK_ACTIVE_REQUESTS_PER_GPU_NODE "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}"
+  set_sweep_target_value "${target}" AVG_COMPLETED_REQUESTS_PER_SECOND "${AVG_COMPLETED_REQUESTS_PER_SECOND}"
+  set_sweep_target_value "${target}" AVG_GPU_UTILIZATION_PERCENT "${AVG_GPU_UTILIZATION_PERCENT}"
+  set_sweep_target_value "${target}" AVG_GPU_HEADROOM_PERCENT "${AVG_GPU_HEADROOM_PERCENT}"
+  set_sweep_target_value "${target}" MAX_GPU_UTILIZATION_PERCENT "${MAX_GPU_UTILIZATION_PERCENT}"
+  set_sweep_target_value "${target}" PEAK_ACTIVE_NODECLAIMS "${PEAK_ACTIVE_NODECLAIMS}"
+  set_sweep_target_value "${target}" SECOND_READY_SECONDS "$(seconds_since_start "${SECOND_READY_TIME}")"
+  set_sweep_target_value "${target}" ESTIMATED_BURST_COST "${ESTIMATED_BURST_COST}"
+  set_sweep_target_value "${target}" STATUS "${status}"
+  set_sweep_target_value "${target}" STATUS_REASON "${reason}"
+  set_sweep_target_value "${target}" SCORE "${score}"
+}
+
+sweep_metric_value() {
+  local target=$1
+  local field=$2
+  local suffix=${3:-}
+
+  display_metric "$(get_sweep_target_value "${target}" "${field}")" "${suffix}"
+}
+
+sweep_duration_value() {
+  local target=$1
+  local field=$2
+
+  display_duration "$(get_sweep_target_value "${target}" "${field}")"
+}
+
+format_active_target_sweep_list() {
+  local target
+  local formatted=""
+
+  for target in "${ACTIVE_TARGET_SWEEP_VALUES[@]}"; do
+    if [[ -n "${formatted}" ]]; then
+      formatted="${formatted}, "
+    fi
+    formatted="${formatted}${target}"
+  done
+
+  printf '%s\n' "${formatted}"
+}
+
+determine_sweep_recommendation() {
+  local target
+  local best_target=""
+  local best_status=""
+  local best_score=""
+  local best_priority=-1
+  local current_status
+  local current_score
+  local current_priority
+
+  SWEEP_RECOMMENDED_TARGET=""
+  SWEEP_RECOMMENDATION_STATUS=""
+  SWEEP_RECOMMENDATION_REASON=""
+
+  for target in "${ACTIVE_TARGET_SWEEP_VALUES[@]}"; do
+    current_status=$(get_sweep_target_value "${target}" STATUS)
+    current_score=$(get_sweep_target_value "${target}" SCORE)
+    current_priority=$(sweep_target_status_priority "${current_status}")
+
+    if [[ -z "${best_target}" ]]; then
+      best_target=${target}
+      best_status=${current_status}
+      best_score=${current_score}
+      best_priority=${current_priority}
+      continue
+    fi
+
+    if (( current_priority > best_priority )); then
+      best_target=${target}
+      best_status=${current_status}
+      best_score=${current_score}
+      best_priority=${current_priority}
+      continue
+    fi
+
+    if (( current_priority < best_priority )); then
+      continue
+    fi
+
+    if (( current_priority >= 2 )); then
+      if (( target > best_target )); then
+        best_target=${target}
+        best_status=${current_status}
+        best_score=${current_score}
+        best_priority=${current_priority}
+      elif (( target == best_target )) && decimal_less_than "${current_score}" "${best_score}"; then
+        best_target=${target}
+        best_status=${current_status}
+        best_score=${current_score}
+        best_priority=${current_priority}
+      fi
+      continue
+    fi
+
+    if decimal_less_than "${current_score}" "${best_score}"; then
+      best_target=${target}
+      best_status=${current_status}
+      best_score=${current_score}
+      best_priority=${current_priority}
+    elif [[ "${current_score}" == "${best_score}" ]] && (( target < best_target )); then
+      best_target=${target}
+      best_status=${current_status}
+      best_score=${current_score}
+      best_priority=${current_priority}
+    fi
+  done
+
+  SWEEP_RECOMMENDED_TARGET=${best_target}
+  SWEEP_RECOMMENDATION_STATUS=${best_status}
+
+  case "${best_status}" in
+    balanced)
+      SWEEP_RECOMMENDATION_REASON="highest balanced target from the sweep heuristic"
+      ;;
+    underutilized)
+      SWEEP_RECOMMENDATION_REASON="no balanced target found; using the highest underutilized target to increase useful GPU work without current queue pressure"
+      ;;
+    saturated)
+      SWEEP_RECOMMENDATION_REASON="all sweep targets saturated the heuristic, so the lowest-score target is recommended"
+      ;;
+    *)
+      SWEEP_RECOMMENDATION_REASON="the sweep results were incomplete, so the first available target is recommended"
+      ;;
+  esac
 }
 
 write_compare_reports() {
@@ -1746,14 +2302,24 @@ write_compare_reports() {
 | Metric | running | active-pressure |
 | --- | --- | --- |
 | p95 request latency | $(compare_metric_value running P95_REQUEST_LATENCY_SECONDS "s") | $(compare_metric_value active-pressure P95_REQUEST_LATENCY_SECONDS "s") |
-| p95 queue/TTFT proxy | $(compare_metric_value running P95_TTFT_SECONDS "s") | $(compare_metric_value active-pressure P95_TTFT_SECONDS "s") |
+| p95 estimated queue wait | $(compare_metric_value running P95_ESTIMATED_QUEUE_WAIT_SECONDS "s") | $(compare_metric_value active-pressure P95_ESTIMATED_QUEUE_WAIT_SECONDS "s") |
+| p95 TTFT | $(compare_metric_value running P95_TTFT_SECONDS "s") | $(compare_metric_value active-pressure P95_TTFT_SECONDS "s") |
 | Peak waiting requests | $(compare_metric_value running PEAK_WAITING_REQUESTS "") | $(compare_metric_value active-pressure PEAK_WAITING_REQUESTS "") |
 | Peak active requests | $(compare_metric_value running PEAK_ACTIVE_REQUESTS "") | $(compare_metric_value active-pressure PEAK_ACTIVE_REQUESTS "") |
+| Peak active requests per GPU node | $(compare_metric_value running PEAK_ACTIVE_REQUESTS_PER_GPU_NODE "") | $(compare_metric_value active-pressure PEAK_ACTIVE_REQUESTS_PER_GPU_NODE "") |
+| Average completed requests per second | $(compare_metric_value running AVG_COMPLETED_REQUESTS_PER_SECOND "") | $(compare_metric_value active-pressure AVG_COMPLETED_REQUESTS_PER_SECOND "") |
 | Average GPU utilization | $(compare_metric_value running AVG_GPU_UTILIZATION_PERCENT "%") | $(compare_metric_value active-pressure AVG_GPU_UTILIZATION_PERCENT "%") |
+| Average GPU headroom | $(compare_metric_value running AVG_GPU_HEADROOM_PERCENT "%") | $(compare_metric_value active-pressure AVG_GPU_HEADROOM_PERCENT "%") |
 | Max GPU utilization | $(compare_metric_value running MAX_GPU_UTILIZATION_PERCENT "%") | $(compare_metric_value active-pressure MAX_GPU_UTILIZATION_PERCENT "%") |
 | Peak active NodeClaims | $(compare_metric_value running PEAK_ACTIVE_NODECLAIMS "") | $(compare_metric_value active-pressure PEAK_ACTIVE_NODECLAIMS "") |
 | Second ready replica | $(compare_duration_value running SECOND_READY_SECONDS) | $(compare_duration_value active-pressure SECOND_READY_SECONDS) |
 | Burst cost | $(compare_metric_value running ESTIMATED_BURST_COST "") | $(compare_metric_value active-pressure ESTIMATED_BURST_COST "") |
+| Capacity assessment | $(get_policy_snapshot_value running CAPACITY_ASSESSMENT) | $(get_policy_snapshot_value active-pressure CAPACITY_ASSESSMENT) |
+
+## Interpretation
+
+- running: $(get_policy_snapshot_value running CAPACITY_ASSESSMENT_REASON)
+- active-pressure: $(get_policy_snapshot_value active-pressure CAPACITY_ASSESSMENT_REASON)
 EOF
 
   cat > "${COMPARE_JSON_REPORT_PATH}" <<EOF
@@ -1767,14 +2333,22 @@ EOF
     "hpa_target_average_value": $(json_escape "$(get_policy_snapshot_value running HPA_TARGET_AVERAGE_VALUE)"),
     "metrics": {
       "p95_request_latency_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_REQUEST_LATENCY_SECONDS)"),
+      "p95_estimated_queue_wait_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_ESTIMATED_QUEUE_WAIT_SECONDS)"),
       "p95_ttft_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_TTFT_SECONDS)"),
       "peak_waiting_requests": $(json_nullable_number "$(get_policy_snapshot_value running PEAK_WAITING_REQUESTS)"),
       "peak_active_requests": $(json_nullable_number "$(get_policy_snapshot_value running PEAK_ACTIVE_REQUESTS)"),
+      "peak_active_requests_per_gpu_node": $(json_nullable_number "$(get_policy_snapshot_value running PEAK_ACTIVE_REQUESTS_PER_GPU_NODE)"),
+      "average_completed_requests_per_second": $(json_nullable_number "$(get_policy_snapshot_value running AVG_COMPLETED_REQUESTS_PER_SECOND)"),
       "average_gpu_utilization_percent": $(json_nullable_number "$(get_policy_snapshot_value running AVG_GPU_UTILIZATION_PERCENT)"),
+      "average_gpu_headroom_percent": $(json_nullable_number "$(get_policy_snapshot_value running AVG_GPU_HEADROOM_PERCENT)"),
       "max_gpu_utilization_percent": $(json_nullable_number "$(get_policy_snapshot_value running MAX_GPU_UTILIZATION_PERCENT)"),
       "peak_active_nodeclaims": $(json_nullable_number "$(get_policy_snapshot_value running PEAK_ACTIVE_NODECLAIMS)"),
       "second_ready_seconds": $(json_nullable_number "$(get_policy_snapshot_value running SECOND_READY_SECONDS)"),
       "estimated_burst_cost": $(json_nullable_number "$(get_policy_snapshot_value running ESTIMATED_BURST_COST)")
+    },
+    "capacity_assessment": {
+      "status": $(json_nullable_string "$(get_policy_snapshot_value running CAPACITY_ASSESSMENT)"),
+      "reason": $(json_nullable_string "$(get_policy_snapshot_value running CAPACITY_ASSESSMENT_REASON)")
     }
   },
   "active_pressure": {
@@ -1784,18 +2358,160 @@ EOF
     "hpa_target_average_value": $(json_escape "$(get_policy_snapshot_value active-pressure HPA_TARGET_AVERAGE_VALUE)"),
     "metrics": {
       "p95_request_latency_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_REQUEST_LATENCY_SECONDS)"),
+      "p95_estimated_queue_wait_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_ESTIMATED_QUEUE_WAIT_SECONDS)"),
       "p95_ttft_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_TTFT_SECONDS)"),
       "peak_waiting_requests": $(json_nullable_number "$(get_policy_snapshot_value active-pressure PEAK_WAITING_REQUESTS)"),
       "peak_active_requests": $(json_nullable_number "$(get_policy_snapshot_value active-pressure PEAK_ACTIVE_REQUESTS)"),
+      "peak_active_requests_per_gpu_node": $(json_nullable_number "$(get_policy_snapshot_value active-pressure PEAK_ACTIVE_REQUESTS_PER_GPU_NODE)"),
+      "average_completed_requests_per_second": $(json_nullable_number "$(get_policy_snapshot_value active-pressure AVG_COMPLETED_REQUESTS_PER_SECOND)"),
       "average_gpu_utilization_percent": $(json_nullable_number "$(get_policy_snapshot_value active-pressure AVG_GPU_UTILIZATION_PERCENT)"),
+      "average_gpu_headroom_percent": $(json_nullable_number "$(get_policy_snapshot_value active-pressure AVG_GPU_HEADROOM_PERCENT)"),
       "max_gpu_utilization_percent": $(json_nullable_number "$(get_policy_snapshot_value active-pressure MAX_GPU_UTILIZATION_PERCENT)"),
       "peak_active_nodeclaims": $(json_nullable_number "$(get_policy_snapshot_value active-pressure PEAK_ACTIVE_NODECLAIMS)"),
       "second_ready_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure SECOND_READY_SECONDS)"),
       "estimated_burst_cost": $(json_nullable_number "$(get_policy_snapshot_value active-pressure ESTIMATED_BURST_COST)")
+    },
+    "capacity_assessment": {
+      "status": $(json_nullable_string "$(get_policy_snapshot_value active-pressure CAPACITY_ASSESSMENT)"),
+      "reason": $(json_nullable_string "$(get_policy_snapshot_value active-pressure CAPACITY_ASSESSMENT_REASON)")
     }
   }
 }
 EOF
+}
+
+write_sweep_reports() {
+  local target
+  local first_result=1
+
+  determine_sweep_recommendation
+  mkdir -p "$(dirname "${SWEEP_REPORT_PATH}")"
+  mkdir -p "$(dirname "${SWEEP_JSON_REPORT_PATH}")"
+
+  cat > "${SWEEP_REPORT_PATH}" <<EOF
+# Active-Pressure Target Sweep Report
+
+- Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+- Profile: ${EVALUATION_PROFILE}
+- Policy: active-pressure
+- Targets evaluated: $(format_active_target_sweep_list)
+- Recommended active target: ${SWEEP_RECOMMENDED_TARGET:-n/a}
+- Recommendation status: ${SWEEP_RECOMMENDATION_STATUS:-n/a}
+- Recommendation rationale: ${SWEEP_RECOMMENDATION_REASON:-n/a}
+
+## Target Summary
+
+| Active target | Status | p95 request latency | p95 estimated queue wait | p95 TTFT | Peak waiting requests | Peak active requests | Peak active/GPU node | Average GPU utilization | Max GPU utilization | Peak active NodeClaims | Second ready replica | Burst cost | Markdown report |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+EOF
+
+  for target in "${ACTIVE_TARGET_SWEEP_VALUES[@]}"; do
+    printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+      "${target}" \
+      "$(get_sweep_target_value "${target}" STATUS)" \
+      "$(sweep_metric_value "${target}" P95_REQUEST_LATENCY_SECONDS "s")" \
+      "$(sweep_metric_value "${target}" P95_ESTIMATED_QUEUE_WAIT_SECONDS "s")" \
+      "$(sweep_metric_value "${target}" P95_TTFT_SECONDS "s")" \
+      "$(sweep_metric_value "${target}" PEAK_WAITING_REQUESTS)" \
+      "$(sweep_metric_value "${target}" PEAK_ACTIVE_REQUESTS)" \
+      "$(sweep_metric_value "${target}" PEAK_ACTIVE_REQUESTS_PER_GPU_NODE)" \
+      "$(sweep_metric_value "${target}" AVG_GPU_UTILIZATION_PERCENT "%")" \
+      "$(sweep_metric_value "${target}" MAX_GPU_UTILIZATION_PERCENT "%")" \
+      "$(sweep_metric_value "${target}" PEAK_ACTIVE_NODECLAIMS)" \
+      "$(sweep_duration_value "${target}" SECOND_READY_SECONDS)" \
+      "$(sweep_metric_value "${target}" ESTIMATED_BURST_COST)" \
+      "$(get_sweep_target_value "${target}" REPORT_PATH)" \
+      >> "${SWEEP_REPORT_PATH}"
+  done
+
+  cat >> "${SWEEP_REPORT_PATH}" <<EOF
+
+## Target Interpretation
+
+EOF
+
+  for target in "${ACTIVE_TARGET_SWEEP_VALUES[@]}"; do
+    printf -- '- %s: %s\n' \
+      "${target}" \
+      "$(get_sweep_target_value "${target}" STATUS_REASON)" \
+      >> "${SWEEP_REPORT_PATH}"
+  done
+
+  cat >> "${SWEEP_REPORT_PATH}" <<EOF
+
+## Heuristic
+
+- \`balanced\` means estimated queue wait, TTFT, and GPU utilization stayed inside the guardrails for the configured target.
+- \`underutilized\` means the run stayed below the saturation guardrails while average GPU utilization remained below 55% and queue wait stayed low.
+- \`saturated\` means queue wait, TTFT, waiting pressure, or max GPU utilization crossed the heuristic guardrail.
+- The recommendation picks the highest balanced target, then the highest underutilized target, otherwise the lowest-score saturated target.
+EOF
+
+  {
+    printf '{\n'
+    printf '  "generated_at": %s,\n' "$(json_escape "$(date -u +"%Y-%m-%dT%H:%M:%SZ")")"
+    printf '  "profile": %s,\n' "$(json_escape "${EVALUATION_PROFILE}")"
+    printf '  "policy": "active-pressure",\n'
+    printf '  "mode": "sweep",\n'
+    printf '  "targets_evaluated": ['
+    for target in "${ACTIVE_TARGET_SWEEP_VALUES[@]}"; do
+      if [[ "${first_result}" == "0" ]]; then
+        printf ', '
+      fi
+      printf '%s' "${target}"
+      first_result=0
+    done
+    printf '],\n'
+    printf '  "recommendation": {\n'
+    printf '    "active_target": %s,\n' "$(json_nullable_number "${SWEEP_RECOMMENDED_TARGET}")"
+    printf '    "status": %s,\n' "$(json_nullable_string "${SWEEP_RECOMMENDATION_STATUS}")"
+    printf '    "rationale": %s\n' "$(json_nullable_string "${SWEEP_RECOMMENDATION_REASON}")"
+    printf '  },\n'
+    printf '  "heuristic": {\n'
+    printf '    "balanced_waiting_at_or_below_target": true,\n'
+    printf '    "balanced_p95_estimated_queue_wait_seconds_max": 1.0,\n'
+    printf '    "balanced_p95_ttft_seconds_max": 1.0,\n'
+    printf '    "balanced_max_gpu_utilization_percent_max": 95,\n'
+    printf '    "underutilized_average_gpu_utilization_percent_max": 55\n'
+    printf '  },\n'
+    printf '  "results": [\n'
+
+    first_result=1
+    for target in "${ACTIVE_TARGET_SWEEP_VALUES[@]}"; do
+      if [[ "${first_result}" == "0" ]]; then
+        printf ',\n'
+      fi
+      printf '    {\n'
+      printf '      "active_target": %s,\n' "$(json_nullable_number "${target}")"
+      printf '      "status": %s,\n' "$(json_nullable_string "$(get_sweep_target_value "${target}" STATUS)")"
+      printf '      "status_reason": %s,\n' "$(json_nullable_string "$(get_sweep_target_value "${target}" STATUS_REASON)")"
+      printf '      "score": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" SCORE)")"
+      printf '      "report_path": %s,\n' "$(json_nullable_string "$(get_sweep_target_value "${target}" REPORT_PATH)")"
+      printf '      "json_report_path": %s,\n' "$(json_nullable_string "$(get_sweep_target_value "${target}" JSON_REPORT_PATH)")"
+      printf '      "hpa_metric_name": %s,\n' "$(json_nullable_string "$(get_sweep_target_value "${target}" HPA_METRIC_NAME)")"
+      printf '      "hpa_target_average_value": %s,\n' "$(json_nullable_string "$(get_sweep_target_value "${target}" HPA_TARGET_AVERAGE_VALUE)")"
+      printf '      "metrics": {\n'
+      printf '        "p95_request_latency_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_REQUEST_LATENCY_SECONDS)")"
+      printf '        "p95_estimated_queue_wait_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_ESTIMATED_QUEUE_WAIT_SECONDS)")"
+      printf '        "p95_ttft_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_TTFT_SECONDS)")"
+      printf '        "peak_waiting_requests": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" PEAK_WAITING_REQUESTS)")"
+      printf '        "peak_active_requests": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" PEAK_ACTIVE_REQUESTS)")"
+      printf '        "peak_active_requests_per_gpu_node": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" PEAK_ACTIVE_REQUESTS_PER_GPU_NODE)")"
+      printf '        "average_completed_requests_per_second": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" AVG_COMPLETED_REQUESTS_PER_SECOND)")"
+      printf '        "average_gpu_utilization_percent": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" AVG_GPU_UTILIZATION_PERCENT)")"
+      printf '        "average_gpu_headroom_percent": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" AVG_GPU_HEADROOM_PERCENT)")"
+      printf '        "max_gpu_utilization_percent": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" MAX_GPU_UTILIZATION_PERCENT)")"
+      printf '        "peak_active_nodeclaims": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" PEAK_ACTIVE_NODECLAIMS)")"
+      printf '        "second_ready_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" SECOND_READY_SECONDS)")"
+      printf '        "estimated_burst_cost": %s\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" ESTIMATED_BURST_COST)")"
+      printf '      }\n'
+      printf '    }'
+      first_result=0
+    done
+
+    printf '\n  ]\n'
+    printf '}\n'
+  } > "${SWEEP_JSON_REPORT_PATH}"
 }
 
 collect_metrics_and_write_reports() {
@@ -1806,11 +2522,14 @@ collect_metrics_and_write_reports() {
 
 run_single_policy_evaluation() {
   local policy=$1
+  local report_key=${2:-$1}
+  local stage_prefix=${3:-}
+  local preserve_profile_baseline=${4:-0}
 
   reset_policy_measurements
-  set_policy_context "${policy}"
+  set_policy_context "${policy}" "${report_key}" "${stage_prefix}"
 
-  if is_compare_mode && is_warm_profile && [[ "${CURRENT_POLICY}" == "running" ]]; then
+  if [[ "${preserve_profile_baseline}" == "1" ]]; then
     PRESERVE_PROFILE_BASELINE=1
   fi
 
@@ -1891,9 +2610,12 @@ print_single_policy_summary() {
   printf '  First public response: %s\n' "$(display_duration "$(seconds_since_start "${FIRST_RESPONSE_TIME}")")"
   printf '  Second ready replica: %s\n' "$(display_duration "$(seconds_since_start "${SECOND_READY_TIME}")")"
   printf '  p95 request latency: %s\n' "$(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")"
+  printf '  p95 estimated queue wait: %s\n' "$(display_metric "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}" "s")"
   printf '  Peak waiting requests: %s\n' "$(display_metric "${PEAK_WAITING_REQUESTS}")"
   printf '  Peak active requests: %s\n' "$(display_metric "${PEAK_ACTIVE_REQUESTS}")"
+  printf '  Peak active requests per GPU node: %s\n' "$(display_metric "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}")"
   printf '  Average GPU utilization: %s\n' "$(display_metric "${AVG_GPU_UTILIZATION_PERCENT}" "%")"
+  printf '  Capacity assessment: %s\n' "${CAPACITY_ASSESSMENT:-n/a}"
   printf '  Markdown report: %s\n' "${REPORT_PATH}"
   printf '  JSON report: %s\n' "${JSON_REPORT_PATH}"
 }
@@ -1907,18 +2629,40 @@ print_compare_summary() {
   printf '  Compare JSON report: %s\n' "${COMPARE_JSON_REPORT_PATH}"
 }
 
+print_sweep_summary() {
+  printf '\nSwept:\n'
+  printf '  Profile: %s\n' "${EVALUATION_PROFILE}"
+  printf '  Targets: %s\n' "$(format_active_target_sweep_list)"
+  printf '  Recommended active target: %s\n' "${SWEEP_RECOMMENDED_TARGET:-n/a}"
+  printf '  Recommendation status: %s\n' "${SWEEP_RECOMMENDATION_STATUS:-n/a}"
+  printf '  Recommendation rationale: %s\n' "${SWEEP_RECOMMENDATION_REASON:-n/a}"
+  printf '  Sweep report: %s\n' "${SWEEP_REPORT_PATH}"
+  printf '  Sweep JSON report: %s\n' "${SWEEP_JSON_REPORT_PATH}"
+}
+
 main() {
+  local stage_prefix=""
+  local last_target_index
+  local target_index
+  local sweep_target
+  local preserve_baseline
+
   parse_args "$@"
   trap cleanup_evaluate EXIT
 
   if is_compare_mode; then
-    COMPARE_REPORT_PATH=$(resolve_compare_report_path)
-    COMPARE_JSON_REPORT_PATH=$(resolve_compare_json_report_path)
+    COMPARE_REPORT_PATH=$(resolve_report_path_for_key "compare")
+    COMPARE_JSON_REPORT_PATH=$(resolve_json_report_path_for_key "compare")
 
-    run_single_policy_evaluation running
+    preserve_baseline=0
+    if is_warm_profile; then
+      preserve_baseline=1
+    fi
+
+    run_single_policy_evaluation running running running "${preserve_baseline}"
     capture_compare_policy_result running
 
-    run_single_policy_evaluation active-pressure
+    run_single_policy_evaluation active-pressure active-pressure active-pressure 0
     capture_compare_policy_result active-pressure
 
     write_compare_reports
@@ -1926,7 +2670,37 @@ main() {
     return 0
   fi
 
-  run_single_policy_evaluation "${EVALUATION_POLICY}"
+  if is_sweep_mode; then
+    SWEEP_REPORT_PATH=$(resolve_report_path_for_key "active-pressure-sweep")
+    SWEEP_JSON_REPORT_PATH=$(resolve_json_report_path_for_key "active-pressure-sweep")
+    last_target_index=$((${#ACTIVE_TARGET_SWEEP_VALUES[@]} - 1))
+
+    for target_index in "${!ACTIVE_TARGET_SWEEP_VALUES[@]}"; do
+      sweep_target=${ACTIVE_TARGET_SWEEP_VALUES[${target_index}]}
+      ACTIVE_PRESSURE_TARGET=${sweep_target}
+      preserve_baseline=0
+      if is_warm_profile && (( target_index < last_target_index )); then
+        preserve_baseline=1
+      fi
+
+      run_single_policy_evaluation \
+        active-pressure \
+        "active-pressure-target-${sweep_target}" \
+        "active-pressure@${sweep_target}" \
+        "${preserve_baseline}"
+      capture_sweep_target_result "${sweep_target}"
+    done
+
+    write_sweep_reports
+    print_sweep_summary
+    return 0
+  fi
+
+  if [[ "${EVALUATION_POLICY}" != "running" ]]; then
+    stage_prefix=${EVALUATION_POLICY}
+  fi
+
+  run_single_policy_evaluation "${EVALUATION_POLICY}" "${EVALUATION_POLICY}" "${stage_prefix}" 0
   print_single_policy_summary
 }
 

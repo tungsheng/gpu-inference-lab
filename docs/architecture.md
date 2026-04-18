@@ -72,9 +72,10 @@ There are three important feedback loops in the repo:
 3. **Autoscaling loop**
    Prometheus Adapter exposes both `vllm_requests_running` and
    `vllm_requests_active` as custom pod metrics, and
-   `./scripts/evaluate --policy running|active-pressure|compare` uses those
-   metrics to scale the deployment from `1` to `2` replicas during the burst
-   experiment.
+   `./scripts/evaluate --policy running|active-pressure|compare|sweep` uses
+   those metrics to scale the deployment from `1` to `2` replicas during the
+   burst experiment and to compare active-pressure targets across repeated
+   runs.
 
 ## Why The Workflow Is Split
 
@@ -98,5 +99,6 @@ still a v1 control-loop experiment:
 
 - active pressure is tuned with a simple per-pod target rather than a
   GPU-efficiency model
-- queue behavior is inferred through TTFT plus waiting pressure
+- queue behavior is estimated from waiting depth over request completion rate,
+  with TTFT kept as a separate serving signal
 - the next architectural step is GPU bin packing and per-GPU capacity reasoning

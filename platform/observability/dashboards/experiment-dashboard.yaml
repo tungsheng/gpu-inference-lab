@@ -39,8 +39,8 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile, policy) (gpu_serving_measure_first_gpu_node_seconds{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}/{{policy}}",
+              "expr": "max by (profile, policy, target) (gpu_serving_measure_first_gpu_node_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}/{{target}}",
               "refId": "A"
             }
           ],
@@ -72,8 +72,8 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile, policy) (gpu_serving_measure_model_ready_seconds{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}/{{policy}}",
+              "expr": "max by (profile, policy, target) (gpu_serving_measure_model_ready_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}/{{target}}",
               "refId": "A"
             }
           ],
@@ -105,8 +105,8 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile, policy) (gpu_serving_measure_first_external_completion_seconds{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}/{{policy}}",
+              "expr": "max by (profile, policy, target) (gpu_serving_measure_first_external_completion_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}/{{target}}",
               "refId": "A"
             }
           ],
@@ -138,8 +138,8 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile, policy) (gpu_serving_measure_scale_down_to_zero_gpu_nodes_seconds{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}/{{policy}}",
+              "expr": "max by (profile, policy, target) (gpu_serving_measure_scale_down_to_zero_gpu_nodes_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}/{{target}}",
               "refId": "A"
             }
           ],
@@ -171,8 +171,8 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile, policy) (gpu_serving_measure_estimated_idle_cost_per_hour{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}/{{policy}}",
+              "expr": "max by (profile, policy, target) (gpu_serving_measure_estimated_idle_cost_per_hour{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}/{{target}}",
               "refId": "A"
             }
           ],
@@ -204,12 +204,111 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profile, policy) (gpu_serving_measure_estimated_burst_cost{job=\"gpu-serving-measure\"})",
-              "legendFormat": "{{profile}}/{{policy}}",
+              "expr": "max by (profile, policy, target) (gpu_serving_measure_estimated_burst_cost{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}/{{target}}",
               "refId": "A"
             }
           ],
           "title": "Burst Cost",
+          "type": "stat"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 0,
+            "y": 14
+          },
+          "id": 7,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (profile, policy, target) (gpu_serving_measure_p95_estimated_queue_wait_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}/{{target}}",
+              "refId": "A"
+            }
+          ],
+          "title": "P95 Estimated Queue Wait",
+          "type": "stat"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 14
+          },
+          "id": 8,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (profile, policy, target) (gpu_serving_measure_average_gpu_utilization_percent{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}/{{target}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Average GPU Utilization",
+          "type": "stat"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 14
+          },
+          "id": 9,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (profile, policy, target) (gpu_serving_measure_peak_active_requests_per_gpu_node{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{policy}}/{{target}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Peak Active Requests Per GPU Node",
           "type": "stat"
         }
       ],

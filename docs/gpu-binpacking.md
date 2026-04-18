@@ -23,9 +23,20 @@ Better outcome:
 - one GPU can serve multiple useful active requests
 - scaling decisions reflect capacity per GPU, not just pod count
 
+## What This Repo Proves Now
+
+The project can now show:
+
+- one GPU can sustain a measurable number of active requests through the
+  per-target sweep workflow
+- per-node GPU utilization and headroom explain whether a run looked saturated
+  or underused
+- reports and dashboards connect active requests per GPU node, queue wait, and
+  burst cost in one operator view
+
 ## What This Repo Should Eventually Prove
 
-The project will be ready to claim a stronger efficiency story when it can show:
+The project will be ready to claim a stronger packing story when it can show:
 
 - one GPU can sustain a measurable number of active requests
 - per-node GPU utilization explains whether a node was saturated or underused
@@ -44,6 +55,7 @@ After Milestone 9, likely experiments include:
 
 ## Success Criteria
 
-This milestone is complete only when the repo can explain not just that GPU
-nodes launched, but that the chosen node shapes and serving settings were a
-sensible fit for the observed workload.
+The current milestone is complete because the repo can now explain not just
+that GPU nodes launched, but whether the chosen node shapes and serving
+settings looked like a sensible fit for the observed workload. The follow-on
+work is to compare alternative packing shapes, not just evaluate one.
