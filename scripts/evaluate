@@ -9,6 +9,7 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 TOTAL_STAGES=10
 EVALUATION_PROFILE="zero-idle"
 EVALUATION_POLICY="running"
+EVALUATION_RESILIENCE="healthy"
 ACTIVE_PRESSURE_TARGET=4
 ACTIVE_TARGETS_INPUT=""
 EVALUATION_TIMESTAMP=""
@@ -27,6 +28,7 @@ LOAD_TEST_APPLIED=0
 WARM_PLACEHOLDER_APPLIED=0
 PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS=0
 PRESERVE_PROFILE_BASELINE=0
+SPOT_NODEPOOL_DISABLED=0
 
 PUBLIC_INFERENCE_URL=""
 PROMETHEUS_LOCAL_PORT=""
@@ -58,6 +60,7 @@ FIRST_GPU_NODE_NAME=""
 FIRST_GPU_NODEPOOL_NAME=""
 FIRST_GPU_INSTANCE_TYPE=""
 FIRST_GPU_CAPACITY_TYPE=""
+FIRST_GPU_AVAILABILITY_ZONE=""
 LOAD_START_TIME=""
 HPA_SCALE_OUT_TIME=""
 SECOND_NODECLAIM_TIME=""
@@ -67,6 +70,7 @@ SECOND_GPU_NODE_NAME=""
 SECOND_GPU_NODEPOOL_NAME=""
 SECOND_GPU_INSTANCE_TYPE=""
 SECOND_GPU_CAPACITY_TYPE=""
+SECOND_GPU_AVAILABILITY_ZONE=""
 LOAD_FINISH_TIME=""
 SCALE_IN_TIME=""
 PROFILE_BASELINE_RESTORED_TIME=""
@@ -96,6 +100,8 @@ ESTIMATED_BURST_COST_ONDEMAND=""
 ESTIMATED_BURST_COST_SPOT=""
 CAPACITY_ASSESSMENT=""
 CAPACITY_ASSESSMENT_REASON=""
+RESILIENCE_OUTCOME=""
+RESILIENCE_OUTCOME_REASON=""
 SWEEP_RECOMMENDED_TARGET=""
 SWEEP_RECOMMENDATION_STATUS=""
 SWEEP_RECOMMENDATION_REASON=""
@@ -103,12 +109,13 @@ SWEEP_RECOMMENDATION_REASON=""
 usage() {
   cat <<EOF
 Usage:
-  ./scripts/evaluate [--profile zero-idle|warm-1] [--policy running|active-pressure|compare|sweep] [--active-target requests] [--active-targets csv] [--report path] [--json-report path]
+  ./scripts/evaluate [--profile zero-idle|warm-1] [--policy running|active-pressure|compare|sweep] [--resilience healthy|spot-unavailable] [--active-target requests] [--active-targets csv] [--report path] [--json-report path]
 
 Examples:
   ./scripts/evaluate --profile zero-idle
   ./scripts/evaluate --profile warm-1
   ./scripts/evaluate --profile zero-idle --policy active-pressure
+  ./scripts/evaluate --profile zero-idle --resilience spot-unavailable
   ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
   ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
   ./scripts/evaluate --profile zero-idle --report docs/reports/latest.md
@@ -137,6 +144,10 @@ parse_args() {
         ;;
       --policy)
         EVALUATION_POLICY=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --resilience)
+        EVALUATION_RESILIENCE=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       --active-target)
@@ -183,6 +194,16 @@ parse_args() {
     *)
       printf 'Unsupported policy: %s\n' "${EVALUATION_POLICY}" >&2
       printf 'Supported policies: running, active-pressure, compare, sweep\n' >&2
+      exit 1
+      ;;
+  esac
+
+  case "${EVALUATION_RESILIENCE}" in
+    healthy|spot-unavailable)
+      ;;
+    *)
+      printf 'Unsupported resilience mode: %s\n' "${EVALUATION_RESILIENCE}" >&2
+      printf 'Supported resilience modes: healthy, spot-unavailable\n' >&2
       exit 1
       ;;
   esac
@@ -269,12 +290,22 @@ strip_report_extension() {
   esac
 }
 
+resilience_report_suffix() {
+  if [[ "${EVALUATION_RESILIENCE}" == "healthy" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+
+  printf -- '-%s' "${EVALUATION_RESILIENCE}"
+}
+
 default_report_stem() {
   local report_key=$1
 
-  printf '%s/docs/reports/evaluate-%s-%s-%s\n' \
+  printf '%s/docs/reports/evaluate-%s%s-%s-%s\n' \
     "${REPO_ROOT}" \
     "${EVALUATION_PROFILE}" \
+    "$(resilience_report_suffix)" \
     "${report_key}" \
     "${EVALUATION_TIMESTAMP}"
 }
@@ -366,6 +397,10 @@ cleanup_evaluate() {
   if [[ "${WARM_PLACEHOLDER_APPLIED}" == "1" && "${PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS}" != "1" ]]; then
     kubectl delete -f "${GPU_WARM_PLACEHOLDER_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
   fi
+  if [[ "${SPOT_NODEPOOL_DISABLED}" == "1" ]]; then
+    kubectl apply -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" >/dev/null 2>&1 || true
+    SPOT_NODEPOOL_DISABLED=0
+  fi
 
   if ((${#TEMP_FILES[@]} > 0)); then
     for temporary_file in "${TEMP_FILES[@]}"; do
@@ -380,6 +415,10 @@ evaluate_prereqs() {
 
 is_warm_profile() {
   [[ "${EVALUATION_PROFILE}" == "warm-1" ]]
+}
+
+is_spot_unavailable_mode() {
+  [[ "${EVALUATION_RESILIENCE}" == "spot-unavailable" ]]
 }
 
 is_compare_mode() {
@@ -433,6 +472,7 @@ reset_policy_measurements() {
   FIRST_GPU_NODEPOOL_NAME=""
   FIRST_GPU_INSTANCE_TYPE=""
   FIRST_GPU_CAPACITY_TYPE=""
+  FIRST_GPU_AVAILABILITY_ZONE=""
   LOAD_START_TIME=""
   HPA_SCALE_OUT_TIME=""
   SECOND_NODECLAIM_TIME=""
@@ -442,6 +482,7 @@ reset_policy_measurements() {
   SECOND_GPU_NODEPOOL_NAME=""
   SECOND_GPU_INSTANCE_TYPE=""
   SECOND_GPU_CAPACITY_TYPE=""
+  SECOND_GPU_AVAILABILITY_ZONE=""
   LOAD_FINISH_TIME=""
   SCALE_IN_TIME=""
   PROFILE_BASELINE_RESTORED_TIME=""
@@ -471,6 +512,8 @@ reset_policy_measurements() {
   ESTIMATED_BURST_COST_SPOT=""
   CAPACITY_ASSESSMENT=""
   CAPACITY_ASSESSMENT_REASON=""
+  RESILIENCE_OUTCOME=""
+  RESILIENCE_OUTCOME_REASON=""
 }
 
 set_policy_context() {
@@ -535,6 +578,13 @@ node_instance_type() {
     -o jsonpath='{.metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null
 }
 
+node_availability_zone() {
+  local node_name=$1
+
+  kubectl get node "${node_name}" \
+    -o jsonpath='{.metadata.labels.topology\.kubernetes\.io/zone}' 2>/dev/null
+}
+
 populate_first_gpu_node_identity() {
   FIRST_GPU_NODE_NAME=$(first_gpu_node_name)
   if [[ -z "${FIRST_GPU_NODE_NAME}" ]]; then
@@ -544,6 +594,7 @@ populate_first_gpu_node_identity() {
   FIRST_GPU_INSTANCE_TYPE=$(node_instance_type "${FIRST_GPU_NODE_NAME}")
   FIRST_GPU_NODEPOOL_NAME=$(node_nodepool "${FIRST_GPU_NODE_NAME}")
   FIRST_GPU_CAPACITY_TYPE=$(node_capacity_type "${FIRST_GPU_NODE_NAME}")
+  FIRST_GPU_AVAILABILITY_ZONE=$(node_availability_zone "${FIRST_GPU_NODE_NAME}")
   if [[ -z "${FIRST_GPU_CAPACITY_TYPE}" ]]; then
     FIRST_GPU_CAPACITY_TYPE=$(nodepool_capacity_type "${FIRST_GPU_NODEPOOL_NAME}")
   fi
@@ -558,6 +609,7 @@ populate_second_gpu_node_identity() {
   SECOND_GPU_INSTANCE_TYPE=$(node_instance_type "${SECOND_GPU_NODE_NAME}")
   SECOND_GPU_NODEPOOL_NAME=$(node_nodepool "${SECOND_GPU_NODE_NAME}")
   SECOND_GPU_CAPACITY_TYPE=$(node_capacity_type "${SECOND_GPU_NODE_NAME}")
+  SECOND_GPU_AVAILABILITY_ZONE=$(node_availability_zone "${SECOND_GPU_NODE_NAME}")
   if [[ -z "${SECOND_GPU_CAPACITY_TYPE}" ]]; then
     SECOND_GPU_CAPACITY_TYPE=$(nodepool_capacity_type "${SECOND_GPU_NODEPOOL_NAME}")
   fi
@@ -892,6 +944,30 @@ prepare_warm_profile_capacity() {
   fi
 }
 
+prepare_resilience_mode() {
+  if ! is_spot_unavailable_mode; then
+    return 0
+  fi
+
+  if [[ "${SPOT_NODEPOOL_DISABLED}" == "1" ]]; then
+    return 0
+  fi
+
+  kubectl delete -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion nodepool "${KARPENTER_SPOT_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  SPOT_NODEPOOL_DISABLED=1
+}
+
+restore_resilience_mode() {
+  if [[ "${SPOT_NODEPOOL_DISABLED}" != "1" ]]; then
+    return 0
+  fi
+
+  kubectl apply -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" || return 1
+  wait_for_resource_existence nodepool "${KARPENTER_SPOT_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  SPOT_NODEPOOL_DISABLED=0
+}
+
 prepare_edge_and_profile() {
   ensure_namespace || return 1
   kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}" || return 1
@@ -910,6 +986,8 @@ prepare_edge_and_profile() {
     kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true >/dev/null 2>&1 || true
     wait_for_all_gpu_nodes_at_most 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   fi
+
+  prepare_resilience_mode || return 1
 }
 
 seed_profile_baseline_events() {
@@ -1474,6 +1552,7 @@ collect_production_metrics() {
 
   estimate_costs
   derive_capacity_readout
+  derive_resilience_outcome
 }
 
 append_pushgateway_metric() {
@@ -1509,7 +1588,7 @@ push_summary_metrics() {
   ensure_pushgateway_local_port || return 0
 
   payload_file=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-pushgateway.XXXXXX")
-  push_path="http://127.0.0.1:${PUSHGATEWAY_LOCAL_PORT}/metrics/job/gpu-serving-measure/profile/${EVALUATION_PROFILE}/policy/${CURRENT_POLICY}/target/${CURRENT_HPA_TARGET_AVERAGE_VALUE}"
+  push_path="http://127.0.0.1:${PUSHGATEWAY_LOCAL_PORT}/metrics/job/gpu-serving-measure/profile/${EVALUATION_PROFILE}/resilience/${EVALUATION_RESILIENCE}/policy/${CURRENT_POLICY}/target/${CURRENT_HPA_TARGET_AVERAGE_VALUE}"
 
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_first_gpu_node_seconds" "$(seconds_since_start "${FIRST_GPU_NODE_TIME}")"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_model_ready_seconds" "$(seconds_since_start "${FIRST_READY_TIME}")"
@@ -1710,6 +1789,60 @@ derive_capacity_readout() {
     "${MAX_GPU_UTILIZATION_PERCENT}")
 }
 
+expected_burst_capacity_type() {
+  if is_spot_unavailable_mode; then
+    printf 'on-demand\n'
+    return 0
+  fi
+
+  printf 'spot\n'
+}
+
+derive_resilience_outcome() {
+  local expected_capacity_type
+
+  expected_capacity_type=$(expected_burst_capacity_type)
+
+  if [[ -z "${SECOND_GPU_CAPACITY_TYPE}" ]]; then
+    RESILIENCE_OUTCOME="unknown"
+    RESILIENCE_OUTCOME_REASON="the run did not capture a second GPU node capacity type, so the degraded-capacity fallback outcome is incomplete"
+    return 0
+  fi
+
+  if is_spot_unavailable_mode; then
+    if [[ "${SECOND_GPU_CAPACITY_TYPE}" == "on-demand" ]]; then
+      RESILIENCE_OUTCOME="fallback-succeeded"
+      RESILIENCE_OUTCOME_REASON="spot burst capacity was withdrawn for the run and the platform still scaled to a second on-demand GPU node"
+      return 0
+    fi
+
+    if [[ "${SECOND_GPU_CAPACITY_TYPE}" == "spot" ]]; then
+      RESILIENCE_OUTCOME="unexpected-spot-capacity"
+      RESILIENCE_OUTCOME_REASON="spot burst capacity was meant to be unavailable, but the second GPU node still reported spot capacity"
+      return 0
+    fi
+
+    RESILIENCE_OUTCOME="unexpected-capacity-type"
+    RESILIENCE_OUTCOME_REASON="spot burst capacity was withdrawn, but the second GPU node reported an unrecognized capacity type"
+    return 0
+  fi
+
+  if [[ "${SECOND_GPU_CAPACITY_TYPE}" == "${expected_capacity_type}" ]]; then
+    RESILIENCE_OUTCOME="preferred-capacity-available"
+    RESILIENCE_OUTCOME_REASON="the preferred spot burst path stayed available, so the second GPU node came from spot capacity as intended"
+    return 0
+  fi
+
+  if [[ "${SECOND_GPU_CAPACITY_TYPE}" == "on-demand" ]]; then
+    RESILIENCE_OUTCOME="fallback-engaged"
+    RESILIENCE_OUTCOME_REASON="the preferred spot burst path did not materialize, so the second GPU node fell back to on-demand capacity"
+    return 0
+  fi
+
+  RESILIENCE_OUTCOME="unexpected-capacity-type"
+  RESILIENCE_OUTCOME_REASON="the second GPU node used a capacity type outside the expected healthy or degraded-capacity paths"
+}
+
 pod_schedule_to_ready_seconds() {
   if [[ -z "${FIRST_POD_SCHEDULED_TIME}" || -z "${FIRST_READY_TIME}" ]]; then
     printf '%s\n' ""
@@ -1751,13 +1884,16 @@ write_reports() {
 - Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 - Profile: ${EVALUATION_PROFILE}
 - Policy: ${CURRENT_POLICY}
+- Resilience mode: ${EVALUATION_RESILIENCE}
 - HPA metric name: ${CURRENT_HPA_METRIC_NAME}
 - HPA target average value: ${CURRENT_HPA_TARGET_AVERAGE_VALUE}
 - Public endpoint: ${PUBLIC_INFERENCE_URL}
 - First GPU capacity type: ${FIRST_GPU_CAPACITY_TYPE:-n/a}
 - First GPU instance type: ${FIRST_GPU_INSTANCE_TYPE:-n/a}
+- First GPU availability zone: ${FIRST_GPU_AVAILABILITY_ZONE:-n/a}
 - Second GPU capacity type: ${SECOND_GPU_CAPACITY_TYPE:-n/a}
 - Second GPU instance type: ${SECOND_GPU_INSTANCE_TYPE:-n/a}
+- Second GPU availability zone: ${SECOND_GPU_AVAILABILITY_ZONE:-n/a}
 
 ## Timeline
 
@@ -1787,6 +1923,8 @@ write_reports() {
 - Scale-out to second ready replica: $(display_duration "$(seconds_since_start "${SECOND_READY_TIME}")")
 - Scale-in after load completion: $(display_duration "$(seconds_between "${LOAD_FINISH_TIME}" "${SCALE_IN_TIME}")")
 - Final cleanup to zero GPU nodes: $(display_duration "$(seconds_between "${LOAD_FINISH_TIME}" "${CLEANUP_FINISH_TIME}")")
+- Resilience outcome: ${RESILIENCE_OUTCOME:-n/a}
+- Resilience rationale: ${RESILIENCE_OUTCOME_REASON:-n/a}
 
 ## Metrics
 
@@ -1811,6 +1949,8 @@ write_reports() {
 - Capacity assessment: ${CAPACITY_ASSESSMENT:-n/a}
 - Assessment rationale: ${CAPACITY_ASSESSMENT_REASON:-n/a}
 - Useful work per active GPU node peaked at $(display_metric "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}") active requests while average GPU headroom stayed at $(display_metric "${AVG_GPU_HEADROOM_PERCENT}" "%")
+- Preferred burst capacity type for this resilience mode: $(expected_burst_capacity_type)
+- Observed second-node capacity type: ${SECOND_GPU_CAPACITY_TYPE:-n/a}
 
 ## Cost
 
@@ -1826,6 +1966,7 @@ write_reports() {
 - \`Container started -> Ready\` is reported as the model-load proxy because the baseline experiment does not rely on a separate vLLM model-load completion metric.
 - \`p95 estimated queue wait\` is derived from waiting-request depth divided by request completion rate, so it is a capacity estimate rather than a dedicated queue histogram.
 - The HPA is validated from the custom metric \`${CURRENT_HPA_METRIC_NAME}\` with target average value \`${CURRENT_HPA_TARGET_AVERAGE_VALUE}\`, not CPU utilization.
+- \`${EVALUATION_RESILIENCE}\` controls whether the preferred spot burst path stays available for the run or is withdrawn to test on-demand fallback behavior.
 - Spot prices use the repo's fixed conservative estimate table so reports stay deterministic across runs.
 - ${cleanup_note#- }
 ${compare_mode_cleanup_note}
@@ -1836,15 +1977,18 @@ EOF
   "generated_at": $(json_escape "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"),
   "profile": $(json_escape "${EVALUATION_PROFILE}"),
   "policy": $(json_escape "${CURRENT_POLICY}"),
+  "resilience_mode": $(json_escape "${EVALUATION_RESILIENCE}"),
   "hpa_metric_name": $(json_escape "${CURRENT_HPA_METRIC_NAME}"),
   "hpa_target_average_value": $(json_escape "${CURRENT_HPA_TARGET_AVERAGE_VALUE}"),
   "public_endpoint": $(json_escape "${PUBLIC_INFERENCE_URL}"),
   "first_gpu_capacity_type": $(json_nullable_string "${FIRST_GPU_CAPACITY_TYPE}"),
   "first_gpu_instance_type": $(json_nullable_string "${FIRST_GPU_INSTANCE_TYPE}"),
   "first_gpu_nodepool": $(json_nullable_string "${FIRST_GPU_NODEPOOL_NAME}"),
+  "first_gpu_availability_zone": $(json_nullable_string "${FIRST_GPU_AVAILABILITY_ZONE}"),
   "second_gpu_capacity_type": $(json_nullable_string "${SECOND_GPU_CAPACITY_TYPE}"),
   "second_gpu_instance_type": $(json_nullable_string "${SECOND_GPU_INSTANCE_TYPE}"),
   "second_gpu_nodepool": $(json_nullable_string "${SECOND_GPU_NODEPOOL_NAME}"),
+  "second_gpu_availability_zone": $(json_nullable_string "${SECOND_GPU_AVAILABILITY_ZONE}"),
   "timeline": {
     "first_nodeclaim_seconds": $(json_nullable_number "$(seconds_since_start "${FIRST_NODECLAIM_TIME}")"),
     "first_gpu_node_seconds": $(json_nullable_number "$(seconds_since_start "${FIRST_GPU_NODE_TIME}")"),
@@ -1886,6 +2030,12 @@ EOF
   "capacity_assessment": {
     "status": $(json_nullable_string "${CAPACITY_ASSESSMENT}"),
     "reason": $(json_nullable_string "${CAPACITY_ASSESSMENT_REASON}")
+  },
+  "resilience": {
+    "mode": $(json_escape "${EVALUATION_RESILIENCE}"),
+    "preferred_burst_capacity_type": $(json_escape "$(expected_burst_capacity_type)"),
+    "outcome": $(json_nullable_string "${RESILIENCE_OUTCOME}"),
+    "reason": $(json_nullable_string "${RESILIENCE_OUTCOME_REASON}")
   },
   "cost": {
     "estimated_idle_cost_per_hour": $(json_nullable_number "${ESTIMATED_IDLE_COST_PER_HOUR}"),
@@ -2287,6 +2437,7 @@ write_compare_reports() {
 
 - Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 - Profile: ${EVALUATION_PROFILE}
+- Resilience mode: ${EVALUATION_RESILIENCE}
 - Running report: $(get_policy_snapshot_value running REPORT_PATH)
 - Active-pressure report: $(get_policy_snapshot_value active-pressure REPORT_PATH)
 
@@ -2326,6 +2477,7 @@ EOF
 {
   "generated_at": $(json_escape "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"),
   "profile": $(json_escape "${EVALUATION_PROFILE}"),
+  "resilience_mode": $(json_escape "${EVALUATION_RESILIENCE}"),
   "running": {
     "report_path": $(json_escape "$(get_policy_snapshot_value running REPORT_PATH)"),
     "json_report_path": $(json_escape "$(get_policy_snapshot_value running JSON_REPORT_PATH)"),
@@ -2394,6 +2546,7 @@ write_sweep_reports() {
 - Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 - Profile: ${EVALUATION_PROFILE}
 - Policy: active-pressure
+- Resilience mode: ${EVALUATION_RESILIENCE}
 - Targets evaluated: $(format_active_target_sweep_list)
 - Recommended active target: ${SWEEP_RECOMMENDED_TARGET:-n/a}
 - Recommendation status: ${SWEEP_RECOMMENDATION_STATUS:-n/a}
@@ -2451,6 +2604,7 @@ EOF
     printf '{\n'
     printf '  "generated_at": %s,\n' "$(json_escape "$(date -u +"%Y-%m-%dT%H:%M:%SZ")")"
     printf '  "profile": %s,\n' "$(json_escape "${EVALUATION_PROFILE}")"
+    printf '  "resilience_mode": %s,\n' "$(json_escape "${EVALUATION_RESILIENCE}")"
     printf '  "policy": "active-pressure",\n'
     printf '  "mode": "sweep",\n'
     printf '  "targets_evaluated": ['
@@ -2603,10 +2757,12 @@ print_single_policy_summary() {
   printf '\nEvaluated:\n'
   printf '  Profile: %s\n' "${EVALUATION_PROFILE}"
   printf '  Policy: %s\n' "${CURRENT_POLICY}"
+  printf '  Resilience mode: %s\n' "${EVALUATION_RESILIENCE}"
   printf '  HPA metric: %s\n' "${CURRENT_HPA_METRIC_NAME}"
   printf '  HPA target average value: %s\n' "${CURRENT_HPA_TARGET_AVERAGE_VALUE}"
   printf '  First GPU capacity type: %s\n' "${FIRST_GPU_CAPACITY_TYPE:-n/a}"
   printf '  Second GPU capacity type: %s\n' "${SECOND_GPU_CAPACITY_TYPE:-n/a}"
+  printf '  Resilience outcome: %s\n' "${RESILIENCE_OUTCOME:-n/a}"
   printf '  First public response: %s\n' "$(display_duration "$(seconds_since_start "${FIRST_RESPONSE_TIME}")")"
   printf '  Second ready replica: %s\n' "$(display_duration "$(seconds_since_start "${SECOND_READY_TIME}")")"
   printf '  p95 request latency: %s\n' "$(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")"
@@ -2623,6 +2779,7 @@ print_single_policy_summary() {
 print_compare_summary() {
   printf '\nCompared:\n'
   printf '  Profile: %s\n' "${EVALUATION_PROFILE}"
+  printf '  Resilience mode: %s\n' "${EVALUATION_RESILIENCE}"
   printf '  Running report: %s\n' "$(get_policy_snapshot_value running REPORT_PATH)"
   printf '  Active-pressure report: %s\n' "$(get_policy_snapshot_value active-pressure REPORT_PATH)"
   printf '  Compare report: %s\n' "${COMPARE_REPORT_PATH}"
@@ -2632,6 +2789,7 @@ print_compare_summary() {
 print_sweep_summary() {
   printf '\nSwept:\n'
   printf '  Profile: %s\n' "${EVALUATION_PROFILE}"
+  printf '  Resilience mode: %s\n' "${EVALUATION_RESILIENCE}"
   printf '  Targets: %s\n' "$(format_active_target_sweep_list)"
   printf '  Recommended active target: %s\n' "${SWEEP_RECOMMENDED_TARGET:-n/a}"
   printf '  Recommendation status: %s\n' "${SWEEP_RECOMMENDATION_STATUS:-n/a}"
@@ -2666,6 +2824,7 @@ main() {
     capture_compare_policy_result active-pressure
 
     write_compare_reports
+    restore_resilience_mode
     print_compare_summary
     return 0
   fi
@@ -2692,6 +2851,7 @@ main() {
     done
 
     write_sweep_reports
+    restore_resilience_mode
     print_sweep_summary
     return 0
   fi
@@ -2701,6 +2861,7 @@ main() {
   fi
 
   run_single_policy_evaluation "${EVALUATION_POLICY}" "${EVALUATION_POLICY}" "${stage_prefix}" 0
+  restore_resilience_mode
   print_single_policy_summary
 }
 

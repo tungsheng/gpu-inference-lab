@@ -45,6 +45,21 @@ write_evaluate_kubectl_stub() {
 "    exit 0" \
 "    ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true')" \
+"    : > \"${TEST_TMPDIR}/spot-nodepool-disabled\"" \
+"    exit 0" \
+"    ;;" \
+"  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml')" \
+"    rm -f \"${TEST_TMPDIR}/spot-nodepool-disabled\"" \
+"    exit 0" \
+"    ;;" \
+"  'get nodepool gpu-serving-spot')" \
+"    if [[ -f \"${TEST_TMPDIR}/spot-nodepool-disabled\" ]]; then" \
+"      exit 1" \
+"    fi" \
+"    printf '%s\n' 'gpu-serving-spot'" \
+"    exit 0" \
+"    ;;" \
 "  'apply -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml')" \
 "    : > \"${TEST_TMPDIR}/warm-placeholder-applied\"" \
 "    exit 0" \
@@ -79,9 +94,39 @@ write_evaluate_kubectl_stub() {
 "  'get node gpu-serving-1 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g5.xlarge'; exit 0 ;;" \
 "  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-ondemand'; exit 0 ;;" \
 "  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'on-demand'; exit 0 ;;" \
-"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g4dn.xlarge'; exit 0 ;;" \
-"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-spot'; exit 0 ;;" \
-"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'spot'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.topology\.kubernetes\.io/zone}') printf '%s\n' 'us-west-2a'; exit 0 ;;" \
+"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}')" \
+"    if [[ -f \"${TEST_TMPDIR}/spot-nodepool-disabled\" ]]; then" \
+"      printf '%s\n' 'g5.xlarge'" \
+"    else" \
+"      printf '%s\n' 'g4dn.xlarge'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}')" \
+"    if [[ -f \"${TEST_TMPDIR}/spot-nodepool-disabled\" ]]; then" \
+"      printf '%s\n' 'gpu-serving-ondemand'" \
+"    else" \
+"      printf '%s\n' 'gpu-serving-spot'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}')" \
+"    if [[ -f \"${TEST_TMPDIR}/spot-nodepool-disabled\" ]]; then" \
+"      printf '%s\n' 'on-demand'" \
+"    else" \
+"      printf '%s\n' 'spot'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get node gpu-serving-2 -o jsonpath={.metadata.labels.topology\.kubernetes\.io/zone}')" \
+"    if [[ -f \"${TEST_TMPDIR}/spot-nodepool-disabled\" ]]; then" \
+"      printf '%s\n' 'us-west-2a'" \
+"    else" \
+"      printf '%s\n' 'us-west-2c'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml')" \
 "    : > \"${TEST_TMPDIR}/deployment-applied\"" \
 "    exit 0" \
@@ -241,7 +286,7 @@ run_running_policy_test() {
     "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running" \
     "apply -f ${REPO_ROOT}/platform/inference/hpa.yaml" \
     "running policy should wait for the running metric before applying the HPA"
-  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/running/target/128" "running policy should push summary metrics with policy and target labels in the Pushgateway path"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/resilience/healthy/policy/running/target/128" "running policy should push summary metrics with profile, resilience, policy, and target labels in the Pushgateway path"
 
   teardown_test_tmpdir
 }
@@ -294,7 +339,7 @@ run_active_pressure_policy_test() {
     "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active" \
     "apply -f /tmp/gpu-lab-active-hpa." \
     "active-pressure should wait for the active metric before applying the rendered HPA"
-  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/6" "active-pressure should push summary metrics with policy and target labels in the Pushgateway path"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/resilience/healthy/policy/active-pressure/target/6" "active-pressure should push summary metrics with profile, resilience, policy, and target labels in the Pushgateway path"
 
   teardown_test_tmpdir
 }
@@ -344,8 +389,8 @@ run_compare_policy_test() {
     "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running" \
     "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active" \
     "compare mode should execute the running policy before the active-pressure policy"
-  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/warm-1/policy/running/target/128" "compare mode should push running-policy summary metrics with policy and target labels"
-  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/warm-1/policy/active-pressure/target/6" "compare mode should push active-pressure summary metrics with policy and target labels"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/warm-1/resilience/healthy/policy/running/target/128" "compare mode should push running-policy summary metrics with profile, resilience, policy, and target labels"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/warm-1/resilience/healthy/policy/active-pressure/target/6" "compare mode should push active-pressure summary metrics with profile, resilience, policy, and target labels"
 
   WARM_PLACEHOLDER_APPLY_COUNT=$(printf '%s\n' "${KUBECTL_LOG}" | awk -v needle="apply -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml" 'index($0, needle) { count++ } END { print count + 0 }')
   assert_eq "2" "${WARM_PLACEHOLDER_APPLY_COUNT}" "compare mode should restore the warm baseline for both policy runs"
@@ -402,13 +447,60 @@ run_sweep_policy_test() {
   assert_contains "${SWEEP_JSON_CONTENT}" "\"p95_estimated_queue_wait_seconds\": 0.420" "the sweep JSON report should include the derived queue-wait estimate"
   assert_contains "${KUBECTL_LOG}" "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active" "sweep mode should preflight the active metric"
   assert_occurs_before "${CURL_LOG}" \
-    "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/2" \
-    "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/4" \
+    "/metrics/job/gpu-serving-measure/profile/zero-idle/resilience/healthy/policy/active-pressure/target/2" \
+    "/metrics/job/gpu-serving-measure/profile/zero-idle/resilience/healthy/policy/active-pressure/target/4" \
     "sweep mode should push target-2 metrics before target-4 metrics"
   assert_occurs_before "${CURL_LOG}" \
-    "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/4" \
-    "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/8" \
+    "/metrics/job/gpu-serving-measure/profile/zero-idle/resilience/healthy/policy/active-pressure/target/4" \
+    "/metrics/job/gpu-serving-measure/profile/zero-idle/resilience/healthy/policy/active-pressure/target/8" \
     "sweep mode should push target-4 metrics before target-8 metrics"
+
+  teardown_test_tmpdir
+}
+
+run_spot_unavailable_resilience_test() {
+  setup_test_tmpdir
+  write_evaluate_kubectl_stub
+  write_evaluate_curl_stub
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
+    TMPDIR=/tmp \
+    /bin/bash "${REPO_ROOT}/scripts/evaluate" \
+    --profile zero-idle \
+    --resilience spot-unavailable \
+    --report "${TEST_TMPDIR}/resilience.md" \
+    --json-report "${TEST_TMPDIR}/resilience.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/evaluate should complete the spot-unavailable resilience workflow"
+  assert_contains "${COMMAND_OUTPUT}" "Resilience mode: spot-unavailable" "the resilience workflow should print the selected resilience mode"
+  assert_contains "${COMMAND_OUTPUT}" "Resilience outcome: fallback-succeeded" "the resilience workflow should summarize the on-demand fallback outcome"
+
+  assert_file_exists "${TEST_TMPDIR}/resilience.md" "the resilience workflow should write the Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/resilience.json" "the resilience workflow should write the JSON report"
+
+  REPORT_CONTENT=$(cat "${TEST_TMPDIR}/resilience.md")
+  JSON_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/resilience.json")
+  KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
+  CURL_LOG=$(cat "${TEST_TMPDIR}/curl.log")
+
+  assert_contains "${REPORT_CONTENT}" "Resilience mode: spot-unavailable" "the Markdown report should include the degraded-capacity mode"
+  assert_contains "${REPORT_CONTENT}" "Second GPU capacity type: on-demand" "the Markdown report should show the on-demand fallback node"
+  assert_contains "${REPORT_CONTENT}" "Second GPU availability zone: us-west-2a" "the Markdown report should include the fallback node zone"
+  assert_contains "${REPORT_CONTENT}" "Resilience outcome: fallback-succeeded" "the Markdown report should record the fallback outcome"
+  assert_contains "${REPORT_CONTENT}" "Preferred burst capacity type for this resilience mode: on-demand" "the Markdown report should explain the expected fallback path"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"resilience_mode\": \"spot-unavailable\"" "the JSON report should include the degraded-capacity mode"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"second_gpu_capacity_type\": \"on-demand\"" "the JSON report should record the fallback node capacity type"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"second_gpu_availability_zone\": \"us-west-2a\"" "the JSON report should include the fallback node zone"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"outcome\": \"fallback-succeeded\"" "the JSON report should include the resilience outcome"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"preferred_burst_capacity_type\": \"on-demand\"" "the JSON report should include the expected burst capacity type under degraded conditions"
+  assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" "the resilience workflow should withdraw the spot NodePool for the run"
+  assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml" "the resilience workflow should restore the spot NodePool after the run"
+  assert_occurs_before "${KUBECTL_LOG}" \
+    "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" \
+    "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml" \
+    "the resilience workflow should restore the spot NodePool only after the degraded-capacity run completes"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/resilience/spot-unavailable/policy/running/target/128" "the resilience workflow should label Pushgateway metrics with the degraded-capacity mode"
 
   teardown_test_tmpdir
 }
@@ -417,3 +509,4 @@ run_running_policy_test
 run_active_pressure_policy_test
 run_compare_policy_test
 run_sweep_policy_test
+run_spot_unavailable_resilience_test

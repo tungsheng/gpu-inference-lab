@@ -59,6 +59,9 @@ This path answers whether the zero-idle story works at all.
 - waits for scale-in and cleanup
 - writes per-policy, compare, or sweep reports with timing, utilization,
   derived queue wait, and cost fields
+- can also withdraw the preferred spot `NodePool` for the run through
+  `./scripts/evaluate --resilience spot-unavailable` and report the resulting
+  on-demand fallback path plus GPU node zones
 
 This path answers whether the control loop can add capacity fast enough to
 handle bursty inference traffic.
@@ -95,22 +98,24 @@ In compare mode, the workflow restores that warm baseline between the two
 policy runs and then removes it at the very end so the environment still
 returns to zero GPU nodes after reporting.
 
-## Next Scaling Direction
+## Current Resilience Direction
 
-Milestone 10 now closes the calibration loop with a derived queue-wait metric,
-per-GPU active-request readouts, and efficiency assessments. The next scaling
-milestone is deeper GPU bin packing and multi-request efficiency. Concretely:
+Milestone 11 has started with a degraded-capacity experiment:
 
-- measure how many active requests one GPU can sustain before latency or
-  utilization breaks down
-- replace the derived queue-wait estimate with a first-class queue histogram if
-  the stack can expose one
-- reason about cost per useful unit of work rather than cost per launched node
-- show whether the current pod-per-GPU shape leaves headroom stranded during
-  moderate bursts
+- `./scripts/evaluate --resilience spot-unavailable` deletes the preferred
+  `gpu-serving-spot` `NodePool` for the run
+- the burst still scales from one to two replicas, but the second GPU node is
+  expected to come from `gpu-serving-ondemand`
+- reports now call out the resilience mode, fallback outcome, and first/second
+  GPU availability zones so capacity scarcity is easier to reason about
 
-That would push the repo from a good autoscaling control-loop experiment into a
-stronger serving-efficiency study.
+The next slice inside this milestone is true interruption handling:
+
+- inject a live spot-node loss during the burst instead of only withdrawing the
+  spot pool beforehand
+- measure replacement time and whether the second ready replica recovers on
+  on-demand capacity
+- keep pushing AZ placement and degraded-capacity visibility into the reports
 
 ## Version Pins
 

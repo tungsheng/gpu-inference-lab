@@ -1006,8 +1006,8 @@ run_evaluate_sweep_second_target_failure_test() {
     fail "sweep mode should preflight the active metric for the successful and failing targets"
   fi
   assert_eq "1" "${ACTIVE_HPA_APPLY_COUNT}" "sweep mode should only apply the rendered active-pressure HPA for the successful first target"
-  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/2" "sweep mode should keep the first successful target push"
-  assert_not_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/policy/active-pressure/target/4" "sweep mode should stop before pushing the failing target summary"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/resilience/healthy/policy/active-pressure/target/2" "sweep mode should keep the first successful target push"
+  assert_not_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/resilience/healthy/policy/active-pressure/target/4" "sweep mode should stop before pushing the failing target summary"
 
   teardown_test_tmpdir
 }

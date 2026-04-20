@@ -23,6 +23,7 @@ is intentionally opinionated:
 ./scripts/up
 ./scripts/verify
 ./scripts/evaluate --profile zero-idle
+./scripts/evaluate --profile zero-idle --resilience spot-unavailable
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
@@ -100,6 +101,12 @@ Zero-idle baseline:
 ./scripts/evaluate --profile zero-idle
 ```
 
+Degraded-capacity baseline with the preferred spot burst path withdrawn:
+
+```bash
+./scripts/evaluate --profile zero-idle --resilience spot-unavailable
+```
+
 Capacity-aware policy on the same zero-idle baseline:
 
 ```bash
@@ -150,6 +157,13 @@ Policy behavior:
 | `compare` | runs `running` first, then `active-pressure`, and emits a side-by-side compare report |
 | `sweep` | runs `active-pressure` repeatedly for the comma-separated `--active-targets` list and emits a recommendation summary |
 
+Resilience behavior:
+
+| Resilience mode | What it does |
+| --- | --- |
+| `healthy` | leaves the preferred spot burst path available and reports whether the second node arrived on spot or on-demand |
+| `spot-unavailable` | withdraws `gpu-serving-spot` before the run, measures whether burst scale-out falls back to on-demand, and restores the spot `NodePool` afterward |
+
 Reports are written to:
 
 - single policy: `docs/reports/evaluate-<profile>-<policy>-<timestamp>.md`
@@ -162,6 +176,7 @@ Reports are written to:
 
 Those reports capture:
 
+- selected resilience mode, resilience outcome, and the rationale behind the observed fallback behavior
 - selected policy, HPA metric name, and HPA target average value
 - timeline events for node launch, readiness, scale-out, scale-in, and cleanup
 - p95 request latency, p95 estimated queue wait, and p95 time to first token
@@ -170,6 +185,7 @@ Those reports capture:
   second
 - generation throughput
 - average GPU utilization, GPU headroom, and max GPU utilization
+- first and second GPU availability zones, plus the observed second-node capacity type
 - peak serving `NodeClaim` count, split by capacity type
 - estimated serving GPU cost for the run
 - in sweep mode, a summary table plus a recommended active target from the

@@ -105,6 +105,7 @@ With the scripted path:
 ./scripts/verify
 ./scripts/evaluate --profile zero-idle
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
+./scripts/evaluate --profile zero-idle --resilience spot-unavailable
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ```
@@ -117,6 +118,8 @@ The repo proves:
   signals
 - target calibration experiments for the active-pressure policy
 - second-node provisioning through Karpenter
+- degraded-capacity fallback behavior when the preferred spot burst path is
+  withdrawn
 - report generation for latency, derived queue wait, TTFT, waiting pressure,
   utilization, and cost
 
@@ -148,9 +151,12 @@ curl "http://${EDGE_HOST}/v1/completions" \
   -d '{"model":"qwen2.5-0.5b","prompt":"Say hello from the public edge.","max_tokens":32,"temperature":0}'
 ```
 
-## Next Improvement
+## Current Resilience Step
 
-The next step is not another serving component. It is better capacity evidence:
-adding a dedicated queue-wait metric if possible, then learning how many
-concurrent requests a single GPU-backed pod can handle before latency, queue
-pressure, or utilization say it is time to scale.
+The next systems question is no longer just capacity calibration. It is
+resilience under degraded capacity:
+
+- `--resilience spot-unavailable` already proves the platform can fall back to
+  on-demand GPU nodes when the preferred spot path is withdrawn
+- the next follow-up is a true spot interruption experiment during the burst,
+  not just pre-run scarcity

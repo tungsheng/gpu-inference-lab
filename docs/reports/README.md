@@ -22,13 +22,20 @@ And policies:
 - `compare`
 - `sweep`
 
+And resilience modes:
+
+- `healthy`
+- `spot-unavailable`
+
 ## What The Reports Capture
 
 The report format is designed to summarize one burst experiment, compare two
 policies on the same profile, or sweep multiple active-pressure targets:
 
+- resilience mode plus the resulting burst-capacity outcome
 - selected policy, HPA metric name, and HPA target average value
 - first and second GPU node timing
+- first and second GPU availability zones
 - first public response timing
 - HPA scale-out timing
 - second Ready replica timing
@@ -61,4 +68,6 @@ remain the source of truth.
 Current reports compare real HPA policies and can sweep active-pressure
 targets, and they now derive queue wait from waiting depth over request
 completion rate, but they still do not expose a dedicated queue-wait
-histogram.
+histogram. The current resilience experiment simulates spot scarcity by
+withdrawing the spot `NodePool` before the burst; it does not yet inject a live
+spot interruption after the second node is already serving.

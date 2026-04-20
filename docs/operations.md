@@ -12,6 +12,7 @@ results.
 | `./scripts/verify` | you want the fastest end-to-end validation | cold-start from zero GPU nodes, first Ready replica, first successful public completion, cleanup back to zero |
 | `./scripts/evaluate --profile zero-idle` | you want the original baseline experiment | running-request HPA from a true zero-GPU baseline |
 | `./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4` | you want the capacity-aware experiment directly | active-pressure HPA from the same zero-GPU baseline |
+| `./scripts/evaluate --profile zero-idle --resilience spot-unavailable` | you want the first degraded-capacity experiment | spot burst capacity is withdrawn, on-demand fallback is measured, and the report records the fallback outcome plus zones |
 | `./scripts/evaluate --profile warm-1 --policy compare --active-target 6` | you want the most informative operator readout | sequential running versus active-pressure comparison with one warm on-demand serving node |
 | `./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8` | you want to tune active-pressure capacity instead of just proving it exists | per-target active-pressure experiments plus a recommendation summary |
 | `./scripts/down` | you want a clean teardown | runtime surface, observability, capacity definitions, and Terraform infrastructure are removed |
@@ -41,6 +42,8 @@ After `./scripts/evaluate`:
   `.json`
 - compare runs wrote the two per-policy artifacts plus a compare summary report
 - sweep runs wrote one per-target report pair plus a sweep summary report
+- degraded-capacity runs also recorded the resilience mode, fallback outcome,
+  and GPU availability zones
 - the overall workflow returned profile-specific warm capacity to zero GPU nodes
 
 ## Questions This Repo Can Answer Today
@@ -58,6 +61,8 @@ After `./scripts/evaluate`:
   active requests, throughput, and GPU utilization look like during a
   controlled burst?
 - What do you gain or pay by keeping one warm GPU node around?
+- What happens when the preferred spot burst path is unavailable before the
+  burst starts?
 
 ## Observability And Artifacts
 
@@ -70,7 +75,8 @@ The scripted workflow ships with:
 - DCGM exporter metrics for GPU utilization
 - `docs/reports/*.md` and `docs/reports/*.json` outputs from
   `./scripts/evaluate`
-- Pushgateway experiment metrics labeled by `profile`, `policy`, and target
+- Pushgateway experiment metrics labeled by `profile`, `resilience`, `policy`,
+  and target
 
 ## What To Watch During A Run
 
@@ -98,8 +104,8 @@ intentionally simple:
   not a dedicated queue-wait histogram
 - the sweep recommendation is still heuristic rather than backed by a dedicated
   queue histogram or full per-GPU capacity model
-- the next scaling question is GPU efficiency and bin packing, not whether the
-  HPA can see pressure at all
+- the new resilience path simulates spot scarcity before the burst; it does not
+  yet inject a live spot interruption after the second node is already serving
 
 ## Dev Boundary
 
