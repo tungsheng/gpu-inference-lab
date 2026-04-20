@@ -100,7 +100,7 @@ write_stub kubectl \
 "  *) printf 'unexpected kubectl command: %s\n' \"\$*\" >&2; exit 1 ;;" \
 "esac"
 
-run_and_capture env PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" /bin/bash "${REPO_ROOT}/scripts/down" -auto-approve
+run_and_capture env PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" /bin/bash "${REPO_ROOT}/scripts/down" --cleanup-orphan-enis -auto-approve
 
 assert_status 0 "${COMMAND_STATUS}" "scripts/down should remove the platform stack and destroy terraform state"
 assert_contains "${COMMAND_OUTPUT}" "OK 4/8 remove inference and load artifacts" "down should remove runtime artifacts first"
@@ -109,6 +109,7 @@ assert_contains "${COMMAND_OUTPUT}" "OK 8/8 terraform destroy" "down should fini
 
 KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
 TERRAFORM_LOG=$(cat "${TEST_TMPDIR}/terraform.log")
+AWS_LOG=$(cat "${TEST_TMPDIR}/aws.log")
 
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true" "down should delete the HPA during teardown"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true" "down should remove a preserved warm placeholder deployment if one exists"
@@ -118,3 +119,5 @@ assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/node
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true" "down should remove the on-demand serving NodePool"
 assert_not_contains "${KUBECTL_LOG}" "platform/test-app" "down should not reference the sample app"
 assert_contains "${TERRAFORM_LOG}" "destroy -auto-approve" "down should pass raw terraform arguments through to terraform destroy"
+assert_not_contains "${TERRAFORM_LOG}" "destroy --cleanup-orphan-enis -auto-approve" "down should not pass the cleanup flag through to terraform destroy"
+assert_not_contains "${AWS_LOG}" "delete-network-interface" "down should not attempt ENI cleanup when terraform destroy succeeds"

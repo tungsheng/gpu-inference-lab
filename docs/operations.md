@@ -15,6 +15,7 @@ results.
 | `./scripts/evaluate --profile warm-1 --policy compare --active-target 6` | you want the most informative operator readout | sequential running versus active-pressure comparison with one warm on-demand serving node |
 | `./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8` | you want to tune active-pressure capacity instead of just proving it exists | per-target active-pressure experiments plus a recommendation summary |
 | `./scripts/down` | you want a clean teardown | runtime surface, observability, capacity definitions, and Terraform infrastructure are removed |
+| `./scripts/down --cleanup-orphan-enis` | a destroy dependency failure left behind `available` `aws-K8S` ENIs | `scripts/down` deletes cleanup-eligible orphan CNI ENIs, retries `terraform destroy` once, and still leaves non-matching ENIs for manual review |
 
 ## Expected States
 

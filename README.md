@@ -97,6 +97,8 @@ Tear everything down:
 
 ```bash
 ./scripts/down
+# or, if a failed destroy leaves behind available aws-K8S ENIs:
+./scripts/down --cleanup-orphan-enis
 ```
 
 Run the local shell tests:
@@ -122,7 +124,10 @@ Run the local shell tests:
   `--policy sweep` runs one active-pressure experiment per target in
   `--active-targets` and writes a recommendation summary.
 - `./scripts/down` removes runtime resources, observability, GPU capacity
-  definitions, controllers, and Terraform-managed infrastructure.
+  definitions, controllers, and Terraform-managed infrastructure. The optional
+  `--cleanup-orphan-enis` flag retries one failed `terraform destroy` after
+  deleting cleanup-eligible `available` `aws-K8S` / `aws-node` ENIs in the
+  VPC.
 
 ## What The Evaluation Path Answers
 

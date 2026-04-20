@@ -214,6 +214,12 @@ Common variant:
 ./scripts/down -auto-approve
 ```
 
+Recovery variant:
+
+```bash
+./scripts/down --cleanup-orphan-enis -auto-approve
+```
+
 `./scripts/down` performs the inverse lifecycle:
 
 1. runs `terraform init` in `infra/env/dev`
@@ -229,6 +235,11 @@ Common variant:
 
 If the script cannot reconnect to the cluster, it stops before Terraform
 destroy and prints the exact fallback destroy command.
+
+If `terraform destroy` fails because an `available` `aws-K8S` / `aws-node`
+ENI is still attached to the VPC, `--cleanup-orphan-enis` prints the same
+diagnostics, deletes only cleanup-eligible orphan ENIs automatically, and then
+retries `terraform destroy` once.
 
 ## Dev Boundary
 

@@ -89,6 +89,60 @@ write_common_down_stubs() {
 "esac"
 }
 
+write_successful_down_kubectl_stub() {
+  write_stub kubectl \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"if [[ \"\$*\" == 'delete namespace monitoring --ignore-not-found=true' ]]; then" \
+"  : > \"${TEST_TMPDIR}/monitoring-deleted\"" \
+"  exit 0" \
+"fi" \
+"if [[ \"\$*\" == 'get namespace monitoring' ]]; then" \
+"  if [[ -f \"${TEST_TMPDIR}/monitoring-deleted\" ]]; then" \
+"    exit 1" \
+"  fi" \
+"  exit 0" \
+"fi" \
+"case \"\$*\" in" \
+"  'cluster-info') exit 0 ;;" \
+"  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com' ;;" \
+"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get job gpu-load-test -n app') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get deployment gpu-warm-placeholder -n app') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get hpa vllm-openai -n app') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/inference/ingress.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get ingress vllm-openai-ingress -n app') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/inference/service.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get service vllm-openai -n app') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get deployment vllm-openai -n app') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get nodepool gpu-warm-1') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get nodepool gpu-serving-spot') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get nodepool gpu-serving-ondemand') exit 1 ;;" \
+"  'delete nodepool/gpu-serving --ignore-not-found=true') exit 0 ;;" \
+"  'get nodepool gpu-serving') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/karpenter/nodeclass-gpu-serving.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get ec2nodeclass gpu-serving') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/observability/dashboards/experiment-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/observability/dashboards/capacity-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/observability/dashboards/serving-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/observability/pushgateway.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/observability/karpenter-podmonitor.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/observability/vllm-podmonitor.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get apiservice v1beta1.custom.metrics.k8s.io') exit 1 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/karpenter/serviceaccount.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get daemonset nvidia-device-plugin-daemonset -n kube-system') exit 1 ;;" \
+"  *) printf 'unexpected kubectl command: %s\n' \"\$*\" >&2; exit 1 ;;" \
+"esac"
+}
+
 run_missing_prereq_test() {
   setup_test_tmpdir
   link_system_command dirname
@@ -1103,6 +1157,135 @@ run_down_cluster_unreachable_test() {
   teardown_test_tmpdir
 }
 
+run_down_destroy_dependency_diagnostics_test() {
+  setup_test_tmpdir
+  write_common_down_stubs
+  write_successful_down_kubectl_stub
+
+  write_stub terraform \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"case \"\$2\" in" \
+"  init) exit 0 ;;" \
+"  destroy) exit 1 ;;" \
+"  output)" \
+"    case \"\$4\" in" \
+"      cluster_name) printf '%s\n' 'gpu-inference' ;;" \
+"      aws_region) printf '%s\n' 'us-west-2' ;;" \
+"      vpc_id) printf '%s\n' 'vpc-12345' ;;" \
+"      aws_load_balancer_controller_role_arn) printf '%s\n' 'arn:aws:iam::123456789012:role/alb-controller' ;;" \
+"      *) exit 1 ;;" \
+"    esac" \
+"    ;;" \
+"  *) exit 1 ;;" \
+"esac"
+
+  write_stub aws \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/aws.log\"" \
+"case \"\$1 \$2\" in" \
+"  'eks update-kubeconfig') exit 0 ;;" \
+"  'elbv2 describe-load-balancers') printf '%s\n' '0' ;;" \
+"  'ec2 describe-network-interfaces')" \
+"    printf '%s\t%s\t%s\t%s\t%s\n' 'eni-03c6a627c2ce46d98' 'aws-K8S-i-0f9e65492af4c27fb' 'subnet-03085888abd0f7244' 'sg-0f9c872d13021f5ef' 'AROATBRKPOLXETKDLLAAM:eks-gpu-infere-aws-node-c-c810c7b3-5f72-4719-b476-c634ee062d4e'" \
+"    exit 0" \
+"    ;;" \
+"  *) exit 1 ;;" \
+"esac"
+
+  run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash "${REPO_ROOT}/scripts/down" -auto-approve
+
+  assert_status 1 "${COMMAND_STATUS}" "down should fail when terraform destroy hits a dependency violation"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 8/8 terraform destroy" "down should report the terraform destroy stage failure"
+  assert_contains "${COMMAND_OUTPUT}" "Destroy diagnostics:" "down should print destroy diagnostics when terraform destroy fails"
+  assert_contains "${COMMAND_OUTPUT}" "VPC: vpc-12345" "down diagnostics should include the VPC id"
+  assert_contains "${COMMAND_OUTPUT}" "eni-03c6a627c2ce46d98 subnet=subnet-03085888abd0f7244 groups=sg-0f9c872d13021f5ef" "down diagnostics should include the orphaned ENI details"
+  assert_contains "${COMMAND_OUTPUT}" "delete candidate: aws ec2 delete-network-interface --region us-west-2 --network-interface-id eni-03c6a627c2ce46d98" "down diagnostics should print the manual ENI cleanup command"
+
+  AWS_LOG=$(cat "${TEST_TMPDIR}/aws.log")
+  assert_contains "${AWS_LOG}" "ec2 describe-network-interfaces --region us-west-2 --filters Name=vpc-id,Values=vpc-12345 Name=status,Values=available" "down should query available ENIs in the VPC when destroy fails"
+  teardown_test_tmpdir
+}
+
+run_down_orphan_eni_cleanup_retry_test() {
+  setup_test_tmpdir
+  write_common_down_stubs
+  write_successful_down_kubectl_stub
+
+  write_stub terraform \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/terraform.log\"" \
+"if [[ \"\$2\" == 'destroy' ]]; then" \
+"  attempts_file='${TEST_TMPDIR}/destroy-attempts'" \
+"  attempts=0" \
+"  if [[ -f \"\${attempts_file}\" ]]; then" \
+"    attempts=\$(cat \"\${attempts_file}\")" \
+"  fi" \
+"  attempts=\$((attempts + 1))" \
+"  printf '%s\n' \"\${attempts}\" > \"\${attempts_file}\"" \
+"  if [[ \"\${attempts}\" == '1' ]]; then" \
+"    exit 1" \
+"  fi" \
+"  exit 0" \
+"fi" \
+"case \"\$2\" in" \
+"  init) exit 0 ;;" \
+"  output)" \
+"    case \"\$4\" in" \
+"      cluster_name) printf '%s\n' 'gpu-inference' ;;" \
+"      aws_region) printf '%s\n' 'us-west-2' ;;" \
+"      vpc_id) printf '%s\n' 'vpc-12345' ;;" \
+"      aws_load_balancer_controller_role_arn) printf '%s\n' 'arn:aws:iam::123456789012:role/alb-controller' ;;" \
+"      *) exit 1 ;;" \
+"    esac" \
+"    ;;" \
+"  *) exit 1 ;;" \
+"esac"
+
+  write_stub aws \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/aws.log\"" \
+"case \"\$1 \$2\" in" \
+"  'eks update-kubeconfig') exit 0 ;;" \
+"  'elbv2 describe-load-balancers') printf '%s\n' '0' ;;" \
+"  'ec2 describe-network-interfaces')" \
+"    printf '%s\t%s\t%s\t%s\t%s\n' 'eni-03c6a627c2ce46d98' 'aws-K8S-i-0f9e65492af4c27fb' 'subnet-03085888abd0f7244' 'sg-0f9c872d13021f5ef' 'AROATBRKPOLXETKDLLAAM:eks-gpu-infere-aws-node-c-c810c7b3-5f72-4719-b476-c634ee062d4e'" \
+"    printf '%s\t%s\t%s\t%s\t%s\n' 'eni-09999999999999999' 'manual-debug-eni' 'subnet-09999999999999999' 'sg-0123456789abcdef0' 'None'" \
+"    exit 0" \
+"    ;;" \
+"  'ec2 delete-network-interface')" \
+"    printf '%s\n' \"\$6\" >> \"${TEST_TMPDIR}/deleted-enis.log\"" \
+"    exit 0" \
+"    ;;" \
+"  *) exit 1 ;;" \
+"esac"
+
+  run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash "${REPO_ROOT}/scripts/down" --cleanup-orphan-enis -auto-approve
+
+  assert_status 0 "${COMMAND_STATUS}" "down should recover from orphan aws-K8S ENIs when cleanup is enabled"
+  assert_contains "${COMMAND_OUTPUT}" "terraform destroy failed; checking for cleanup-eligible orphan aws-K8S ENIs." "down should explain the cleanup retry path"
+  assert_contains "${COMMAND_OUTPUT}" "cleanup eligible: yes" "down diagnostics should mark the orphan aws-K8S ENI as cleanup eligible"
+  assert_contains "${COMMAND_OUTPUT}" "cleanup eligible: no" "down diagnostics should leave unrelated ENIs out of automatic cleanup"
+  assert_contains "${COMMAND_OUTPUT}" "deleted 1 cleanup-eligible orphan aws-K8S ENI(s)." "down should report the automatic ENI cleanup count"
+  assert_contains "${COMMAND_OUTPUT}" "Retrying terraform destroy after orphan ENI cleanup..." "down should retry terraform destroy after deleting orphan ENIs"
+  assert_contains "${COMMAND_OUTPUT}" "OK 8/8 terraform destroy" "down should finish successfully after cleanup and retry"
+
+  TERRAFORM_LOG=$(cat "${TEST_TMPDIR}/terraform.log")
+  AWS_LOG=$(cat "${TEST_TMPDIR}/aws.log")
+  DELETED_ENIS=$(cat "${TEST_TMPDIR}/deleted-enis.log")
+  DESTROY_COUNT=$(printf '%s\n' "${TERRAFORM_LOG}" | awk 'index($0, "destroy -auto-approve") { count++ } END { print count + 0 }')
+
+  assert_eq "2" "${DESTROY_COUNT}" "down should invoke terraform destroy twice around orphan ENI cleanup"
+  assert_not_contains "${TERRAFORM_LOG}" "destroy --cleanup-orphan-enis -auto-approve" "down should not pass the cleanup flag through to terraform destroy during retry"
+  assert_contains "${AWS_LOG}" "ec2 delete-network-interface --region us-west-2 --network-interface-id eni-03c6a627c2ce46d98" "down should delete the cleanup-eligible aws-K8S ENI"
+  assert_not_contains "${AWS_LOG}" "ec2 delete-network-interface --region us-west-2 --network-interface-id eni-09999999999999999" "down should not delete unrelated available ENIs automatically"
+  assert_contains "${DELETED_ENIS}" "eni-03c6a627c2ce46d98" "down should record the cleanup-eligible ENI deletion"
+  teardown_test_tmpdir
+}
+
 run_missing_prereq_test
 run_up_ingress_timeout_test
 run_verify_gpu_timeout_test
@@ -1117,3 +1300,5 @@ run_evaluate_compare_second_policy_failure_test
 run_evaluate_sweep_second_target_failure_test
 run_down_alb_timeout_test
 run_down_cluster_unreachable_test
+run_down_destroy_dependency_diagnostics_test
+run_down_orphan_eni_cleanup_retry_test
