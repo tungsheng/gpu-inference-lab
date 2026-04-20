@@ -206,6 +206,8 @@ cleanup_orphan_enis() {
   local subnet_id
   local group_ids
   local requester_id
+  local list_status=0
+  local delete_status=0
   local delete_failures=0
 
   ORPHAN_ENI_DELETE_COUNT=0
@@ -218,7 +220,7 @@ cleanup_orphan_enis() {
 
   set +e
   eni_rows=$(describe_available_vpc_enis 2>/dev/null)
-  local list_status=$?
+  list_status=$?
   set -e
 
   printf 'Orphan ENI cleanup:\n'
@@ -253,7 +255,7 @@ cleanup_orphan_enis() {
     aws ec2 delete-network-interface \
       --region "${AWS_REGION}" \
       --network-interface-id "${eni_id}" >/dev/null 2>&1
-    local delete_status=$?
+    delete_status=$?
     set -e
 
     if [[ "${delete_status}" == "0" ]]; then
