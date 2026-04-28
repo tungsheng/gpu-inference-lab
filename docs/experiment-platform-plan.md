@@ -197,7 +197,7 @@ Notes:
 
 ## Slice 7 - Request Pattern Utilization
 
-Status: planned.
+Status: implemented.
 
 Purpose:
 
@@ -208,11 +208,23 @@ Implementation:
 - add steady, burst, uneven-size, and spike-to-zero workload profiles
 - chart GPU utilization, queue depth, active requests, and tail latency over
   time
+- add `experiments/request-patterns/` with four traffic cases that share one
+  default serving profile
+- add optional `request-shapes.csv` support so one k6 job can send weighted
+  short, medium, and long requests
+- tag mixed-load requests with `request_shape` for later latency breakdowns
 
 Acceptance criteria:
 
 - the same serving profile can be compared across multiple traffic patterns
 - the result summary ties utilization dips to request shape and scheduling
+
+Notes:
+
+- The first implementation produces load manifests and report metadata for all
+  four traffic shapes. Prometheus/DCGM time-series collection, graph
+  generation, and automatic `experiments/request-patterns/results.md` rollups
+  remain follow-up work.
 
 ## Slice 8 - Autoscaling And Queueing Behavior
 

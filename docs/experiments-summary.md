@@ -11,6 +11,7 @@ belong under `experiments/<name>/`.
 | KV cache vs concurrency | scaffolded with load and serving renderers | How does longer prompt context reduce stable concurrency and throughput? | `experiments/kv-cache/` |
 | Prefill vs decode timing | scaffolded with streaming runner | How do long-prompt/short-output and short-prompt/long-output requests shift TTFT and decode timing? | `experiments/prefill-decode/` |
 | Batching scheduler tradeoffs | scaffolded with scheduler profiles | How do explicit vLLM scheduler limits trade throughput for p95/p99 latency? | `experiments/batching/` |
+| Request pattern utilization | scaffolded with mixed request shapes | How do steady, burst, uneven-size, and spike-to-zero traffic patterns affect GPU occupancy? | `experiments/request-patterns/` |
 
 ## Reading Results
 
@@ -28,8 +29,9 @@ Each completed experiment should summarize:
 
 ## Current State
 
-The first six implementation slices add the catalog, local load-job renderer,
+The first seven implementation slices add the catalog, local load-job renderer,
 serving-profile renderer, report scaffold contract, a live one-case load
 runner, a streaming runner for prefill/decode timing, and a batching experiment
-with explicit scheduler-profile comparison. No production results have been
-recorded yet.
+with explicit scheduler-profile comparison. Slice seven adds request-pattern
+cases plus weighted request-shape rendering for mixed-size traffic. No
+production results have been recorded yet.

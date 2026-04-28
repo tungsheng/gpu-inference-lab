@@ -36,6 +36,20 @@
         "id": { "type": "string" },
         "prompt_token_target": { "type": "integer" },
         "max_tokens": { "type": "integer" },
+        "request_shapes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "prompt_token_target", "max_tokens", "weight"],
+            "properties": {
+              "id": { "type": "string" },
+              "prompt_token_target": { "type": "integer" },
+              "max_tokens": { "type": "integer" },
+              "weight": { "type": "integer" }
+            },
+            "additionalProperties": false
+          }
+        },
         "arrival": {
           "type": "object",
           "required": [

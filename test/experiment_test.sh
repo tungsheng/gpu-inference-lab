@@ -16,6 +16,8 @@ run_experiment_list_test() {
   assert_contains "${COMMAND_OUTPUT}" "Prefill Vs Decode Timing" "experiment list should include the prefill/decode title"
   assert_contains "${COMMAND_OUTPUT}" "batching" "experiment list should include the batching experiment"
   assert_contains "${COMMAND_OUTPUT}" "Batching Scheduler Tradeoffs" "experiment list should include the batching title"
+  assert_contains "${COMMAND_OUTPUT}" "request-patterns" "experiment list should include the request-pattern experiment"
+  assert_contains "${COMMAND_OUTPUT}" "Request Pattern Utilization" "experiment list should include the request-pattern title"
 }
 
 run_experiment_show_test() {
@@ -55,6 +57,21 @@ run_batching_show_test() {
   assert_contains "${COMMAND_OUTPUT}" "scheduler=default" "show output should represent blank scheduler settings as defaults"
 }
 
+run_request_patterns_show_test() {
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" show request-patterns
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/experiment show should succeed for request-patterns"
+  assert_contains "${COMMAND_OUTPUT}" "Experiment: request-patterns" "show output should include the request-pattern experiment name"
+  assert_contains "${COMMAND_OUTPUT}" "steady-small" "show output should include the steady traffic case"
+  assert_contains "${COMMAND_OUTPUT}" "burst-small" "show output should include the burst traffic case"
+  assert_contains "${COMMAND_OUTPUT}" "uneven-size-mix" "show output should include the uneven-size traffic case"
+  assert_contains "${COMMAND_OUTPUT}" "spike-to-zero" "show output should include the spike-to-zero traffic case"
+  assert_contains "${COMMAND_OUTPUT}" "Request shapes:" "show output should include mixed request shapes"
+  assert_contains "${COMMAND_OUTPUT}" "uneven-size-mix/short: prompt=128 output=64 weight=6" "show output should include the short mixed request shape"
+  assert_contains "${COMMAND_OUTPUT}" "uneven-size-mix/long: prompt=1536 output=512 weight=1" "show output should include the long mixed request shape"
+  assert_contains "${COMMAND_OUTPUT}" "Serving profiles:" "show output should include the shared serving profile"
+}
+
 run_render_load_test() {
   setup_test_tmpdir
 
@@ -80,6 +97,28 @@ run_render_load_test() {
   assert_contains "${RENDERED_MANIFEST}" "generation_tokens_per_second=" "rendered manifest should include generated token throughput in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "summaryTrendStats" "rendered manifest should request p95 and p99 k6 summaries"
   assert_contains "${RENDERED_MANIFEST}" "value: http://vllm-openai.app.svc.cluster.local/v1/completions" "rendered manifest should target the in-cluster vLLM service"
+
+  teardown_test_tmpdir
+}
+
+run_render_request_pattern_load_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-load \
+    --experiment request-patterns \
+    --case uneven-size-mix \
+    --output "${TEST_TMPDIR}/request-patterns-uneven.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-load should render the uneven request-pattern case"
+  assert_file_exists "${TEST_TMPDIR}/request-patterns-uneven.yaml" "render-load should write the uneven request-pattern manifest"
+
+  REQUEST_PATTERN_MANIFEST=$(cat "${TEST_TMPDIR}/request-patterns-uneven.yaml")
+
+  assert_contains "${REQUEST_PATTERN_MANIFEST}" 'const requestShapes = [{ label: "short", promptTokenTarget: 128, maxTokens: 64, weight: 6 }, { label: "medium", promptTokenTarget: 512, maxTokens: 128, weight: 3 }, { label: "long", promptTokenTarget: 1536, maxTokens: 512, weight: 1 }];' "uneven load manifest should embed weighted request shapes"
+  assert_contains "${REQUEST_PATTERN_MANIFEST}" "function selectRequestShape()" "uneven load manifest should select a shape per request"
+  assert_contains "${REQUEST_PATTERN_MANIFEST}" "prompt: buildPrompt(requestShape.promptTokenTarget)" "uneven load manifest should build prompts from selected shapes"
+  assert_contains "${REQUEST_PATTERN_MANIFEST}" "max_tokens: requestShape.maxTokens" "uneven load manifest should set output caps from selected shapes"
+  assert_contains "${REQUEST_PATTERN_MANIFEST}" "request_shape: requestShape.label" "uneven load manifest should tag requests by selected shape"
 
   teardown_test_tmpdir
 }
@@ -273,6 +312,31 @@ run_render_batching_report_test() {
   assert_contains "${BATCHING_JSON_CONTENT}" "\"id\": \"dynamic-default\"" "batching JSON report should include the profile id"
   assert_contains "${BATCHING_JSON_CONTENT}" "\"max_num_seqs\": null" "dynamic default report should persist null max sequence metadata"
   assert_contains "${BATCHING_JSON_CONTENT}" "\"max_num_batched_tokens\": null" "dynamic default report should persist null batched-token metadata"
+
+  teardown_test_tmpdir
+}
+
+run_render_request_pattern_report_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-report \
+    --experiment request-patterns \
+    --case uneven-size-mix \
+    --profile default \
+    --report "${TEST_TMPDIR}/request-patterns-report.md" \
+    --json-report "${TEST_TMPDIR}/request-patterns-report.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-report should render the request-pattern report scaffold"
+  assert_file_exists "${TEST_TMPDIR}/request-patterns-report.md" "render-report should write the request-pattern Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/request-patterns-report.json" "render-report should write the request-pattern JSON report"
+
+  REQUEST_PATTERN_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/request-patterns-report.md")
+  REQUEST_PATTERN_JSON_CONTENT=$(cat "${TEST_TMPDIR}/request-patterns-report.json")
+
+  assert_contains "${REQUEST_PATTERN_REPORT_CONTENT}" "# Request Pattern Utilization - uneven-size-mix" "request-pattern report should include the experiment title and case"
+  assert_contains "${REQUEST_PATTERN_REPORT_CONTENT}" "| Request shapes | short:128/64 weight=6, medium:512/128 weight=3, long:1536/512 weight=1 |" "request-pattern report should include the mixed request shapes"
+  assert_contains "${REQUEST_PATTERN_JSON_CONTENT}" "\"name\": \"request-patterns\"" "request-pattern JSON report should include the experiment name"
+  assert_contains "${REQUEST_PATTERN_JSON_CONTENT}" '"request_shapes": [{"id":"short","prompt_token_target":128,"max_tokens":64,"weight":6}, {"id":"medium","prompt_token_target":512,"max_tokens":128,"weight":3}, {"id":"long","prompt_token_target":1536,"max_tokens":512,"weight":1}]' "request-pattern JSON report should persist weighted request shapes"
 
   teardown_test_tmpdir
 }
@@ -499,7 +563,9 @@ run_experiment_list_test
 run_experiment_show_test
 run_prefill_decode_show_test
 run_batching_show_test
+run_request_patterns_show_test
 run_render_load_test
+run_render_request_pattern_load_test
 run_render_stream_test
 run_render_unknown_case_test
 run_render_default_serving_profile_test
@@ -508,6 +574,7 @@ run_render_batching_serving_profile_test
 run_render_unknown_serving_profile_test
 run_render_report_test
 run_render_batching_report_test
+run_render_request_pattern_report_test
 run_render_report_default_path_test
 run_live_experiment_runner_test
 run_incompatible_case_profile_test

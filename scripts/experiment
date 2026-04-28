@@ -78,6 +78,11 @@ experiment_serving_profiles_path() {
   printf '%s/serving-profiles.csv\n' "$(experiment_dir "${experiment_name}")"
 }
 
+experiment_request_shapes_path() {
+  local experiment_name=$1
+  printf '%s/request-shapes.csv\n' "$(experiment_dir "${experiment_name}")"
+}
+
 require_experiment() {
   local experiment_name=$1
   local metadata_path
@@ -128,12 +133,14 @@ show_experiment() {
   local metadata_path
   local cases_path
   local serving_profiles_path
+  local request_shapes_path
 
   require_experiment "${experiment_name}"
 
   metadata_path=$(experiment_metadata_path "${experiment_name}")
   cases_path=$(experiment_cases_path "${experiment_name}")
   serving_profiles_path=$(experiment_serving_profiles_path "${experiment_name}")
+  request_shapes_path=$(experiment_request_shapes_path "${experiment_name}")
 
   printf 'Experiment: %s\n' "${experiment_name}"
   printf 'Title: %s\n' "$(experiment_title "${experiment_name}")"
@@ -146,6 +153,16 @@ show_experiment() {
       printf "  - %s: prompt=%s output=%s target_rate=%s req/s\n", $1, $2, $3, $5
     }
   ' "${cases_path}"
+
+  if [[ -f "${request_shapes_path}" ]]; then
+    printf 'Request shapes:\n'
+    awk -F',' '
+      NR == 1 { next }
+      NF > 0 && $1 !~ /^#/ {
+        printf "  - %s/%s: prompt=%s output=%s weight=%s\n", $1, $2, $3, $4, $5
+      }
+    ' "${request_shapes_path}"
+  fi
 
   if [[ -f "${serving_profiles_path}" ]]; then
     printf 'Serving profiles:\n'
@@ -350,10 +367,171 @@ load_serving_profile() {
   die "Unknown serving profile ${requested_profile_id} for experiment ${experiment_name}"
 }
 
+render_request_shapes_js() {
+  local experiment_name=$1
+  local shapes_path
+  local row_case_id
+  local shape_id
+  local shape_prompt_token_target
+  local shape_max_tokens
+  local shape_weight
+  local found=0
+  local first=1
+
+  shapes_path=$(experiment_request_shapes_path "${experiment_name}")
+
+  printf '['
+  if [[ -f "${shapes_path}" ]]; then
+    while IFS=',' read -r row_case_id shape_id shape_prompt_token_target shape_max_tokens shape_weight; do
+      if [[ -z "${row_case_id}" || "${row_case_id}" == "case_id" || "${row_case_id}" == \#* ]]; then
+        continue
+      fi
+
+      if [[ "${row_case_id}" == "${CASE_ID}" ]]; then
+        require_name "${shape_id}" "request shape id"
+        require_positive_integer "${shape_prompt_token_target}" "request shape prompt token target"
+        require_positive_integer "${shape_max_tokens}" "request shape max tokens"
+        require_positive_integer "${shape_weight}" "request shape weight"
+
+        if [[ "${first}" == "0" ]]; then
+          printf ', '
+        fi
+        printf '{ label: "%s", promptTokenTarget: %s, maxTokens: %s, weight: %s }' \
+          "${shape_id}" "${shape_prompt_token_target}" "${shape_max_tokens}" "${shape_weight}"
+        found=1
+        first=0
+      fi
+    done < "${shapes_path}"
+  fi
+
+  if [[ "${found}" == "0" ]]; then
+    printf '{ label: "%s", promptTokenTarget: %s, maxTokens: %s, weight: 1 }' \
+      "${CASE_ID}" "${PROMPT_TOKEN_TARGET}" "${MAX_TOKENS}"
+  fi
+  printf ']'
+}
+
+render_request_shapes_json() {
+  local experiment_name=$1
+  local shapes_path
+  local row_case_id
+  local shape_id
+  local shape_prompt_token_target
+  local shape_max_tokens
+  local shape_weight
+  local found=0
+  local first=1
+
+  shapes_path=$(experiment_request_shapes_path "${experiment_name}")
+
+  printf '['
+  if [[ -f "${shapes_path}" ]]; then
+    while IFS=',' read -r row_case_id shape_id shape_prompt_token_target shape_max_tokens shape_weight; do
+      if [[ -z "${row_case_id}" || "${row_case_id}" == "case_id" || "${row_case_id}" == \#* ]]; then
+        continue
+      fi
+
+      if [[ "${row_case_id}" == "${CASE_ID}" ]]; then
+        require_name "${shape_id}" "request shape id"
+        require_positive_integer "${shape_prompt_token_target}" "request shape prompt token target"
+        require_positive_integer "${shape_max_tokens}" "request shape max tokens"
+        require_positive_integer "${shape_weight}" "request shape weight"
+
+        if [[ "${first}" == "0" ]]; then
+          printf ', '
+        fi
+        printf '{"id":"%s","prompt_token_target":%s,"max_tokens":%s,"weight":%s}' \
+          "${shape_id}" "${shape_prompt_token_target}" "${shape_max_tokens}" "${shape_weight}"
+        found=1
+        first=0
+      fi
+    done < "${shapes_path}"
+  fi
+
+  if [[ "${found}" == "0" ]]; then
+    printf '{"id":"%s","prompt_token_target":%s,"max_tokens":%s,"weight":1}' \
+      "${CASE_ID}" "${PROMPT_TOKEN_TARGET}" "${MAX_TOKENS}"
+  fi
+  printf ']'
+}
+
+request_shapes_display() {
+  local experiment_name=$1
+  local shapes_path
+  local row_case_id
+  local shape_id
+  local shape_prompt_token_target
+  local shape_max_tokens
+  local shape_weight
+  local found=0
+  local separator=""
+
+  shapes_path=$(experiment_request_shapes_path "${experiment_name}")
+
+  if [[ -f "${shapes_path}" ]]; then
+    while IFS=',' read -r row_case_id shape_id shape_prompt_token_target shape_max_tokens shape_weight; do
+      if [[ -z "${row_case_id}" || "${row_case_id}" == "case_id" || "${row_case_id}" == \#* ]]; then
+        continue
+      fi
+
+      if [[ "${row_case_id}" == "${CASE_ID}" ]]; then
+        require_name "${shape_id}" "request shape id"
+        require_positive_integer "${shape_prompt_token_target}" "request shape prompt token target"
+        require_positive_integer "${shape_max_tokens}" "request shape max tokens"
+        require_positive_integer "${shape_weight}" "request shape weight"
+        printf '%s%s:%s/%s weight=%s' "${separator}" "${shape_id}" "${shape_prompt_token_target}" "${shape_max_tokens}" "${shape_weight}"
+        separator=", "
+        found=1
+      fi
+    done < "${shapes_path}"
+  fi
+
+  if [[ "${found}" == "0" ]]; then
+    printf '%s:%s/%s weight=1' "${CASE_ID}" "${PROMPT_TOKEN_TARGET}" "${MAX_TOKENS}"
+  fi
+}
+
+case_required_token_budget() {
+  local experiment_name=$1
+  local shapes_path
+  local row_case_id
+  local shape_id
+  local shape_prompt_token_target
+  local shape_max_tokens
+  local shape_weight
+  local max_required
+  local required
+
+  max_required=$((PROMPT_TOKEN_TARGET + MAX_TOKENS))
+  shapes_path=$(experiment_request_shapes_path "${experiment_name}")
+
+  if [[ -f "${shapes_path}" ]]; then
+    while IFS=',' read -r row_case_id shape_id shape_prompt_token_target shape_max_tokens shape_weight; do
+      if [[ -z "${row_case_id}" || "${row_case_id}" == "case_id" || "${row_case_id}" == \#* ]]; then
+        continue
+      fi
+
+      if [[ "${row_case_id}" == "${CASE_ID}" ]]; then
+        require_name "${shape_id}" "request shape id"
+        require_positive_integer "${shape_prompt_token_target}" "request shape prompt token target"
+        require_positive_integer "${shape_max_tokens}" "request shape max tokens"
+        require_positive_integer "${shape_weight}" "request shape weight"
+        required=$((shape_prompt_token_target + shape_max_tokens))
+        if (( required > max_required )); then
+          max_required=${required}
+        fi
+      fi
+    done < "${shapes_path}"
+  fi
+
+  printf '%s\n' "${max_required}"
+}
+
 validate_case_profile_compatibility() {
+  local experiment_name=$1
   local required_tokens
 
-  required_tokens=$((PROMPT_TOKEN_TARGET + MAX_TOKENS))
+  required_tokens=$(case_required_token_budget "${experiment_name}")
   if (( required_tokens > MAX_MODEL_LEN )); then
     die "Serving profile ${PROFILE_ID} max_model_len ${MAX_MODEL_LEN} is smaller than case ${CASE_ID} prompt+output budget ${required_tokens}"
   fi
@@ -479,6 +657,7 @@ render_load_manifest() {
   local job_name
   local configmap_name
   local load_served_model_name
+  local request_shapes_js
 
   require_experiment "${experiment_name}"
   load_case "${experiment_name}" "${case_id}"
@@ -486,6 +665,7 @@ render_load_manifest() {
   job_name="${experiment_name}-${CASE_ID}"
   configmap_name="${job_name}-load"
   load_served_model_name="${SERVED_MODEL_NAME:-qwen2.5-0.5b}"
+  request_shapes_js=$(render_request_shapes_js "${experiment_name}")
 
   cat <<EOF
 apiVersion: v1
@@ -507,6 +687,7 @@ data:
     const promptTokenTarget = ${PROMPT_TOKEN_TARGET};
     const maxTokens = ${MAX_TOKENS};
     const timeoutSeconds = ${TIMEOUT_SECONDS};
+    const requestShapes = ${request_shapes_js};
     const completionTokens = new Counter("completion_tokens");
 
     export const options = {
@@ -552,19 +733,34 @@ data:
       return words.join(" ");
     }
 
-    const payload = JSON.stringify({
-      model: modelName,
-      prompt: buildPrompt(promptTokenTarget),
-      max_tokens: maxTokens,
-      temperature: 0,
-    });
+    function selectRequestShape() {
+      const totalWeight = requestShapes.reduce((total, shape) => total + shape.weight, 0);
+      let threshold = Math.random() * totalWeight;
+      for (const shape of requestShapes) {
+        threshold -= shape.weight;
+        if (threshold <= 0) {
+          return shape;
+        }
+      }
+      return requestShapes[requestShapes.length - 1];
+    }
 
     export default function () {
+      const requestShape = selectRequestShape();
+      const payload = JSON.stringify({
+        model: modelName,
+        prompt: buildPrompt(requestShape.promptTokenTarget),
+        max_tokens: requestShape.maxTokens,
+        temperature: 0,
+      });
       const response = http.post(targetUrl, payload, {
         headers: {
           "Content-Type": "application/json",
         },
         timeout: String(timeoutSeconds) + "s",
+        tags: {
+          request_shape: requestShape.label,
+        },
       });
 
       check(response, {
@@ -879,6 +1075,7 @@ render_report_markdown() {
   local max_num_batched_tokens_display="n/a"
   local run_status="${RUN_STATUS:-pending}"
   local run_source="${RUN_SOURCE:-scripts/experiment render-report}"
+  local request_shapes_display_value
   local completed_requests_display
   local failed_requests_display
   local oom_events_display
@@ -911,6 +1108,7 @@ render_report_markdown() {
   load_serving_profile "${experiment_name}" "${profile_id}"
 
   experiment_title_value=$(experiment_title "${experiment_name}")
+  request_shapes_display_value=$(request_shapes_display "${experiment_name}")
   if [[ -n "${MAX_NUM_SEQS}" ]]; then
     max_num_seqs_display=${MAX_NUM_SEQS}
   fi
@@ -962,6 +1160,7 @@ render_report_markdown() {
 | Case | ${CASE_ID} |
 | Prompt token target | ${PROMPT_TOKEN_TARGET} |
 | Max output tokens | ${MAX_TOKENS} |
+| Request shapes | ${request_shapes_display_value} |
 | Start rate | ${START_RATE} req/s |
 | Target rate | ${TARGET_RATE} req/s |
 | Ramp up | ${RAMP_UP_DURATION} |
@@ -1031,6 +1230,7 @@ render_report_json() {
   local experiment_title_value
   local max_num_seqs_json
   local max_num_batched_tokens_json
+  local request_shapes_json
   local run_status="${RUN_STATUS:-pending}"
   local run_source="${RUN_SOURCE:-scripts/experiment render-report}"
 
@@ -1041,6 +1241,7 @@ render_report_json() {
   experiment_title_value=$(experiment_title "${experiment_name}")
   max_num_seqs_json=$(json_optional_integer "${MAX_NUM_SEQS}")
   max_num_batched_tokens_json=$(json_optional_integer "${MAX_NUM_BATCHED_TOKENS}")
+  request_shapes_json=$(render_request_shapes_json "${experiment_name}")
 
   cat <<EOF
 {
@@ -1053,6 +1254,7 @@ render_report_json() {
     "id": "${CASE_ID}",
     "prompt_token_target": ${PROMPT_TOKEN_TARGET},
     "max_tokens": ${MAX_TOKENS},
+    "request_shapes": ${request_shapes_json},
     "arrival": {
       "start_rate": ${START_RATE},
       "target_rate": ${TARGET_RATE},
@@ -1318,7 +1520,7 @@ run_experiment_case() {
   require_experiment "${experiment_name}"
   load_case "${experiment_name}" "${case_id}"
   load_serving_profile "${experiment_name}" "${profile_id}"
-  validate_case_profile_compatibility
+  validate_case_profile_compatibility "${experiment_name}"
 
   generated_at=$(utc_timestamp)
   job_name=$(experiment_job_name "${experiment_name}" "${CASE_ID}")
@@ -1399,7 +1601,7 @@ run_stream_case() {
   load_case "${experiment_name}" "${case_id}"
   load_serving_profile "${experiment_name}" "${profile_id}"
   require_positive_integer "${samples}" "stream samples"
-  validate_case_profile_compatibility
+  validate_case_profile_compatibility "${experiment_name}"
 
   generated_at=$(utc_timestamp)
   job_name=$(stream_job_name "${experiment_name}" "${CASE_ID}")

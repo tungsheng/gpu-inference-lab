@@ -1,0 +1,5 @@
+case_id,prompt_token_target,max_tokens,start_rate,target_rate,ramp_up_duration,steady_duration,ramp_down_duration,pre_allocated_vus,max_vus,timeout_seconds,description
+steady-small,512,128,6,6,10s,5m,10s,16,64,120,steady homogeneous traffic for utilization baseline
+burst-small,512,128,0,18,20s,2m,30s,32,128,120,short burst that stresses queueing and tail latency
+uneven-size-mix,1536,512,2,8,30s,5m,30s,24,96,180,weighted mix of short medium and long requests
+spike-to-zero,512,128,0,20,15s,90s,10s,32,128,120,rapid spike followed by scale-to-zero pressure

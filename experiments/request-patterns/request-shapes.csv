@@ -1,0 +1,4 @@
+case_id,shape_id,prompt_token_target,max_tokens,weight
+uneven-size-mix,short,128,64,6
+uneven-size-mix,medium,512,128,3
+uneven-size-mix,long,1536,512,1
