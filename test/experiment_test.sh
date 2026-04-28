@@ -14,6 +14,8 @@ run_experiment_list_test() {
   assert_contains "${COMMAND_OUTPUT}" "KV Cache Vs Concurrency" "experiment list should include the KV-cache title"
   assert_contains "${COMMAND_OUTPUT}" "prefill-decode" "experiment list should include the prefill/decode experiment"
   assert_contains "${COMMAND_OUTPUT}" "Prefill Vs Decode Timing" "experiment list should include the prefill/decode title"
+  assert_contains "${COMMAND_OUTPUT}" "batching" "experiment list should include the batching experiment"
+  assert_contains "${COMMAND_OUTPUT}" "Batching Scheduler Tradeoffs" "experiment list should include the batching title"
 }
 
 run_experiment_show_test() {
@@ -39,6 +41,20 @@ run_prefill_decode_show_test() {
   assert_contains "${COMMAND_OUTPUT}" "prompt=128 output=768" "show output should include the decode-heavy token settings"
 }
 
+run_batching_show_test() {
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" show batching
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/experiment show should succeed for batching"
+  assert_contains "${COMMAND_OUTPUT}" "Experiment: batching" "show output should include the batching experiment name"
+  assert_contains "${COMMAND_OUTPUT}" "steady-512-output-128" "show output should include the steady batching case"
+  assert_contains "${COMMAND_OUTPUT}" "burst-512-output-128" "show output should include the burst batching case"
+  assert_contains "${COMMAND_OUTPUT}" "constrained-scheduler" "show output should include the constrained scheduler profile"
+  assert_contains "${COMMAND_OUTPUT}" "limited-batching" "show output should include the limited batching profile"
+  assert_contains "${COMMAND_OUTPUT}" "dynamic-default" "show output should include the dynamic default profile"
+  assert_contains "${COMMAND_OUTPUT}" "max_num_seqs=1 max_num_batched_tokens=2048" "show output should include explicit constrained scheduler settings"
+  assert_contains "${COMMAND_OUTPUT}" "scheduler=default" "show output should represent blank scheduler settings as defaults"
+}
+
 run_render_load_test() {
   setup_test_tmpdir
 
@@ -57,8 +73,11 @@ run_render_load_test() {
   assert_contains "${RENDERED_MANIFEST}" "name: kv-cache-prompt-512-output-100" "rendered manifest should name the Job from the experiment and case"
   assert_contains "${RENDERED_MANIFEST}" "const promptTokenTarget = 512;" "rendered manifest should include the prompt token target"
   assert_contains "${RENDERED_MANIFEST}" "const maxTokens = 100;" "rendered manifest should include the output token cap"
+  assert_contains "${RENDERED_MANIFEST}" 'import { Counter } from "k6/metrics";' "rendered manifest should include a token counter"
+  assert_contains "${RENDERED_MANIFEST}" 'const completionTokens = new Counter("completion_tokens");' "rendered manifest should track completion tokens"
   assert_contains "${RENDERED_MANIFEST}" "GPU_LAB_K6_SUMMARY_BEGIN" "rendered manifest should emit a parseable k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "p99_request_latency_seconds=" "rendered manifest should include p99 latency in the k6 summary"
+  assert_contains "${RENDERED_MANIFEST}" "generation_tokens_per_second=" "rendered manifest should include generated token throughput in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "summaryTrendStats" "rendered manifest should request p95 and p99 k6 summaries"
   assert_contains "${RENDERED_MANIFEST}" "value: http://vllm-openai.app.svc.cluster.local/v1/completions" "rendered manifest should target the in-cluster vLLM service"
 
@@ -143,6 +162,42 @@ run_render_long_context_serving_profile_test() {
   teardown_test_tmpdir
 }
 
+run_render_batching_serving_profile_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-serving \
+    --experiment batching \
+    --profile constrained-scheduler \
+    --output "${TEST_TMPDIR}/vllm-batching-constrained.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-serving should render the constrained batching profile"
+  assert_file_exists "${TEST_TMPDIR}/vllm-batching-constrained.yaml" "render-serving should write the constrained batching manifest"
+
+  CONSTRAINED_MANIFEST=$(cat "${TEST_TMPDIR}/vllm-batching-constrained.yaml")
+
+  assert_contains "${CONSTRAINED_MANIFEST}" '- --max-num-seqs' "constrained batching manifest should include max sequence limit"
+  assert_contains "${CONSTRAINED_MANIFEST}" '- "1"' "constrained batching manifest should include the max sequence value"
+  assert_contains "${CONSTRAINED_MANIFEST}" '- --max-num-batched-tokens' "constrained batching manifest should include max batched tokens"
+  assert_contains "${CONSTRAINED_MANIFEST}" '- "2048"' "constrained batching manifest should include the batched-token value"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-serving \
+    --experiment batching \
+    --profile dynamic-default \
+    --output "${TEST_TMPDIR}/vllm-batching-dynamic-default.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-serving should render the dynamic default batching profile"
+  assert_file_exists "${TEST_TMPDIR}/vllm-batching-dynamic-default.yaml" "render-serving should write the dynamic default manifest"
+
+  DYNAMIC_MANIFEST=$(cat "${TEST_TMPDIR}/vllm-batching-dynamic-default.yaml")
+
+  assert_not_contains "${DYNAMIC_MANIFEST}" '--max-num-seqs' "dynamic default manifest should not set an explicit max sequence limit"
+  assert_not_contains "${DYNAMIC_MANIFEST}" '--max-num-batched-tokens' "dynamic default manifest should not set an explicit batched-token limit"
+  assert_contains "${DYNAMIC_MANIFEST}" '- --max-model-len' "dynamic default manifest should still include the max model length"
+  assert_contains "${DYNAMIC_MANIFEST}" '- "2048"' "dynamic default manifest should keep the 2048 model length"
+
+  teardown_test_tmpdir
+}
+
 run_render_unknown_serving_profile_test() {
   run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-serving \
     --experiment kv-cache \
@@ -189,6 +244,35 @@ run_render_report_test() {
   assert_contains "${JSON_REPORT_CONTENT}" "\"p95_inter_token_latency_seconds\": null" "JSON report should render unavailable inter-token latency as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"gpu_memory_used_bytes\": null" "JSON report should render unavailable GPU memory as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"cost_per_1000_successful_requests_usd\": null" "JSON report should render unavailable cost as null"
+
+  teardown_test_tmpdir
+}
+
+run_render_batching_report_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-report \
+    --experiment batching \
+    --case steady-512-output-128 \
+    --profile dynamic-default \
+    --report "${TEST_TMPDIR}/batching-report.md" \
+    --json-report "${TEST_TMPDIR}/batching-report.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-report should render the batching report scaffold"
+  assert_file_exists "${TEST_TMPDIR}/batching-report.md" "render-report should write the batching Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/batching-report.json" "render-report should write the batching JSON report"
+
+  BATCHING_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/batching-report.md")
+  BATCHING_JSON_CONTENT=$(cat "${TEST_TMPDIR}/batching-report.json")
+
+  assert_contains "${BATCHING_REPORT_CONTENT}" "# Batching Scheduler Tradeoffs - steady-512-output-128" "batching report should include the experiment title and case"
+  assert_contains "${BATCHING_REPORT_CONTENT}" "| Profile | dynamic-default |" "batching report should include the selected profile"
+  assert_contains "${BATCHING_REPORT_CONTENT}" "| Max sequences | n/a |" "dynamic default report should render max sequences as n/a"
+  assert_contains "${BATCHING_REPORT_CONTENT}" "| Max batched tokens | n/a |" "dynamic default report should render max batched tokens as n/a"
+  assert_contains "${BATCHING_JSON_CONTENT}" "\"name\": \"batching\"" "batching JSON report should include the experiment name"
+  assert_contains "${BATCHING_JSON_CONTENT}" "\"id\": \"dynamic-default\"" "batching JSON report should include the profile id"
+  assert_contains "${BATCHING_JSON_CONTENT}" "\"max_num_seqs\": null" "dynamic default report should persist null max sequence metadata"
+  assert_contains "${BATCHING_JSON_CONTENT}" "\"max_num_batched_tokens\": null" "dynamic default report should persist null batched-token metadata"
 
   teardown_test_tmpdir
 }
@@ -241,6 +325,7 @@ write_experiment_run_kubectl_stub() {
 "    printf '%s\n' 'p95_request_latency_seconds=0.75'" \
 "    printf '%s\n' 'p99_request_latency_seconds=1.5'" \
 "    printf '%s\n' 'requests_per_second=5.5'" \
+"    printf '%s\n' 'generation_tokens_per_second=704'" \
 "    printf '%s\n' 'GPU_LAB_K6_SUMMARY_END'" \
 "    exit 0" \
 "    ;;" \
@@ -288,6 +373,7 @@ run_live_experiment_runner_test() {
   assert_contains "${RUN_JSON_CONTENT}" "\"oom_events\": null" "experiment run should leave OOM events null when pod status has no termination reason"
   assert_contains "${RUN_JSON_CONTENT}" "\"p95_request_latency_seconds\": 0.75" "experiment run should write p95 latency to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"requests_per_second\": 5.5" "experiment run should write request throughput to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"generation_tokens_per_second\": 704" "experiment run should write generation token throughput to JSON"
   assert_occurs_before "${KUBECTL_LOG}" \
     "apply -f ${REPO_ROOT}/platform/inference/service.yaml" \
     "rollout status deployment/vllm-openai -n app --timeout=20m" \
@@ -412,13 +498,16 @@ run_stream_experiment_runner_test() {
 run_experiment_list_test
 run_experiment_show_test
 run_prefill_decode_show_test
+run_batching_show_test
 run_render_load_test
 run_render_stream_test
 run_render_unknown_case_test
 run_render_default_serving_profile_test
 run_render_long_context_serving_profile_test
+run_render_batching_serving_profile_test
 run_render_unknown_serving_profile_test
 run_render_report_test
+run_render_batching_report_test
 run_render_report_default_path_test
 run_live_experiment_runner_test
 run_incompatible_case_profile_test

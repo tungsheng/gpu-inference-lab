@@ -161,7 +161,7 @@ Notes:
 
 ## Slice 6 - Batching And Scheduler Tradeoffs
 
-Status: planned.
+Status: implemented.
 
 Purpose:
 
@@ -175,11 +175,25 @@ Implementation:
 - vary `--max-num-seqs` and `--max-num-batched-tokens`
 - report tokens/sec, requests/sec, p50/p95/p99 latency, TTFT, and GPU
   utilization
+- add `experiments/batching/` with steady and burst workload cases
+- add serving profiles for constrained scheduling, limited batching, and vLLM
+  default dynamic scheduling
+- extend the k6 load summary with generated tokens/sec when vLLM returns
+  completion usage
 
 Acceptance criteria:
 
 - the report avoids claiming vLLM has a true no-batching mode
 - every scheduler setting is captured in the report metadata
+
+Notes:
+
+- vLLM defaults are represented by blank scheduler fields in
+  `serving-profiles.csv` and `null` report values. This means the repo did not
+  set explicit scheduler caps, not that batching was disabled.
+- The first implementation can run one case/profile at a time. Prometheus/DCGM
+  GPU utilization rollups, TTFT from serving metrics, and automatic
+  `experiments/batching/results.md` comparison tables remain follow-up work.
 
 ## Slice 7 - Request Pattern Utilization
 

@@ -500,12 +500,14 @@ data:
   load-test.js: |
     import http from "k6/http";
     import { check } from "k6";
+    import { Counter } from "k6/metrics";
 
     const experimentName = "${experiment_name}";
     const caseId = "${CASE_ID}";
     const promptTokenTarget = ${PROMPT_TOKEN_TARGET};
     const maxTokens = ${MAX_TOKENS};
     const timeoutSeconds = ${TIMEOUT_SECONDS};
+    const completionTokens = new Counter("completion_tokens");
 
     export const options = {
       tags: {
@@ -568,6 +570,22 @@ data:
       check(response, {
         "completion request succeeded": (res) => res.status === 200,
       });
+
+      if (response.status === 200) {
+        try {
+          const body = response.json();
+          const tokens = body && body.usage
+            ? Number(body.usage.completion_tokens)
+            : NaN;
+
+          if (Number.isFinite(tokens)) {
+            completionTokens.add(tokens);
+          }
+        } catch (_) {
+          // Token usage is best-effort because failed or proxy responses may
+          // not be OpenAI-compatible JSON.
+        }
+      }
     }
 
     function metricValue(data, metricName, valueName) {
@@ -588,6 +606,7 @@ data:
     export function handleSummary(data) {
       const completedRequests = metricValue(data, "http_reqs", "count");
       const failedRate = metricValue(data, "http_req_failed", "rate");
+      const generatedTokensPerSecond = metricValue(data, "completion_tokens", "rate");
       const failedRequests = completedRequests === "" || failedRate === ""
         ? ""
         : String(Math.round(Number(completedRequests) * Number(failedRate)));
@@ -601,6 +620,7 @@ data:
           "p95_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "p(95)")),
           "p99_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "p(99)")),
           "requests_per_second=" + metricValue(data, "http_reqs", "rate"),
+          "generation_tokens_per_second=" + generatedTokensPerSecond,
           "GPU_LAB_K6_SUMMARY_END",
         ].join("\\n") + "\\n",
       };
@@ -1146,6 +1166,7 @@ parse_k6_summary_log() {
   RESULT_P95_REQUEST_LATENCY_SECONDS=""
   RESULT_P99_REQUEST_LATENCY_SECONDS=""
   RESULT_REQUESTS_PER_SECOND=""
+  RESULT_GENERATION_TOKENS_PER_SECOND=""
 
   while IFS= read -r line; do
     case "${line}" in
@@ -1183,6 +1204,9 @@ parse_k6_summary_log() {
         ;;
       requests_per_second)
         RESULT_REQUESTS_PER_SECOND=${value}
+        ;;
+      generation_tokens_per_second)
+        RESULT_GENERATION_TOKENS_PER_SECOND=${value}
         ;;
     esac
   done < "${log_path}"

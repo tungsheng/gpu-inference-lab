@@ -64,7 +64,8 @@ EKS cluster
 - A `warm-1` profile that keeps one on-demand serving node alive through the
   lightweight `gpu-warm-placeholder` deployment
 - An experiment catalog under `experiments/` for KV-cache, long-context,
-  prefill/decode timing, and future batching, cost, and failure-injection work
+  prefill/decode timing, batching scheduler tradeoffs, and future request
+  pattern, cost, and failure-injection work
 
 ## Quick Start
 
@@ -88,6 +89,10 @@ These commands do not require AWS access or a live Kubernetes cluster:
   --experiment kv-cache \
   --profile long-context \
   --output /tmp/vllm-long-context.yaml
+./scripts/experiment render-serving \
+  --experiment batching \
+  --profile constrained-scheduler \
+  --output /tmp/vllm-batching-constrained.yaml
 ./scripts/experiment render-report \
   --experiment kv-cache \
   --case prompt-8192-output-300 \
@@ -145,6 +150,10 @@ Run a live experiment case:
   --case prefill-heavy \
   --profile default \
   --samples 5
+./scripts/experiment run \
+  --experiment batching \
+  --case steady-512-output-128 \
+  --profile dynamic-default
 ```
 
 Tear everything down:
@@ -183,9 +192,9 @@ Tear everything down:
 - `./scripts/experiment` lists planned experiments, shows experiment cases,
   renders local Kubernetes manifests plus Markdown/JSON report scaffolds, and
   can run one live load or streaming case/profile at a time against a
-  configured cluster. This is the front door for KV-cache, prefill/decode, and
-  future batching, request-pattern, cost, failure-injection, and multi-model
-  experiments.
+  configured cluster. This is the front door for KV-cache, prefill/decode,
+  batching scheduler tradeoffs, and future request-pattern, cost,
+  failure-injection, and multi-model experiments.
 - `./scripts/down` removes runtime resources, observability, GPU capacity
   definitions, controllers, and Terraform-managed infrastructure. The optional
   `--cleanup-orphan-enis` flag retries one failed `terraform destroy` after
