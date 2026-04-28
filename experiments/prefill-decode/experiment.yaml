@@ -1,0 +1,38 @@
+name: prefill-decode
+title: Prefill Vs Decode Timing
+status: scaffolded
+owner: local
+
+question: How do long-prompt/short-output and short-prompt/long-output workloads shift time between prefill and decode?
+
+serving_profile:
+  model: Qwen/Qwen2.5-0.5B-Instruct
+  served_model_name: qwen2.5-0.5b
+  vllm_image: vllm/vllm-openai:v0.9.0
+  baseline_max_model_len: 2048
+  gpu_memory_utilization: 0.85
+
+workload:
+  generator: python-stream-client
+  endpoint: /v1/completions
+  cases_file: cases.csv
+  serving_profiles_file: serving-profiles.csv
+  prompt_strategy: approximate-token-target
+  output_strategy: streamed_tokens
+
+metrics:
+  required:
+    - p50_ttft_seconds
+    - p95_ttft_seconds
+    - p50_inter_token_latency_seconds
+    - p95_inter_token_latency_seconds
+    - p95_request_latency_seconds
+    - p99_request_latency_seconds
+    - generation_tokens_per_second
+    - average_gpu_utilization_percent
+    - max_gpu_utilization_percent
+
+artifacts:
+  readme: README.md
+  results: results.md
+  graphs_dir: graphs

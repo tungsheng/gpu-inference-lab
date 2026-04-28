@@ -129,7 +129,7 @@ Notes:
 
 ## Slice 5 - Prefill Vs Decode Timing
 
-Status: planned.
+Status: implemented.
 
 Purpose:
 
@@ -141,11 +141,23 @@ Implementation:
 - add a streaming-capable client that records TTFT and inter-token latency
 - run prefill-heavy and decode-heavy cases
 - report TTFT, output tokens/sec, p95/p99 latency, and GPU utilization
+- add `experiments/prefill-decode/` with prefill-heavy and decode-heavy cases
+- add `./scripts/experiment render-stream` for a Python streaming client job
+- add `./scripts/experiment run-stream` for one streaming case/profile at a
+  time
+- extend the report schema with p50/p95 TTFT and p50/p95 inter-token latency
+- parse streaming client summaries into Markdown/JSON reports
 
 Acceptance criteria:
 
 - client-side TTFT is available even when Prometheus scrape timing is coarse
 - results distinguish prefill pressure from decode pressure
+
+Notes:
+
+- The first implementation records streaming-client metrics from the job log.
+  Prometheus/DCGM GPU utilization collection and automatic
+  `experiments/prefill-decode/results.md` rollup remain follow-up work.
 
 ## Slice 6 - Batching And Scheduler Tradeoffs
 

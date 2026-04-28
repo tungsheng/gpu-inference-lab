@@ -63,8 +63,8 @@ EKS cluster
   Grafana dashboards
 - A `warm-1` profile that keeps one on-demand serving node alive through the
   lightweight `gpu-warm-placeholder` deployment
-- An experiment catalog under `experiments/` for KV-cache, long-context, and
-  future batching, prefill/decode, cost, and failure-injection work
+- An experiment catalog under `experiments/` for KV-cache, long-context,
+  prefill/decode timing, and future batching, cost, and failure-injection work
 
 ## Quick Start
 
@@ -79,6 +79,11 @@ These commands do not require AWS access or a live Kubernetes cluster:
   --experiment kv-cache \
   --case prompt-512-output-100 \
   --output /tmp/kv-cache-load.yaml
+./scripts/experiment render-stream \
+  --experiment prefill-decode \
+  --case prefill-heavy \
+  --samples 5 \
+  --output /tmp/prefill-heavy-stream.yaml
 ./scripts/experiment render-serving \
   --experiment kv-cache \
   --profile long-context \
@@ -135,6 +140,11 @@ Run a live experiment case:
   --experiment kv-cache \
   --case prompt-512-output-100 \
   --profile default
+./scripts/experiment run-stream \
+  --experiment prefill-decode \
+  --case prefill-heavy \
+  --profile default \
+  --samples 5
 ```
 
 Tear everything down:
@@ -172,9 +182,10 @@ Tear everything down:
   `NodeClaim`, forces on-demand recovery, and reports replacement timing.
 - `./scripts/experiment` lists planned experiments, shows experiment cases,
   renders local Kubernetes manifests plus Markdown/JSON report scaffolds, and
-  can run one live case/profile at a time against a configured cluster. This is
-  the front door for KV-cache and future batching, prefill/decode,
-  request-pattern, cost, failure-injection, and multi-model experiments.
+  can run one live load or streaming case/profile at a time against a
+  configured cluster. This is the front door for KV-cache, prefill/decode, and
+  future batching, request-pattern, cost, failure-injection, and multi-model
+  experiments.
 - `./scripts/down` removes runtime resources, observability, GPU capacity
   definitions, controllers, and Terraform-managed infrastructure. The optional
   `--cleanup-orphan-enis` flag retries one failed `terraform destroy` after

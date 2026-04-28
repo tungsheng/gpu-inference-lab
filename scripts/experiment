@@ -15,17 +15,21 @@ Usage:
   ./scripts/experiment list
   ./scripts/experiment show <experiment>
   ./scripts/experiment render-load --experiment name --case case-id [--output path]
+  ./scripts/experiment render-stream --experiment name --case case-id [--samples count] [--output path]
   ./scripts/experiment render-serving --experiment name --profile profile-id [--output path]
   ./scripts/experiment render-report --experiment name --case case-id --profile profile-id [--report path] [--json-report path]
   ./scripts/experiment run --experiment name --case case-id --profile profile-id [--report path] [--json-report path] [--preserve-serving] [--preserve-load]
+  ./scripts/experiment run-stream --experiment name --case case-id --profile profile-id [--samples count] [--report path] [--json-report path] [--preserve-serving] [--preserve-load]
 
 Examples:
   ./scripts/experiment list
   ./scripts/experiment show kv-cache
   ./scripts/experiment render-load --experiment kv-cache --case prompt-512-output-100 --output /tmp/kv-cache-load.yaml
+  ./scripts/experiment render-stream --experiment prefill-decode --case prefill-heavy --output /tmp/prefill-stream.yaml
   ./scripts/experiment render-serving --experiment kv-cache --profile long-context --output /tmp/vllm-long-context.yaml
   ./scripts/experiment render-report --experiment kv-cache --case prompt-512-output-100 --profile default
   ./scripts/experiment run --experiment kv-cache --case prompt-512-output-100 --profile default
+  ./scripts/experiment run-stream --experiment prefill-decode --case prefill-heavy --profile default
 EOF
 }
 
@@ -250,6 +254,13 @@ experiment_job_name() {
   local case_id=$2
 
   printf '%s-%s\n' "${experiment_name}" "${case_id}"
+}
+
+stream_job_name() {
+  local experiment_name=$1
+  local case_id=$2
+
+  printf '%s-%s-stream\n' "${experiment_name}" "${case_id}"
 }
 
 load_case() {
@@ -634,6 +645,210 @@ spec:
 EOF
 }
 
+render_stream_manifest() {
+  local experiment_name=$1
+  local case_id=$2
+  local samples=$3
+  local job_name
+  local configmap_name
+  local stream_served_model_name
+
+  require_experiment "${experiment_name}"
+  load_case "${experiment_name}" "${case_id}"
+  require_positive_integer "${samples}" "stream samples"
+
+  job_name=$(stream_job_name "${experiment_name}" "${CASE_ID}")
+  configmap_name="${job_name}-client"
+  stream_served_model_name="${SERVED_MODEL_NAME:-qwen2.5-0.5b}"
+
+  cat <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${configmap_name}
+  namespace: ${APP_NAMESPACE}
+  labels:
+    experiment.gpu-lab/name: ${experiment_name}
+    experiment.gpu-lab/case: ${CASE_ID}
+    experiment.gpu-lab/client: stream
+data:
+  stream-client.py: |
+    import json
+    import math
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+
+    experiment_name = "${experiment_name}"
+    case_id = "${CASE_ID}"
+    prompt_token_target = ${PROMPT_TOKEN_TARGET}
+    max_tokens = ${MAX_TOKENS}
+    samples = ${samples}
+    timeout_seconds = ${TIMEOUT_SECONDS}
+    target_url = "http://${GPU_INFERENCE_SERVICE_NAME}.${APP_NAMESPACE}.svc.cluster.local/v1/completions"
+    model_name = "${stream_served_model_name}"
+
+    def build_prompt(target_tokens):
+      seed_words = [
+        "GPU", "inference", "capacity", "planning", "requires", "measuring",
+        "KV", "cache", "pressure", "queueing", "latency", "throughput",
+        "memory", "headroom", "scheduling", "autoscaling", "recovery",
+        "cost", "utilization", "tail", "behavior", "controlled", "workloads",
+      ]
+      return " ".join(seed_words[index % len(seed_words)] for index in range(target_tokens))
+
+    def percentile(values, percentile_value):
+      if not values:
+        return ""
+      sorted_values = sorted(values)
+      if len(sorted_values) == 1:
+        return f"{sorted_values[0]:.6f}"
+      index = (len(sorted_values) - 1) * (percentile_value / 100.0)
+      lower = math.floor(index)
+      upper = math.ceil(index)
+      if lower == upper:
+        return f"{sorted_values[int(index)]:.6f}"
+      weight = index - lower
+      value = sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
+      return f"{value:.6f}"
+
+    def stream_once():
+      payload = json.dumps({
+        "model": model_name,
+        "prompt": build_prompt(prompt_token_target),
+        "max_tokens": max_tokens,
+        "temperature": 0,
+        "stream": True,
+      }).encode("utf-8")
+      request = urllib.request.Request(
+        target_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+      )
+
+      start_time = time.perf_counter()
+      first_token_time = None
+      previous_token_time = None
+      inter_token_latencies = []
+      output_chunks = 0
+
+      with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        for raw_line in response:
+          line = raw_line.decode("utf-8", errors="replace").strip()
+          if not line.startswith("data:"):
+            continue
+          data = line[5:].strip()
+          if data == "[DONE]":
+            break
+          try:
+            chunk = json.loads(data)
+          except json.JSONDecodeError:
+            continue
+          choices = chunk.get("choices", [])
+          if not choices:
+            continue
+          text = choices[0].get("text", "")
+          if text == "":
+            continue
+
+          now = time.perf_counter()
+          if first_token_time is None:
+            first_token_time = now
+          elif previous_token_time is not None:
+            inter_token_latencies.append(now - previous_token_time)
+          previous_token_time = now
+          output_chunks += 1
+
+      end_time = time.perf_counter()
+      total_latency = end_time - start_time
+      ttft = "" if first_token_time is None else first_token_time - start_time
+      generation_time = max(total_latency - ttft, 0.000001) if ttft != "" else ""
+      chunks_per_second = "" if generation_time == "" else output_chunks / generation_time
+
+      return {
+        "total_latency": total_latency,
+        "ttft": ttft,
+        "inter_token_latencies": inter_token_latencies,
+        "chunks_per_second": chunks_per_second,
+      }
+
+    request_latencies = []
+    ttfts = []
+    inter_token_latencies = []
+    chunk_rates = []
+    failed_requests = 0
+
+    for _ in range(samples):
+      try:
+        result = stream_once()
+      except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        failed_requests += 1
+        sys.stderr.write(f"stream request failed: {exc}\\n")
+        continue
+
+      request_latencies.append(result["total_latency"])
+      if result["ttft"] != "":
+        ttfts.append(result["ttft"])
+      inter_token_latencies.extend(result["inter_token_latencies"])
+      if result["chunks_per_second"] != "":
+        chunk_rates.append(result["chunks_per_second"])
+
+    completed_requests = len(request_latencies)
+    average_chunk_rate = "" if not chunk_rates else sum(chunk_rates) / len(chunk_rates)
+
+    print("GPU_LAB_STREAM_SUMMARY_BEGIN")
+    print(f"completed_requests={completed_requests}")
+    print(f"failed_requests={failed_requests}")
+    print(f"p50_request_latency_seconds={percentile(request_latencies, 50)}")
+    print(f"p95_request_latency_seconds={percentile(request_latencies, 95)}")
+    print(f"p99_request_latency_seconds={percentile(request_latencies, 99)}")
+    print(f"p50_ttft_seconds={percentile(ttfts, 50)}")
+    print(f"p95_ttft_seconds={percentile(ttfts, 95)}")
+    print(f"p50_inter_token_latency_seconds={percentile(inter_token_latencies, 50)}")
+    print(f"p95_inter_token_latency_seconds={percentile(inter_token_latencies, 95)}")
+    print(f"generation_tokens_per_second={average_chunk_rate if average_chunk_rate == '' else f'{average_chunk_rate:.6f}'}")
+    print("GPU_LAB_STREAM_SUMMARY_END")
+    if completed_requests == 0:
+      sys.exit(1)
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${APP_NAMESPACE}
+  labels:
+    experiment.gpu-lab/name: ${experiment_name}
+    experiment.gpu-lab/case: ${CASE_ID}
+    experiment.gpu-lab/client: stream
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        experiment.gpu-lab/name: ${experiment_name}
+        experiment.gpu-lab/case: ${CASE_ID}
+        experiment.gpu-lab/client: stream
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: stream-client
+          image: python:3.12-slim
+          args:
+            - python
+            - /scripts/stream-client.py
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: ${configmap_name}
+EOF
+}
+
 render_report_markdown() {
   local experiment_name=$1
   local case_id=$2
@@ -650,7 +865,10 @@ render_report_markdown() {
   local p50_latency_display
   local p95_latency_display
   local p99_latency_display
+  local p50_ttft_display
   local p95_ttft_display
+  local p50_inter_token_latency_display
+  local p95_inter_token_latency_display
   local requests_per_second_display
   local generation_tokens_per_second_display
   local peak_waiting_requests_display
@@ -686,7 +904,10 @@ render_report_markdown() {
   p50_latency_display=$(display_optional_metric "${RESULT_P50_REQUEST_LATENCY_SECONDS:-}")
   p95_latency_display=$(display_optional_metric "${RESULT_P95_REQUEST_LATENCY_SECONDS:-}")
   p99_latency_display=$(display_optional_metric "${RESULT_P99_REQUEST_LATENCY_SECONDS:-}")
+  p50_ttft_display=$(display_optional_metric "${RESULT_P50_TTFT_SECONDS:-}")
   p95_ttft_display=$(display_optional_metric "${RESULT_P95_TTFT_SECONDS:-}")
+  p50_inter_token_latency_display=$(display_optional_metric "${RESULT_P50_INTER_TOKEN_LATENCY_SECONDS:-}")
+  p95_inter_token_latency_display=$(display_optional_metric "${RESULT_P95_INTER_TOKEN_LATENCY_SECONDS:-}")
   requests_per_second_display=$(display_optional_metric "${RESULT_REQUESTS_PER_SECOND:-}")
   generation_tokens_per_second_display=$(display_optional_metric "${RESULT_GENERATION_TOKENS_PER_SECOND:-}")
   peak_waiting_requests_display=$(display_optional_metric "${RESULT_PEAK_WAITING_REQUESTS:-}")
@@ -753,7 +974,10 @@ render_report_markdown() {
 | p50 request latency | ${p50_latency_display} |
 | p95 request latency | ${p95_latency_display} |
 | p99 request latency | ${p99_latency_display} |
+| p50 TTFT | ${p50_ttft_display} |
 | p95 TTFT | ${p95_ttft_display} |
+| p50 inter-token latency | ${p50_inter_token_latency_display} |
+| p95 inter-token latency | ${p95_inter_token_latency_display} |
 | Requests/sec | ${requests_per_second_display} |
 | Generation tokens/sec | ${generation_tokens_per_second_display} |
 | Peak waiting requests | ${peak_waiting_requests_display} |
@@ -848,7 +1072,10 @@ render_report_json() {
       "p99_request_latency_seconds": $(json_optional_number "${RESULT_P99_REQUEST_LATENCY_SECONDS:-}")
     },
     "serving": {
+      "p50_ttft_seconds": $(json_optional_number "${RESULT_P50_TTFT_SECONDS:-}"),
       "p95_ttft_seconds": $(json_optional_number "${RESULT_P95_TTFT_SECONDS:-}"),
+      "p50_inter_token_latency_seconds": $(json_optional_number "${RESULT_P50_INTER_TOKEN_LATENCY_SECONDS:-}"),
+      "p95_inter_token_latency_seconds": $(json_optional_number "${RESULT_P95_INTER_TOKEN_LATENCY_SECONDS:-}"),
       "requests_per_second": $(json_optional_number "${RESULT_REQUESTS_PER_SECOND:-}"),
       "generation_tokens_per_second": $(json_optional_number "${RESULT_GENERATION_TOKENS_PER_SECOND:-}")
     },
@@ -961,6 +1188,76 @@ parse_k6_summary_log() {
   done < "${log_path}"
 }
 
+parse_stream_summary_log() {
+  local log_path=$1
+  local in_summary=0
+  local key
+  local value
+
+  RESULT_COMPLETED_REQUESTS=""
+  RESULT_FAILED_REQUESTS=""
+  RESULT_P50_REQUEST_LATENCY_SECONDS=""
+  RESULT_P95_REQUEST_LATENCY_SECONDS=""
+  RESULT_P99_REQUEST_LATENCY_SECONDS=""
+  RESULT_P50_TTFT_SECONDS=""
+  RESULT_P95_TTFT_SECONDS=""
+  RESULT_P50_INTER_TOKEN_LATENCY_SECONDS=""
+  RESULT_P95_INTER_TOKEN_LATENCY_SECONDS=""
+  RESULT_GENERATION_TOKENS_PER_SECOND=""
+
+  while IFS= read -r line; do
+    case "${line}" in
+      GPU_LAB_STREAM_SUMMARY_BEGIN)
+        in_summary=1
+        continue
+        ;;
+      GPU_LAB_STREAM_SUMMARY_END)
+        in_summary=0
+        continue
+        ;;
+    esac
+
+    if [[ "${in_summary}" != "1" || "${line}" != *=* ]]; then
+      continue
+    fi
+
+    key=${line%%=*}
+    value=${line#*=}
+    case "${key}" in
+      completed_requests)
+        RESULT_COMPLETED_REQUESTS=${value}
+        ;;
+      failed_requests)
+        RESULT_FAILED_REQUESTS=${value}
+        ;;
+      p50_request_latency_seconds)
+        RESULT_P50_REQUEST_LATENCY_SECONDS=${value}
+        ;;
+      p95_request_latency_seconds)
+        RESULT_P95_REQUEST_LATENCY_SECONDS=${value}
+        ;;
+      p99_request_latency_seconds)
+        RESULT_P99_REQUEST_LATENCY_SECONDS=${value}
+        ;;
+      p50_ttft_seconds)
+        RESULT_P50_TTFT_SECONDS=${value}
+        ;;
+      p95_ttft_seconds)
+        RESULT_P95_TTFT_SECONDS=${value}
+        ;;
+      p50_inter_token_latency_seconds)
+        RESULT_P50_INTER_TOKEN_LATENCY_SECONDS=${value}
+        ;;
+      p95_inter_token_latency_seconds)
+        RESULT_P95_INTER_TOKEN_LATENCY_SECONDS=${value}
+        ;;
+      generation_tokens_per_second)
+        RESULT_GENERATION_TOKENS_PER_SECOND=${value}
+        ;;
+    esac
+  done < "${log_path}"
+}
+
 detect_vllm_oom_events() {
   local reasons
   local count
@@ -1057,6 +1354,87 @@ run_experiment_case() {
   return "${job_status}"
 }
 
+run_stream_case() {
+  local experiment_name=$1
+  local case_id=$2
+  local profile_id=$3
+  local samples=$4
+  local report_path=$5
+  local json_report_path=$6
+  local preserve_serving=$7
+  local preserve_load=$8
+  local serving_manifest
+  local stream_manifest
+  local stream_log_path
+  local job_name
+  local generated_at
+  local job_status
+
+  require_commands kubectl
+  require_experiment "${experiment_name}"
+  load_case "${experiment_name}" "${case_id}"
+  load_serving_profile "${experiment_name}" "${profile_id}"
+  require_positive_integer "${samples}" "stream samples"
+  validate_case_profile_compatibility
+
+  generated_at=$(utc_timestamp)
+  job_name=$(stream_job_name "${experiment_name}" "${CASE_ID}")
+  serving_manifest=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-experiment-serving.XXXXXX")
+  stream_manifest=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-experiment-stream.XXXXXX")
+  stream_log_path="${json_report_path%.json}.stream.log"
+
+  render_serving_manifest "${experiment_name}" "${profile_id}" > "${serving_manifest}"
+  render_stream_manifest "${experiment_name}" "${case_id}" "${samples}" > "${stream_manifest}"
+
+  printf 'Applying service manifest: %s\n' "${GPU_INFERENCE_SERVICE_MANIFEST}"
+  kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}"
+
+  printf 'Applying serving profile %s/%s\n' "${experiment_name}" "${profile_id}"
+  kubectl apply -f "${serving_manifest}"
+  kubectl rollout status "deployment/${GPU_INFERENCE_DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" --timeout=20m
+
+  printf 'Applying streaming case %s/%s with %s sample(s)\n' "${experiment_name}" "${CASE_ID}" "${samples}"
+  kubectl apply -f "${stream_manifest}"
+
+  set +e
+  wait_for_job_completion "${APP_NAMESPACE}" "${job_name}" "${EVALUATE_LOAD_TIMEOUT_SECONDS}"
+  job_status=$?
+  set -e
+
+  mkdir -p "$(dirname "${stream_log_path}")"
+  kubectl logs -n "${APP_NAMESPACE}" "job/${job_name}" > "${stream_log_path}" 2>/dev/null || true
+  if [[ -s "${stream_log_path}" ]]; then
+    parse_stream_summary_log "${stream_log_path}"
+  fi
+  detect_vllm_oom_events
+
+  if [[ "${job_status}" == "0" ]]; then
+    RUN_STATUS="complete"
+  else
+    RUN_STATUS="failed"
+  fi
+  RUN_SOURCE="scripts/experiment run-stream"
+
+  write_report_files "${experiment_name}" "${CASE_ID}" "${PROFILE_ID}" "${report_path}" "${json_report_path}" "${generated_at}"
+
+  if [[ "${preserve_load}" != "1" ]]; then
+    kubectl delete -f "${stream_manifest}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+
+  if [[ "${preserve_serving}" != "1" ]]; then
+    kubectl delete -f "${serving_manifest}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+
+  rm -f "${serving_manifest}" "${stream_manifest}" || true
+
+  printf 'Streaming experiment run status: %s\n' "${RUN_STATUS}"
+  printf 'Stream log: %s\n' "${stream_log_path}"
+  printf 'Markdown report: %s\n' "${report_path}"
+  printf 'JSON report: %s\n' "${json_report_path}"
+
+  return "${job_status}"
+}
+
 render_load_command() {
   local experiment_name=""
   local case_id=""
@@ -1099,6 +1477,58 @@ render_load_command() {
     printf 'Rendered load manifest: %s\n' "${output_path}"
   else
     render_load_manifest "${experiment_name}" "${case_id}"
+  fi
+}
+
+render_stream_command() {
+  local experiment_name=""
+  local case_id=""
+  local samples=5
+  local output_path=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --case)
+        case_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --samples)
+        samples=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --output)
+        output_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "render-stream requires --experiment"
+  fi
+
+  if [[ -z "${case_id}" ]]; then
+    die "render-stream requires --case"
+  fi
+
+  require_positive_integer "${samples}" "stream samples"
+
+  if [[ -n "${output_path}" ]]; then
+    render_stream_manifest "${experiment_name}" "${case_id}" "${samples}" > "${output_path}"
+    printf 'Rendered stream manifest: %s\n' "${output_path}"
+  else
+    render_stream_manifest "${experiment_name}" "${case_id}" "${samples}"
   fi
 }
 
@@ -1251,6 +1681,90 @@ run_command() {
   run_experiment_case "${experiment_name}" "${case_id}" "${profile_id}" "${report_path}" "${json_report_path}" "${preserve_serving}" "${preserve_load}"
 }
 
+run_stream_command() {
+  local experiment_name=""
+  local case_id=""
+  local profile_id=""
+  local samples=5
+  local report_path=""
+  local json_report_path=""
+  local preserve_serving=0
+  local preserve_load=0
+  local timestamp
+  local report_prefix
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --case)
+        case_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --profile)
+        profile_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --samples)
+        samples=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --report)
+        report_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --json-report)
+        json_report_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --preserve-serving)
+        preserve_serving=1
+        shift
+        ;;
+      --preserve-load)
+        preserve_load=1
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "run-stream requires --experiment"
+  fi
+
+  if [[ -z "${case_id}" ]]; then
+    die "run-stream requires --case"
+  fi
+
+  if [[ -z "${profile_id}" ]]; then
+    die "run-stream requires --profile"
+  fi
+
+  require_positive_integer "${samples}" "stream samples"
+
+  timestamp=$(date +%Y%m%d-%H%M%S)
+  if [[ -z "${report_path}" || -z "${json_report_path}" ]]; then
+    report_prefix=$(default_report_prefix "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}")
+    if [[ -z "${report_path}" ]]; then
+      report_path="${report_prefix}.md"
+    fi
+    if [[ -z "${json_report_path}" ]]; then
+      json_report_path="${report_prefix}.json"
+    fi
+  fi
+
+  run_stream_case "${experiment_name}" "${case_id}" "${profile_id}" "${samples}" "${report_path}" "${json_report_path}" "${preserve_serving}" "${preserve_load}"
+}
+
 render_serving_command() {
   local experiment_name=""
   local profile_id=""
@@ -1318,6 +1832,10 @@ main() {
       shift
       render_load_command "$@"
       ;;
+    render-stream)
+      shift
+      render_stream_command "$@"
+      ;;
     render-serving)
       shift
       render_serving_command "$@"
@@ -1329,6 +1847,10 @@ main() {
     run)
       shift
       run_command "$@"
+      ;;
+    run-stream)
+      shift
+      run_stream_command "$@"
       ;;
     -h|--help|"")
       usage

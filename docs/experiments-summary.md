@@ -9,6 +9,7 @@ belong under `experiments/<name>/`.
 | Experiment | Status | Primary question | Location |
 | --- | --- | --- | --- |
 | KV cache vs concurrency | scaffolded with load and serving renderers | How does longer prompt context reduce stable concurrency and throughput? | `experiments/kv-cache/` |
+| Prefill vs decode timing | scaffolded with streaming runner | How do long-prompt/short-output and short-prompt/long-output requests shift TTFT and decode timing? | `experiments/prefill-decode/` |
 
 ## Reading Results
 
@@ -26,7 +27,7 @@ Each completed experiment should summarize:
 
 ## Current State
 
-The first four implementation slices add the catalog, local load-job renderer,
-serving-profile renderer, report scaffold contract, and a live one-case
-experiment runner. The KV-cache experiment is defined, but no production
+The first five implementation slices add the catalog, local load-job renderer,
+serving-profile renderer, report scaffold contract, a live one-case load
+runner, and a streaming runner for prefill/decode timing. No production
 results have been recorded yet.
