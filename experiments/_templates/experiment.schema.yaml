@@ -1,0 +1,53 @@
+# Template for experiment metadata.
+#
+# Keep experiment-specific workload cases in a sibling cases.csv file so shell
+# tooling can render jobs without adding a YAML parser dependency.
+
+name: example-experiment
+title: Example Experiment
+status: planned
+owner: local
+
+question: What systems tradeoff does this experiment make visible?
+
+serving_profile:
+  model: Qwen/Qwen2.5-0.5B-Instruct
+  served_model_name: qwen2.5-0.5b
+  vllm_image: vllm/vllm-openai:v0.9.0
+  max_model_len: 2048
+  gpu_memory_utilization: 0.85
+  notes:
+    - Override these values only when the experiment requires it.
+
+workload:
+  generator: k6
+  endpoint: /v1/completions
+  cases_file: cases.csv
+  serving_profiles_file: serving-profiles.csv
+  prompt_strategy: approximate-token-target
+
+metrics:
+  latency:
+    - p50_request_latency_seconds
+    - p95_request_latency_seconds
+    - p99_request_latency_seconds
+  serving:
+    - p95_ttft_seconds
+    - requests_per_second
+    - generation_tokens_per_second
+    - peak_waiting_requests
+    - peak_running_requests
+    - peak_active_requests
+  gpu:
+    - average_gpu_utilization_percent
+    - max_gpu_utilization_percent
+    - gpu_memory_used_bytes
+    - gpu_memory_free_bytes
+  cost:
+    - cost_per_1000_successful_requests
+    - cost_per_1m_generated_tokens
+
+artifacts:
+  readme: README.md
+  results: results.md
+  graphs_dir: graphs

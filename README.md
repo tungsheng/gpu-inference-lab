@@ -12,6 +12,9 @@ The repo proves two real operator paths today:
   applies vLLM plus the selected HPA policy, or sweeps multiple active-pressure
   targets, runs burst load, captures latency and utilization signals, and
   writes Markdown and JSON reports under `docs/reports/`.
+- `./scripts/experiment` catalogs ML-serving experiments and renders
+  experiment-specific load manifests, serving manifests, and report scaffolds
+  without requiring a live cluster.
 
 ## Platform At A Glance
 
@@ -60,8 +63,38 @@ EKS cluster
   Grafana dashboards
 - A `warm-1` profile that keeps one on-demand serving node alive through the
   lightweight `gpu-warm-placeholder` deployment
+- An experiment catalog under `experiments/` for KV-cache, long-context, and
+  future batching, prefill/decode, cost, and failure-injection work
 
 ## Quick Start
+
+### Local Repo Usage
+
+These commands do not require AWS access or a live Kubernetes cluster:
+
+```bash
+./scripts/experiment list
+./scripts/experiment show kv-cache
+./scripts/experiment render-load \
+  --experiment kv-cache \
+  --case prompt-512-output-100 \
+  --output /tmp/kv-cache-load.yaml
+./scripts/experiment render-serving \
+  --experiment kv-cache \
+  --profile long-context \
+  --output /tmp/vllm-long-context.yaml
+./scripts/experiment render-report \
+  --experiment kv-cache \
+  --case prompt-8192-output-300 \
+  --profile long-context
+./test/run.sh
+```
+
+Use this path to inspect the experiment catalog, render reproducible workload
+manifests, scaffold report artifacts, and validate the repo's shell surface
+locally.
+
+### Live AWS/EKS Usage
 
 Prerequisites:
 
@@ -84,7 +117,7 @@ Prove the zero-GPU cold-start path:
 ./scripts/verify
 ```
 
-Run the burst evaluation path:
+Run controlled burst evaluations:
 
 ```bash
 ./scripts/evaluate --profile zero-idle
@@ -95,18 +128,21 @@ Run the burst evaluation path:
 ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ```
 
+Run a live experiment case:
+
+```bash
+./scripts/experiment run \
+  --experiment kv-cache \
+  --case prompt-512-output-100 \
+  --profile default
+```
+
 Tear everything down:
 
 ```bash
 ./scripts/down
 # or, if a failed destroy leaves behind available aws-K8S ENIs:
 ./scripts/down --cleanup-orphan-enis
-```
-
-Run the local shell tests:
-
-```bash
-./test/run.sh
 ```
 
 ## What The Scripts Do
@@ -134,6 +170,11 @@ Run the local shell tests:
   on-demand serving `NodePool` before the burst so the second node must land on
   spot, then restores on-demand, deletes the live spot-backed burst
   `NodeClaim`, forces on-demand recovery, and reports replacement timing.
+- `./scripts/experiment` lists planned experiments, shows experiment cases,
+  renders local Kubernetes manifests plus Markdown/JSON report scaffolds, and
+  can run one live case/profile at a time against a configured cluster. This is
+  the front door for KV-cache and future batching, prefill/decode,
+  request-pattern, cost, failure-injection, and multi-model experiments.
 - `./scripts/down` removes runtime resources, observability, GPU capacity
   definitions, controllers, and Terraform-managed infrastructure. The optional
   `--cleanup-orphan-enis` flag retries one failed `terraform destroy` after
@@ -199,6 +240,8 @@ VPN-based administration and tighter public CIDR controls.
 - `platform/tests/`: manual GPU smoke test, load generator, and warm placeholder
 - `platform/system/`: cluster-level runtime prerequisites such as the NVIDIA
   device plugin
+- `experiments/`: repeatable experiment definitions, workload cases, serving
+  profiles, result narratives, and graph placeholders
 - `scripts/`: lifecycle commands and shared shell helpers
 - `docs/`: repo-level architecture, workflow, scaling, networking, and roadmap
   documentation
@@ -209,6 +252,8 @@ Start here:
 
 - [Dev environment workflow](docs/dev-environment.md)
 - [Operations](docs/operations.md)
+- [Experiment platform plan](docs/experiment-platform-plan.md)
+- [Experiments summary](docs/experiments-summary.md)
 
 Platform deep dives:
 

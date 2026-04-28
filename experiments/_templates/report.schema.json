@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/gpu-inference-lab/experiment-report.schema.json",
+  "title": "GPU Inference Lab Experiment Report",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "experiment",
+    "case",
+    "serving_profile",
+    "run",
+    "results"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "experiment-report/v1"
+    },
+    "experiment": {
+      "type": "object",
+      "required": ["name", "title"],
+      "properties": {
+        "name": { "type": "string" },
+        "title": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "required": [
+        "id",
+        "prompt_token_target",
+        "max_tokens",
+        "arrival"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "prompt_token_target": { "type": "integer" },
+        "max_tokens": { "type": "integer" },
+        "arrival": {
+          "type": "object",
+          "required": [
+            "start_rate",
+            "target_rate",
+            "ramp_up_duration",
+            "steady_duration",
+            "ramp_down_duration",
+            "pre_allocated_vus",
+            "max_vus",
+            "timeout_seconds"
+          ],
+          "properties": {
+            "start_rate": { "type": "number" },
+            "target_rate": { "type": "number" },
+            "ramp_up_duration": { "type": "string" },
+            "steady_duration": { "type": "string" },
+            "ramp_down_duration": { "type": "string" },
+            "pre_allocated_vus": { "type": "integer" },
+            "max_vus": { "type": "integer" },
+            "timeout_seconds": { "type": "integer" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "serving_profile": {
+      "type": "object",
+      "required": [
+        "id",
+        "model",
+        "served_model_name",
+        "vllm_image",
+        "max_model_len",
+        "gpu_memory_utilization"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "model": { "type": "string" },
+        "served_model_name": { "type": "string" },
+        "vllm_image": { "type": "string" },
+        "max_model_len": { "type": "integer" },
+        "gpu_memory_utilization": { "type": "number" },
+        "max_num_seqs": { "type": ["integer", "null"] },
+        "max_num_batched_tokens": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "status",
+        "generated_at",
+        "source",
+        "requires_live_cluster"
+      ],
+      "properties": {
+        "status": { "enum": ["pending", "running", "complete", "partial", "failed"] },
+        "generated_at": { "type": "string" },
+        "source": { "type": "string" },
+        "requires_live_cluster": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "results": {
+      "type": "object",
+      "required": ["success", "latency", "serving", "queue", "gpu", "scaling", "cost"],
+      "properties": {
+        "success": {
+          "type": "object",
+          "properties": {
+            "completed_requests": { "type": ["integer", "null"] },
+            "failed_requests": { "type": ["integer", "null"] },
+            "oom_events": { "type": ["integer", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "latency": {
+          "type": "object",
+          "properties": {
+            "p50_request_latency_seconds": { "type": ["number", "null"] },
+            "p95_request_latency_seconds": { "type": ["number", "null"] },
+            "p99_request_latency_seconds": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "serving": {
+          "type": "object",
+          "properties": {
+            "p95_ttft_seconds": { "type": ["number", "null"] },
+            "requests_per_second": { "type": ["number", "null"] },
+            "generation_tokens_per_second": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "queue": {
+          "type": "object",
+          "properties": {
+            "peak_waiting_requests": { "type": ["number", "null"] },
+            "peak_running_requests": { "type": ["number", "null"] },
+            "peak_active_requests": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "gpu": {
+          "type": "object",
+          "properties": {
+            "average_gpu_utilization_percent": { "type": ["number", "null"] },
+            "max_gpu_utilization_percent": { "type": ["number", "null"] },
+            "gpu_memory_used_bytes": { "type": ["number", "null"] },
+            "gpu_memory_free_bytes": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "scaling": {
+          "type": "object",
+          "properties": {
+            "first_nodeclaim_seconds": { "type": ["number", "null"] },
+            "first_gpu_node_seconds": { "type": ["number", "null"] },
+            "model_ready_seconds": { "type": ["number", "null"] },
+            "first_successful_completion_seconds": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "cost": {
+          "type": "object",
+          "properties": {
+            "estimated_burst_cost_usd": { "type": ["number", "null"] },
+            "cost_per_1000_successful_requests_usd": { "type": ["number", "null"] },
+            "cost_per_1m_generated_tokens_usd": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

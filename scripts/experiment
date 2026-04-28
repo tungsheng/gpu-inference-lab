@@ -1,0 +1,1342 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/_common.sh"
+
+EXPERIMENTS_DIR="${REPO_ROOT}/experiments"
+REPORTS_DIR="${EXPERIMENT_REPORTS_DIR:-${REPO_ROOT}/docs/reports}"
+
+usage() {
+  cat <<EOF
+Usage:
+  ./scripts/experiment list
+  ./scripts/experiment show <experiment>
+  ./scripts/experiment render-load --experiment name --case case-id [--output path]
+  ./scripts/experiment render-serving --experiment name --profile profile-id [--output path]
+  ./scripts/experiment render-report --experiment name --case case-id --profile profile-id [--report path] [--json-report path]
+  ./scripts/experiment run --experiment name --case case-id --profile profile-id [--report path] [--json-report path] [--preserve-serving] [--preserve-load]
+
+Examples:
+  ./scripts/experiment list
+  ./scripts/experiment show kv-cache
+  ./scripts/experiment render-load --experiment kv-cache --case prompt-512-output-100 --output /tmp/kv-cache-load.yaml
+  ./scripts/experiment render-serving --experiment kv-cache --profile long-context --output /tmp/vllm-long-context.yaml
+  ./scripts/experiment render-report --experiment kv-cache --case prompt-512-output-100 --profile default
+  ./scripts/experiment run --experiment kv-cache --case prompt-512-output-100 --profile default
+EOF
+}
+
+die() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+require_option_value() {
+  local option_name=$1
+  local option_value=${2-}
+
+  if [[ -z "${option_value}" || "${option_value}" == -* ]]; then
+    die "${option_name} requires a value"
+  fi
+
+  printf '%s\n' "${option_value}"
+}
+
+require_name() {
+  local value=$1
+  local label=$2
+
+  if [[ ! "${value}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    die "Invalid ${label}: ${value}"
+  fi
+}
+
+experiment_dir() {
+  local experiment_name=$1
+  printf '%s/%s\n' "${EXPERIMENTS_DIR}" "${experiment_name}"
+}
+
+experiment_metadata_path() {
+  local experiment_name=$1
+  printf '%s/experiment.yaml\n' "$(experiment_dir "${experiment_name}")"
+}
+
+experiment_cases_path() {
+  local experiment_name=$1
+  printf '%s/cases.csv\n' "$(experiment_dir "${experiment_name}")"
+}
+
+experiment_serving_profiles_path() {
+  local experiment_name=$1
+  printf '%s/serving-profiles.csv\n' "$(experiment_dir "${experiment_name}")"
+}
+
+require_experiment() {
+  local experiment_name=$1
+  local metadata_path
+  local cases_path
+
+  require_name "${experiment_name}" "experiment name"
+
+  metadata_path=$(experiment_metadata_path "${experiment_name}")
+  cases_path=$(experiment_cases_path "${experiment_name}")
+
+  if [[ ! -f "${metadata_path}" ]]; then
+    die "Unknown experiment: ${experiment_name}"
+  fi
+
+  if [[ ! -f "${cases_path}" ]]; then
+    die "Experiment ${experiment_name} is missing cases.csv"
+  fi
+}
+
+experiment_title() {
+  local experiment_name=$1
+  local metadata_path
+
+  metadata_path=$(experiment_metadata_path "${experiment_name}")
+  awk -F': ' '/^title:/ { print $2; found=1; exit } END { if (!found) print "" }' "${metadata_path}"
+}
+
+list_experiments() {
+  local experiment_path
+  local experiment_name
+  local title
+
+  if [[ ! -d "${EXPERIMENTS_DIR}" ]]; then
+    return 0
+  fi
+
+  find "${EXPERIMENTS_DIR}" -mindepth 1 -maxdepth 1 -type d ! -name '_templates' | sort | while read -r experiment_path; do
+    experiment_name=$(basename "${experiment_path}")
+    if [[ -f "${experiment_path}/experiment.yaml" ]]; then
+      title=$(experiment_title "${experiment_name}")
+      printf '%-18s %s\n' "${experiment_name}" "${title}"
+    fi
+  done
+}
+
+show_experiment() {
+  local experiment_name=$1
+  local metadata_path
+  local cases_path
+  local serving_profiles_path
+
+  require_experiment "${experiment_name}"
+
+  metadata_path=$(experiment_metadata_path "${experiment_name}")
+  cases_path=$(experiment_cases_path "${experiment_name}")
+  serving_profiles_path=$(experiment_serving_profiles_path "${experiment_name}")
+
+  printf 'Experiment: %s\n' "${experiment_name}"
+  printf 'Title: %s\n' "$(experiment_title "${experiment_name}")"
+  printf 'Metadata: %s\n' "${metadata_path}"
+  printf 'Cases:\n'
+
+  awk -F',' '
+    NR == 1 { next }
+    NF > 0 && $1 !~ /^#/ {
+      printf "  - %s: prompt=%s output=%s target_rate=%s req/s\n", $1, $2, $3, $5
+    }
+  ' "${cases_path}"
+
+  if [[ -f "${serving_profiles_path}" ]]; then
+    printf 'Serving profiles:\n'
+    awk -F',' '
+      NR == 1 { next }
+      NF > 0 && $1 !~ /^#/ {
+        scheduler = "default"
+        if ($7 != "" || $8 != "") {
+          scheduler = "max_num_seqs=" $7 " max_num_batched_tokens=" $8
+        }
+        printf "  - %s: model=%s served=%s max_model_len=%s gpu_memory=%s scheduler=%s\n", $1, $2, $3, $5, $6, scheduler
+      }
+    ' "${serving_profiles_path}"
+  fi
+}
+
+require_positive_integer() {
+  local value=$1
+  local label=$2
+
+  if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
+    die "Invalid ${label}: ${value}"
+  fi
+}
+
+require_rate() {
+  local value=$1
+  local label=$2
+
+  if [[ ! "${value}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    die "Invalid ${label}: ${value}"
+  fi
+}
+
+require_fraction_at_most_one() {
+  local value=$1
+  local label=$2
+
+  require_rate "${value}" "${label}"
+  awk -v value="${value}" 'BEGIN { exit !((value + 0) > 0 && (value + 0) <= 1) }' || die "Invalid ${label}: ${value}"
+}
+
+require_duration() {
+  local value=$1
+  local label=$2
+
+  if [[ ! "${value}" =~ ^[1-9][0-9]*[smh]$ ]]; then
+    die "Invalid ${label}: ${value}"
+  fi
+}
+
+require_safe_text() {
+  local value=$1
+  local label=$2
+
+  if [[ ! "${value}" =~ ^[A-Za-z0-9._:/+=@-]+$ ]]; then
+    die "Invalid ${label}: ${value}"
+  fi
+}
+
+require_resource_quantity() {
+  local value=$1
+  local label=$2
+
+  if [[ ! "${value}" =~ ^[0-9]+([.][0-9]+)?(m|Ki|Mi|Gi|Ti)?$ ]]; then
+    die "Invalid ${label}: ${value}"
+  fi
+}
+
+json_optional_integer() {
+  local value=${1:-}
+
+  if [[ -z "${value}" ]]; then
+    printf 'null'
+  else
+    printf '%s' "${value}"
+  fi
+}
+
+json_optional_number() {
+  local value=${1:-}
+
+  if [[ -z "${value}" ]]; then
+    printf 'null'
+  else
+    printf '%s' "${value}"
+  fi
+}
+
+display_optional_metric() {
+  local value=${1:-}
+
+  if [[ -z "${value}" ]]; then
+    printf 'n/a'
+  else
+    printf '%s' "${value}"
+  fi
+}
+
+utc_timestamp() {
+  date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+experiment_job_name() {
+  local experiment_name=$1
+  local case_id=$2
+
+  printf '%s-%s\n' "${experiment_name}" "${case_id}"
+}
+
+load_case() {
+  local experiment_name=$1
+  local requested_case_id=$2
+  local cases_path
+  local row_case_id
+
+  require_name "${requested_case_id}" "case id"
+
+  cases_path=$(experiment_cases_path "${experiment_name}")
+
+  while IFS=',' read -r row_case_id PROMPT_TOKEN_TARGET MAX_TOKENS START_RATE TARGET_RATE RAMP_UP_DURATION STEADY_DURATION RAMP_DOWN_DURATION PRE_ALLOCATED_VUS MAX_VUS TIMEOUT_SECONDS DESCRIPTION; do
+    if [[ -z "${row_case_id}" || "${row_case_id}" == "case_id" || "${row_case_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "${row_case_id}" == "${requested_case_id}" ]]; then
+      CASE_ID=${row_case_id}
+      require_positive_integer "${PROMPT_TOKEN_TARGET}" "prompt token target"
+      require_positive_integer "${MAX_TOKENS}" "max tokens"
+      require_rate "${START_RATE}" "start rate"
+      require_rate "${TARGET_RATE}" "target rate"
+      require_duration "${RAMP_UP_DURATION}" "ramp-up duration"
+      require_duration "${STEADY_DURATION}" "steady duration"
+      require_duration "${RAMP_DOWN_DURATION}" "ramp-down duration"
+      require_positive_integer "${PRE_ALLOCATED_VUS}" "pre-allocated VUs"
+      require_positive_integer "${MAX_VUS}" "max VUs"
+      require_positive_integer "${TIMEOUT_SECONDS}" "timeout seconds"
+      return 0
+    fi
+  done < "${cases_path}"
+
+  die "Unknown case ${requested_case_id} for experiment ${experiment_name}"
+}
+
+require_serving_profiles() {
+  local experiment_name=$1
+  local profiles_path
+
+  require_experiment "${experiment_name}"
+  profiles_path=$(experiment_serving_profiles_path "${experiment_name}")
+  if [[ ! -f "${profiles_path}" ]]; then
+    die "Experiment ${experiment_name} is missing serving-profiles.csv"
+  fi
+}
+
+load_serving_profile() {
+  local experiment_name=$1
+  local requested_profile_id=$2
+  local profiles_path
+  local row_profile_id
+
+  require_name "${requested_profile_id}" "serving profile id"
+  require_serving_profiles "${experiment_name}"
+
+  profiles_path=$(experiment_serving_profiles_path "${experiment_name}")
+
+  while IFS=',' read -r row_profile_id MODEL SERVED_MODEL_NAME VLLM_IMAGE MAX_MODEL_LEN GPU_MEMORY_UTILIZATION MAX_NUM_SEQS MAX_NUM_BATCHED_TOKENS CPU_REQUEST MEMORY_REQUEST CPU_LIMIT MEMORY_LIMIT MODEL_CACHE_SIZE SHM_SIZE PROFILE_DESCRIPTION; do
+    if [[ -z "${row_profile_id}" || "${row_profile_id}" == "profile_id" || "${row_profile_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "${row_profile_id}" == "${requested_profile_id}" ]]; then
+      PROFILE_ID=${row_profile_id}
+      require_safe_text "${MODEL}" "model"
+      require_safe_text "${SERVED_MODEL_NAME}" "served model name"
+      require_safe_text "${VLLM_IMAGE}" "vLLM image"
+      require_positive_integer "${MAX_MODEL_LEN}" "max model length"
+      require_fraction_at_most_one "${GPU_MEMORY_UTILIZATION}" "GPU memory utilization"
+      if [[ -n "${MAX_NUM_SEQS}" ]]; then
+        require_positive_integer "${MAX_NUM_SEQS}" "max num seqs"
+      fi
+      if [[ -n "${MAX_NUM_BATCHED_TOKENS}" ]]; then
+        require_positive_integer "${MAX_NUM_BATCHED_TOKENS}" "max num batched tokens"
+      fi
+      require_resource_quantity "${CPU_REQUEST}" "CPU request"
+      require_resource_quantity "${MEMORY_REQUEST}" "memory request"
+      require_resource_quantity "${CPU_LIMIT}" "CPU limit"
+      require_resource_quantity "${MEMORY_LIMIT}" "memory limit"
+      require_resource_quantity "${MODEL_CACHE_SIZE}" "model cache size"
+      require_resource_quantity "${SHM_SIZE}" "shared memory size"
+      return 0
+    fi
+  done < "${profiles_path}"
+
+  die "Unknown serving profile ${requested_profile_id} for experiment ${experiment_name}"
+}
+
+validate_case_profile_compatibility() {
+  local required_tokens
+
+  required_tokens=$((PROMPT_TOKEN_TARGET + MAX_TOKENS))
+  if (( required_tokens > MAX_MODEL_LEN )); then
+    die "Serving profile ${PROFILE_ID} max_model_len ${MAX_MODEL_LEN} is smaller than case ${CASE_ID} prompt+output budget ${required_tokens}"
+  fi
+}
+
+render_optional_vllm_scheduler_args() {
+  if [[ -n "${MAX_NUM_SEQS}" ]]; then
+    cat <<EOF
+            - --max-num-seqs
+            - "${MAX_NUM_SEQS}"
+EOF
+  fi
+
+  if [[ -n "${MAX_NUM_BATCHED_TOKENS}" ]]; then
+    cat <<EOF
+            - --max-num-batched-tokens
+            - "${MAX_NUM_BATCHED_TOKENS}"
+EOF
+  fi
+}
+
+render_serving_manifest() {
+  local experiment_name=$1
+  local profile_id=$2
+
+  load_serving_profile "${experiment_name}" "${profile_id}"
+
+  cat <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-openai
+  namespace: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-openai
+  template:
+    metadata:
+      labels:
+        app: vllm-openai
+    spec:
+      terminationGracePeriodSeconds: 120
+      nodeSelector:
+        workload: gpu
+      tolerations:
+        - key: gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: server
+          image: ${VLLM_IMAGE}
+          args:
+            - --model
+            - ${MODEL}
+            - --served-model-name
+            - ${SERVED_MODEL_NAME}
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --dtype
+            - float16
+            - --max-model-len
+            - "${MAX_MODEL_LEN}"
+            - --gpu-memory-utilization
+            - "${GPU_MEMORY_UTILIZATION}"
+EOF
+  render_optional_vllm_scheduler_args
+  cat <<EOF
+          env:
+            - name: HF_HOME
+              value: /cache/huggingface
+            - name: HF_HUB_DISABLE_TELEMETRY
+              value: "1"
+          ports:
+            - containerPort: 8000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "${CPU_REQUEST}"
+              memory: ${MEMORY_REQUEST}
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "${CPU_LIMIT}"
+              memory: ${MEMORY_LIMIT}
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /cache/huggingface
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: model-cache
+          emptyDir:
+            sizeLimit: ${MODEL_CACHE_SIZE}
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: ${SHM_SIZE}
+EOF
+}
+
+render_load_manifest() {
+  local experiment_name=$1
+  local case_id=$2
+  local job_name
+  local configmap_name
+  local load_served_model_name
+
+  require_experiment "${experiment_name}"
+  load_case "${experiment_name}" "${case_id}"
+
+  job_name="${experiment_name}-${CASE_ID}"
+  configmap_name="${job_name}-load"
+  load_served_model_name="${SERVED_MODEL_NAME:-qwen2.5-0.5b}"
+
+  cat <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${configmap_name}
+  namespace: ${APP_NAMESPACE}
+  labels:
+    experiment.gpu-lab/name: ${experiment_name}
+    experiment.gpu-lab/case: ${CASE_ID}
+data:
+  load-test.js: |
+    import http from "k6/http";
+    import { check } from "k6";
+
+    const experimentName = "${experiment_name}";
+    const caseId = "${CASE_ID}";
+    const promptTokenTarget = ${PROMPT_TOKEN_TARGET};
+    const maxTokens = ${MAX_TOKENS};
+    const timeoutSeconds = ${TIMEOUT_SECONDS};
+
+    export const options = {
+      tags: {
+        experiment: experimentName,
+        case_id: caseId,
+      },
+      scenarios: {
+        inference_burst: {
+          executor: "ramping-arrival-rate",
+          startRate: ${START_RATE},
+          timeUnit: "1s",
+          preAllocatedVUs: ${PRE_ALLOCATED_VUS},
+          maxVUs: ${MAX_VUS},
+          stages: [
+            { duration: "${RAMP_UP_DURATION}", target: ${TARGET_RATE} },
+            { duration: "${STEADY_DURATION}", target: ${TARGET_RATE} },
+            { duration: "${RAMP_DOWN_DURATION}", target: 0 },
+          ],
+        },
+      },
+      thresholds: {
+        http_req_failed: ["rate<0.05"],
+      },
+      summaryTrendStats: ["min", "avg", "med", "p(90)", "p(95)", "p(99)", "max"],
+    };
+
+    const targetUrl = __ENV.TARGET_URL || "http://${GPU_INFERENCE_SERVICE_NAME}.${APP_NAMESPACE}.svc.cluster.local/v1/completions";
+    const modelName = __ENV.MODEL_NAME || "${load_served_model_name}";
+
+    function buildPrompt(targetTokens) {
+      const seedWords = [
+        "GPU", "inference", "capacity", "planning", "requires", "measuring",
+        "KV", "cache", "pressure", "queueing", "latency", "throughput",
+        "memory", "headroom", "scheduling", "autoscaling", "recovery",
+        "cost", "utilization", "and", "tail", "behavior", "under",
+        "controlled", "workloads"
+      ];
+      const words = [];
+      for (let index = 0; index < targetTokens; index += 1) {
+        words.push(seedWords[index % seedWords.length]);
+      }
+      return words.join(" ");
+    }
+
+    const payload = JSON.stringify({
+      model: modelName,
+      prompt: buildPrompt(promptTokenTarget),
+      max_tokens: maxTokens,
+      temperature: 0,
+    });
+
+    export default function () {
+      const response = http.post(targetUrl, payload, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        timeout: String(timeoutSeconds) + "s",
+      });
+
+      check(response, {
+        "completion request succeeded": (res) => res.status === 200,
+      });
+    }
+
+    function metricValue(data, metricName, valueName) {
+      const metric = data.metrics[metricName];
+      if (!metric || !metric.values || metric.values[valueName] === undefined) {
+        return "";
+      }
+      return String(metric.values[valueName]);
+    }
+
+    function secondsFromMilliseconds(value) {
+      if (value === "") {
+        return "";
+      }
+      return String(Number(value) / 1000);
+    }
+
+    export function handleSummary(data) {
+      const completedRequests = metricValue(data, "http_reqs", "count");
+      const failedRate = metricValue(data, "http_req_failed", "rate");
+      const failedRequests = completedRequests === "" || failedRate === ""
+        ? ""
+        : String(Math.round(Number(completedRequests) * Number(failedRate)));
+
+      return {
+        stdout: [
+          "GPU_LAB_K6_SUMMARY_BEGIN",
+          "completed_requests=" + completedRequests,
+          "failed_requests=" + failedRequests,
+          "p50_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "med")),
+          "p95_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "p(95)")),
+          "p99_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "p(99)")),
+          "requests_per_second=" + metricValue(data, "http_reqs", "rate"),
+          "GPU_LAB_K6_SUMMARY_END",
+        ].join("\\n") + "\\n",
+      };
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${APP_NAMESPACE}
+  labels:
+    experiment.gpu-lab/name: ${experiment_name}
+    experiment.gpu-lab/case: ${CASE_ID}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        experiment.gpu-lab/name: ${experiment_name}
+        experiment.gpu-lab/case: ${CASE_ID}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:0.49.0
+          args:
+            - run
+            - /scripts/load-test.js
+          env:
+            - name: TARGET_URL
+              value: http://${GPU_INFERENCE_SERVICE_NAME}.${APP_NAMESPACE}.svc.cluster.local/v1/completions
+            - name: MODEL_NAME
+              value: ${load_served_model_name}
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: ${configmap_name}
+EOF
+}
+
+render_report_markdown() {
+  local experiment_name=$1
+  local case_id=$2
+  local profile_id=$3
+  local generated_at=$4
+  local experiment_title_value
+  local max_num_seqs_display="n/a"
+  local max_num_batched_tokens_display="n/a"
+  local run_status="${RUN_STATUS:-pending}"
+  local run_source="${RUN_SOURCE:-scripts/experiment render-report}"
+  local completed_requests_display
+  local failed_requests_display
+  local oom_events_display
+  local p50_latency_display
+  local p95_latency_display
+  local p99_latency_display
+  local p95_ttft_display
+  local requests_per_second_display
+  local generation_tokens_per_second_display
+  local peak_waiting_requests_display
+  local peak_running_requests_display
+  local peak_active_requests_display
+  local average_gpu_utilization_display
+  local max_gpu_utilization_display
+  local gpu_memory_used_display
+  local gpu_memory_free_display
+  local first_nodeclaim_display
+  local first_gpu_node_display
+  local model_ready_display
+  local first_successful_completion_display
+  local estimated_burst_cost_display
+  local cost_per_1000_display
+  local cost_per_1m_tokens_display
+
+  require_experiment "${experiment_name}"
+  load_case "${experiment_name}" "${case_id}"
+  load_serving_profile "${experiment_name}" "${profile_id}"
+
+  experiment_title_value=$(experiment_title "${experiment_name}")
+  if [[ -n "${MAX_NUM_SEQS}" ]]; then
+    max_num_seqs_display=${MAX_NUM_SEQS}
+  fi
+  if [[ -n "${MAX_NUM_BATCHED_TOKENS}" ]]; then
+    max_num_batched_tokens_display=${MAX_NUM_BATCHED_TOKENS}
+  fi
+
+  completed_requests_display=$(display_optional_metric "${RESULT_COMPLETED_REQUESTS:-}")
+  failed_requests_display=$(display_optional_metric "${RESULT_FAILED_REQUESTS:-}")
+  oom_events_display=$(display_optional_metric "${RESULT_OOM_EVENTS:-}")
+  p50_latency_display=$(display_optional_metric "${RESULT_P50_REQUEST_LATENCY_SECONDS:-}")
+  p95_latency_display=$(display_optional_metric "${RESULT_P95_REQUEST_LATENCY_SECONDS:-}")
+  p99_latency_display=$(display_optional_metric "${RESULT_P99_REQUEST_LATENCY_SECONDS:-}")
+  p95_ttft_display=$(display_optional_metric "${RESULT_P95_TTFT_SECONDS:-}")
+  requests_per_second_display=$(display_optional_metric "${RESULT_REQUESTS_PER_SECOND:-}")
+  generation_tokens_per_second_display=$(display_optional_metric "${RESULT_GENERATION_TOKENS_PER_SECOND:-}")
+  peak_waiting_requests_display=$(display_optional_metric "${RESULT_PEAK_WAITING_REQUESTS:-}")
+  peak_running_requests_display=$(display_optional_metric "${RESULT_PEAK_RUNNING_REQUESTS:-}")
+  peak_active_requests_display=$(display_optional_metric "${RESULT_PEAK_ACTIVE_REQUESTS:-}")
+  average_gpu_utilization_display=$(display_optional_metric "${RESULT_AVERAGE_GPU_UTILIZATION_PERCENT:-}")
+  max_gpu_utilization_display=$(display_optional_metric "${RESULT_MAX_GPU_UTILIZATION_PERCENT:-}")
+  gpu_memory_used_display=$(display_optional_metric "${RESULT_GPU_MEMORY_USED_BYTES:-}")
+  gpu_memory_free_display=$(display_optional_metric "${RESULT_GPU_MEMORY_FREE_BYTES:-}")
+  first_nodeclaim_display=$(display_optional_metric "${RESULT_FIRST_NODECLAIM_SECONDS:-}")
+  first_gpu_node_display=$(display_optional_metric "${RESULT_FIRST_GPU_NODE_SECONDS:-}")
+  model_ready_display=$(display_optional_metric "${RESULT_MODEL_READY_SECONDS:-}")
+  first_successful_completion_display=$(display_optional_metric "${RESULT_FIRST_SUCCESSFUL_COMPLETION_SECONDS:-}")
+  estimated_burst_cost_display=$(display_optional_metric "${RESULT_ESTIMATED_BURST_COST_USD:-}")
+  cost_per_1000_display=$(display_optional_metric "${RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD:-}")
+  cost_per_1m_tokens_display=$(display_optional_metric "${RESULT_COST_PER_1M_GENERATED_TOKENS_USD:-}")
+
+  cat <<EOF
+# ${experiment_title_value} - ${CASE_ID}
+
+- Schema version: experiment-report/v1
+- Status: ${run_status}
+- Generated at: ${generated_at}
+- Requires live cluster: true
+- Source: ${run_source}
+
+## Workload
+
+| Field | Value |
+| --- | --- |
+| Experiment | ${experiment_name} |
+| Case | ${CASE_ID} |
+| Prompt token target | ${PROMPT_TOKEN_TARGET} |
+| Max output tokens | ${MAX_TOKENS} |
+| Start rate | ${START_RATE} req/s |
+| Target rate | ${TARGET_RATE} req/s |
+| Ramp up | ${RAMP_UP_DURATION} |
+| Steady duration | ${STEADY_DURATION} |
+| Ramp down | ${RAMP_DOWN_DURATION} |
+| Pre-allocated VUs | ${PRE_ALLOCATED_VUS} |
+| Max VUs | ${MAX_VUS} |
+| Timeout | ${TIMEOUT_SECONDS}s |
+
+## Serving Profile
+
+| Field | Value |
+| --- | --- |
+| Profile | ${PROFILE_ID} |
+| Model | ${MODEL} |
+| Served model name | ${SERVED_MODEL_NAME} |
+| vLLM image | ${VLLM_IMAGE} |
+| Max model length | ${MAX_MODEL_LEN} |
+| GPU memory utilization | ${GPU_MEMORY_UTILIZATION} |
+| Max sequences | ${max_num_seqs_display} |
+| Max batched tokens | ${max_num_batched_tokens_display} |
+
+## Results
+
+| Metric | Value |
+| --- | --- |
+| Completed requests | ${completed_requests_display} |
+| Failed requests | ${failed_requests_display} |
+| OOM events | ${oom_events_display} |
+| p50 request latency | ${p50_latency_display} |
+| p95 request latency | ${p95_latency_display} |
+| p99 request latency | ${p99_latency_display} |
+| p95 TTFT | ${p95_ttft_display} |
+| Requests/sec | ${requests_per_second_display} |
+| Generation tokens/sec | ${generation_tokens_per_second_display} |
+| Peak waiting requests | ${peak_waiting_requests_display} |
+| Peak running requests | ${peak_running_requests_display} |
+| Peak active requests | ${peak_active_requests_display} |
+| Average GPU utilization | ${average_gpu_utilization_display} |
+| Max GPU utilization | ${max_gpu_utilization_display} |
+| GPU memory used | ${gpu_memory_used_display} |
+| GPU memory free | ${gpu_memory_free_display} |
+| First NodeClaim | ${first_nodeclaim_display} |
+| First GPU node | ${first_gpu_node_display} |
+| Model ready | ${model_ready_display} |
+| First successful completion | ${first_successful_completion_display} |
+| Estimated burst cost | ${estimated_burst_cost_display} |
+| Cost per 1K successful requests | ${cost_per_1000_display} |
+| Cost per 1M generated tokens | ${cost_per_1m_tokens_display} |
+
+## Notes
+
+- This report records the workload and serving contract for the selected case.
+- Result fields remain \`n/a\` until a live cluster run collects k6, Prometheus,
+  DCGM, Kubernetes, and cost signals.
+EOF
+}
+
+render_report_json() {
+  local experiment_name=$1
+  local case_id=$2
+  local profile_id=$3
+  local generated_at=$4
+  local experiment_title_value
+  local max_num_seqs_json
+  local max_num_batched_tokens_json
+  local run_status="${RUN_STATUS:-pending}"
+  local run_source="${RUN_SOURCE:-scripts/experiment render-report}"
+
+  require_experiment "${experiment_name}"
+  load_case "${experiment_name}" "${case_id}"
+  load_serving_profile "${experiment_name}" "${profile_id}"
+
+  experiment_title_value=$(experiment_title "${experiment_name}")
+  max_num_seqs_json=$(json_optional_integer "${MAX_NUM_SEQS}")
+  max_num_batched_tokens_json=$(json_optional_integer "${MAX_NUM_BATCHED_TOKENS}")
+
+  cat <<EOF
+{
+  "schema_version": "experiment-report/v1",
+  "experiment": {
+    "name": "${experiment_name}",
+    "title": "${experiment_title_value}"
+  },
+  "case": {
+    "id": "${CASE_ID}",
+    "prompt_token_target": ${PROMPT_TOKEN_TARGET},
+    "max_tokens": ${MAX_TOKENS},
+    "arrival": {
+      "start_rate": ${START_RATE},
+      "target_rate": ${TARGET_RATE},
+      "ramp_up_duration": "${RAMP_UP_DURATION}",
+      "steady_duration": "${STEADY_DURATION}",
+      "ramp_down_duration": "${RAMP_DOWN_DURATION}",
+      "pre_allocated_vus": ${PRE_ALLOCATED_VUS},
+      "max_vus": ${MAX_VUS},
+      "timeout_seconds": ${TIMEOUT_SECONDS}
+    }
+  },
+  "serving_profile": {
+    "id": "${PROFILE_ID}",
+    "model": "${MODEL}",
+    "served_model_name": "${SERVED_MODEL_NAME}",
+    "vllm_image": "${VLLM_IMAGE}",
+    "max_model_len": ${MAX_MODEL_LEN},
+    "gpu_memory_utilization": ${GPU_MEMORY_UTILIZATION},
+    "max_num_seqs": ${max_num_seqs_json},
+    "max_num_batched_tokens": ${max_num_batched_tokens_json}
+  },
+  "run": {
+    "status": "${run_status}",
+    "generated_at": "${generated_at}",
+    "source": "${run_source}",
+    "requires_live_cluster": true
+  },
+  "results": {
+    "success": {
+      "completed_requests": $(json_optional_number "${RESULT_COMPLETED_REQUESTS:-}"),
+      "failed_requests": $(json_optional_number "${RESULT_FAILED_REQUESTS:-}"),
+      "oom_events": $(json_optional_number "${RESULT_OOM_EVENTS:-}")
+    },
+    "latency": {
+      "p50_request_latency_seconds": $(json_optional_number "${RESULT_P50_REQUEST_LATENCY_SECONDS:-}"),
+      "p95_request_latency_seconds": $(json_optional_number "${RESULT_P95_REQUEST_LATENCY_SECONDS:-}"),
+      "p99_request_latency_seconds": $(json_optional_number "${RESULT_P99_REQUEST_LATENCY_SECONDS:-}")
+    },
+    "serving": {
+      "p95_ttft_seconds": $(json_optional_number "${RESULT_P95_TTFT_SECONDS:-}"),
+      "requests_per_second": $(json_optional_number "${RESULT_REQUESTS_PER_SECOND:-}"),
+      "generation_tokens_per_second": $(json_optional_number "${RESULT_GENERATION_TOKENS_PER_SECOND:-}")
+    },
+    "queue": {
+      "peak_waiting_requests": $(json_optional_number "${RESULT_PEAK_WAITING_REQUESTS:-}"),
+      "peak_running_requests": $(json_optional_number "${RESULT_PEAK_RUNNING_REQUESTS:-}"),
+      "peak_active_requests": $(json_optional_number "${RESULT_PEAK_ACTIVE_REQUESTS:-}")
+    },
+    "gpu": {
+      "average_gpu_utilization_percent": $(json_optional_number "${RESULT_AVERAGE_GPU_UTILIZATION_PERCENT:-}"),
+      "max_gpu_utilization_percent": $(json_optional_number "${RESULT_MAX_GPU_UTILIZATION_PERCENT:-}"),
+      "gpu_memory_used_bytes": $(json_optional_number "${RESULT_GPU_MEMORY_USED_BYTES:-}"),
+      "gpu_memory_free_bytes": $(json_optional_number "${RESULT_GPU_MEMORY_FREE_BYTES:-}")
+    },
+    "scaling": {
+      "first_nodeclaim_seconds": $(json_optional_number "${RESULT_FIRST_NODECLAIM_SECONDS:-}"),
+      "first_gpu_node_seconds": $(json_optional_number "${RESULT_FIRST_GPU_NODE_SECONDS:-}"),
+      "model_ready_seconds": $(json_optional_number "${RESULT_MODEL_READY_SECONDS:-}"),
+      "first_successful_completion_seconds": $(json_optional_number "${RESULT_FIRST_SUCCESSFUL_COMPLETION_SECONDS:-}")
+    },
+    "cost": {
+      "estimated_burst_cost_usd": $(json_optional_number "${RESULT_ESTIMATED_BURST_COST_USD:-}"),
+      "cost_per_1000_successful_requests_usd": $(json_optional_number "${RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD:-}"),
+      "cost_per_1m_generated_tokens_usd": $(json_optional_number "${RESULT_COST_PER_1M_GENERATED_TOKENS_USD:-}")
+    }
+  },
+  "notes": [
+    "This report records the workload and serving contract for the selected case.",
+    "Result fields remain null until a live cluster run collects k6, Prometheus, DCGM, Kubernetes, and cost signals."
+  ]
+}
+EOF
+}
+
+default_report_prefix() {
+  local experiment_name=$1
+  local case_id=$2
+  local profile_id=$3
+  local timestamp=$4
+
+  printf '%s/experiment-%s-%s-%s-%s' "${REPORTS_DIR}" "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}"
+}
+
+write_report_files() {
+  local experiment_name=$1
+  local case_id=$2
+  local profile_id=$3
+  local report_path=$4
+  local json_report_path=$5
+  local generated_at=$6
+
+  mkdir -p "$(dirname "${report_path}")"
+  mkdir -p "$(dirname "${json_report_path}")"
+
+  render_report_markdown "${experiment_name}" "${case_id}" "${profile_id}" "${generated_at}" > "${report_path}"
+  render_report_json "${experiment_name}" "${case_id}" "${profile_id}" "${generated_at}" > "${json_report_path}"
+}
+
+parse_k6_summary_log() {
+  local log_path=$1
+  local in_summary=0
+  local key
+  local value
+
+  RESULT_COMPLETED_REQUESTS=""
+  RESULT_FAILED_REQUESTS=""
+  RESULT_P50_REQUEST_LATENCY_SECONDS=""
+  RESULT_P95_REQUEST_LATENCY_SECONDS=""
+  RESULT_P99_REQUEST_LATENCY_SECONDS=""
+  RESULT_REQUESTS_PER_SECOND=""
+
+  while IFS= read -r line; do
+    case "${line}" in
+      GPU_LAB_K6_SUMMARY_BEGIN)
+        in_summary=1
+        continue
+        ;;
+      GPU_LAB_K6_SUMMARY_END)
+        in_summary=0
+        continue
+        ;;
+    esac
+
+    if [[ "${in_summary}" != "1" || "${line}" != *=* ]]; then
+      continue
+    fi
+
+    key=${line%%=*}
+    value=${line#*=}
+    case "${key}" in
+      completed_requests)
+        RESULT_COMPLETED_REQUESTS=${value}
+        ;;
+      failed_requests)
+        RESULT_FAILED_REQUESTS=${value}
+        ;;
+      p50_request_latency_seconds)
+        RESULT_P50_REQUEST_LATENCY_SECONDS=${value}
+        ;;
+      p95_request_latency_seconds)
+        RESULT_P95_REQUEST_LATENCY_SECONDS=${value}
+        ;;
+      p99_request_latency_seconds)
+        RESULT_P99_REQUEST_LATENCY_SECONDS=${value}
+        ;;
+      requests_per_second)
+        RESULT_REQUESTS_PER_SECOND=${value}
+        ;;
+    esac
+  done < "${log_path}"
+}
+
+detect_vllm_oom_events() {
+  local reasons
+  local count
+
+  reasons=$(kubectl get pods \
+    -n "${APP_NAMESPACE}" \
+    -l "app=${GPU_INFERENCE_DEPLOYMENT_NAME}" \
+    -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.state.terminated.reason}{"\n"}{.lastState.terminated.reason}{"\n"}{end}{end}' 2>/dev/null || true)
+
+  if [[ -z "${reasons}" ]]; then
+    return 0
+  fi
+
+  count=$(printf '%s\n' "${reasons}" | awk '$0 == "OOMKilled" { count++ } END { print count + 0 }')
+  RESULT_OOM_EVENTS=${count}
+}
+
+run_experiment_case() {
+  local experiment_name=$1
+  local case_id=$2
+  local profile_id=$3
+  local report_path=$4
+  local json_report_path=$5
+  local preserve_serving=$6
+  local preserve_load=$7
+  local serving_manifest
+  local load_manifest
+  local k6_log_path
+  local job_name
+  local generated_at
+  local job_status
+
+  require_commands kubectl
+  require_experiment "${experiment_name}"
+  load_case "${experiment_name}" "${case_id}"
+  load_serving_profile "${experiment_name}" "${profile_id}"
+  validate_case_profile_compatibility
+
+  generated_at=$(utc_timestamp)
+  job_name=$(experiment_job_name "${experiment_name}" "${CASE_ID}")
+  serving_manifest=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-experiment-serving.XXXXXX")
+  load_manifest=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-experiment-load.XXXXXX")
+  k6_log_path="${json_report_path%.json}.k6.log"
+
+  render_serving_manifest "${experiment_name}" "${profile_id}" > "${serving_manifest}"
+  render_load_manifest "${experiment_name}" "${case_id}" > "${load_manifest}"
+
+  printf 'Applying service manifest: %s\n' "${GPU_INFERENCE_SERVICE_MANIFEST}"
+  kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}"
+
+  printf 'Applying serving profile %s/%s\n' "${experiment_name}" "${profile_id}"
+  kubectl apply -f "${serving_manifest}"
+  kubectl rollout status "deployment/${GPU_INFERENCE_DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" --timeout=20m
+
+  printf 'Applying load case %s/%s\n' "${experiment_name}" "${CASE_ID}"
+  kubectl apply -f "${load_manifest}"
+
+  set +e
+  wait_for_job_completion "${APP_NAMESPACE}" "${job_name}" "${EVALUATE_LOAD_TIMEOUT_SECONDS}"
+  job_status=$?
+  set -e
+
+  mkdir -p "$(dirname "${k6_log_path}")"
+  kubectl logs -n "${APP_NAMESPACE}" "job/${job_name}" > "${k6_log_path}" 2>/dev/null || true
+  if [[ -s "${k6_log_path}" ]]; then
+    parse_k6_summary_log "${k6_log_path}"
+  fi
+  detect_vllm_oom_events
+
+  if [[ "${job_status}" == "0" ]]; then
+    RUN_STATUS="complete"
+  else
+    RUN_STATUS="failed"
+  fi
+  RUN_SOURCE="scripts/experiment run"
+
+  write_report_files "${experiment_name}" "${CASE_ID}" "${PROFILE_ID}" "${report_path}" "${json_report_path}" "${generated_at}"
+
+  if [[ "${preserve_load}" != "1" ]]; then
+    kubectl delete -f "${load_manifest}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+
+  if [[ "${preserve_serving}" != "1" ]]; then
+    kubectl delete -f "${serving_manifest}" --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+
+  rm -f "${serving_manifest}" "${load_manifest}" || true
+
+  printf 'Experiment run status: %s\n' "${RUN_STATUS}"
+  printf 'K6 log: %s\n' "${k6_log_path}"
+  printf 'Markdown report: %s\n' "${report_path}"
+  printf 'JSON report: %s\n' "${json_report_path}"
+
+  return "${job_status}"
+}
+
+render_load_command() {
+  local experiment_name=""
+  local case_id=""
+  local output_path=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --case)
+        case_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --output)
+        output_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "render-load requires --experiment"
+  fi
+
+  if [[ -z "${case_id}" ]]; then
+    die "render-load requires --case"
+  fi
+
+  if [[ -n "${output_path}" ]]; then
+    render_load_manifest "${experiment_name}" "${case_id}" > "${output_path}"
+    printf 'Rendered load manifest: %s\n' "${output_path}"
+  else
+    render_load_manifest "${experiment_name}" "${case_id}"
+  fi
+}
+
+render_report_command() {
+  local experiment_name=""
+  local case_id=""
+  local profile_id=""
+  local report_path=""
+  local json_report_path=""
+  local timestamp
+  local generated_at
+  local report_prefix
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --case)
+        case_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --profile)
+        profile_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --report)
+        report_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --json-report)
+        json_report_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "render-report requires --experiment"
+  fi
+
+  if [[ -z "${case_id}" ]]; then
+    die "render-report requires --case"
+  fi
+
+  if [[ -z "${profile_id}" ]]; then
+    die "render-report requires --profile"
+  fi
+
+  timestamp=$(date +%Y%m%d-%H%M%S)
+  generated_at=$(utc_timestamp)
+
+  if [[ -z "${report_path}" || -z "${json_report_path}" ]]; then
+    report_prefix=$(default_report_prefix "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}")
+    if [[ -z "${report_path}" ]]; then
+      report_path="${report_prefix}.md"
+    fi
+    if [[ -z "${json_report_path}" ]]; then
+      json_report_path="${report_prefix}.json"
+    fi
+  fi
+
+  write_report_files "${experiment_name}" "${case_id}" "${profile_id}" "${report_path}" "${json_report_path}" "${generated_at}"
+  printf 'Rendered Markdown report: %s\n' "${report_path}"
+  printf 'Rendered JSON report: %s\n' "${json_report_path}"
+}
+
+run_command() {
+  local experiment_name=""
+  local case_id=""
+  local profile_id=""
+  local report_path=""
+  local json_report_path=""
+  local preserve_serving=0
+  local preserve_load=0
+  local timestamp
+  local report_prefix
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --case)
+        case_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --profile)
+        profile_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --report)
+        report_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --json-report)
+        json_report_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --preserve-serving)
+        preserve_serving=1
+        shift
+        ;;
+      --preserve-load)
+        preserve_load=1
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "run requires --experiment"
+  fi
+
+  if [[ -z "${case_id}" ]]; then
+    die "run requires --case"
+  fi
+
+  if [[ -z "${profile_id}" ]]; then
+    die "run requires --profile"
+  fi
+
+  timestamp=$(date +%Y%m%d-%H%M%S)
+  if [[ -z "${report_path}" || -z "${json_report_path}" ]]; then
+    report_prefix=$(default_report_prefix "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}")
+    if [[ -z "${report_path}" ]]; then
+      report_path="${report_prefix}.md"
+    fi
+    if [[ -z "${json_report_path}" ]]; then
+      json_report_path="${report_prefix}.json"
+    fi
+  fi
+
+  run_experiment_case "${experiment_name}" "${case_id}" "${profile_id}" "${report_path}" "${json_report_path}" "${preserve_serving}" "${preserve_load}"
+}
+
+render_serving_command() {
+  local experiment_name=""
+  local profile_id=""
+  local output_path=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --profile)
+        profile_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --output)
+        output_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "render-serving requires --experiment"
+  fi
+
+  if [[ -z "${profile_id}" ]]; then
+    die "render-serving requires --profile"
+  fi
+
+  if [[ -n "${output_path}" ]]; then
+    render_serving_manifest "${experiment_name}" "${profile_id}" > "${output_path}"
+    printf 'Rendered serving manifest: %s\n' "${output_path}"
+  else
+    render_serving_manifest "${experiment_name}" "${profile_id}"
+  fi
+}
+
+main() {
+  local command=${1-}
+
+  case "${command}" in
+    list)
+      shift
+      if [[ $# -ne 0 ]]; then
+        die "list does not accept arguments"
+      fi
+      list_experiments
+      ;;
+    show)
+      shift
+      if [[ $# -ne 1 ]]; then
+        die "show requires exactly one experiment name"
+      fi
+      show_experiment "$1"
+      ;;
+    render-load)
+      shift
+      render_load_command "$@"
+      ;;
+    render-serving)
+      shift
+      render_serving_command "$@"
+      ;;
+    render-report)
+      shift
+      render_report_command "$@"
+      ;;
+    run)
+      shift
+      run_command "$@"
+      ;;
+    -h|--help|"")
+      usage
+      ;;
+    *)
+      die "Unknown command: ${command}"
+      ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,4 @@
+case_id,prompt_token_target,max_tokens,start_rate,target_rate,ramp_up_duration,steady_duration,ramp_down_duration,pre_allocated_vus,max_vus,timeout_seconds,description
+prompt-512-output-100,512,100,1,6,2m,8m,2m,96,256,180,short prompt baseline
+prompt-2048-output-200,2048,200,1,4,2m,8m,2m,96,256,240,medium prompt pressure
+prompt-8192-output-300,8192,300,1,2,2m,8m,2m,128,384,300,long prompt kv-cache pressure

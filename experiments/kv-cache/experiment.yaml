@@ -1,0 +1,44 @@
+name: kv-cache
+title: KV Cache Vs Concurrency
+status: scaffolded
+owner: local
+
+question: How much stable concurrency is lost as prompt context grows and KV-cache memory pressure increases?
+
+serving_profile:
+  model: Qwen/Qwen2.5-0.5B-Instruct
+  served_model_name: qwen2.5-0.5b
+  vllm_image: vllm/vllm-openai:v0.9.0
+  baseline_max_model_len: 2048
+  required_max_model_len_for_full_sweep: 8192
+  gpu_memory_utilization: 0.85
+  notes:
+    - The 8192-token case requires a long-context serving profile before it can run.
+    - Slice 2 will add serving-profile rendering for this requirement.
+
+workload:
+  generator: k6
+  endpoint: /v1/completions
+  cases_file: cases.csv
+  serving_profiles_file: serving-profiles.csv
+  prompt_strategy: approximate-token-target
+  output_strategy: max_tokens
+
+metrics:
+  required:
+    - max_stable_concurrency
+    - request_failures
+    - oom_events
+    - p95_request_latency_seconds
+    - p99_request_latency_seconds
+    - average_completed_requests_per_second
+    - average_generation_tokens_per_second
+    - average_gpu_utilization_percent
+    - max_gpu_utilization_percent
+    - gpu_memory_used_bytes
+    - gpu_memory_free_bytes
+
+artifacts:
+  readme: README.md
+  results: results.md
+  graphs_dir: graphs
