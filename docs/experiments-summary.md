@@ -12,6 +12,7 @@ belong under `experiments/<name>/`.
 | Prefill vs decode timing | scaffolded with streaming runner | How do long-prompt/short-output and short-prompt/long-output requests shift TTFT and decode timing? | `experiments/prefill-decode/` |
 | Batching scheduler tradeoffs | scaffolded with scheduler profiles | How do explicit vLLM scheduler limits trade throughput for p95/p99 latency? | `experiments/batching/` |
 | Request pattern utilization | scaffolded with mixed request shapes | How do steady, burst, uneven-size, and spike-to-zero traffic patterns affect GPU occupancy? | `experiments/request-patterns/` |
+| Autoscaling and queueing behavior | scaffolded with direct and queued client policies | How much traffic must be buffered while GPU capacity and model readiness catch up? | `experiments/autoscaling/` |
 
 ## Reading Results
 
@@ -29,9 +30,10 @@ Each completed experiment should summarize:
 
 ## Current State
 
-The first seven implementation slices add the catalog, local load-job renderer,
+The first eight implementation slices add the catalog, local load-job renderer,
 serving-profile renderer, report scaffold contract, a live one-case load
 runner, a streaming runner for prefill/decode timing, and a batching experiment
 with explicit scheduler-profile comparison. Slice seven adds request-pattern
-cases plus weighted request-shape rendering for mixed-size traffic. No
+cases plus weighted request-shape rendering for mixed-size traffic. Slice eight
+adds autoscaling queueing cases with direct and queued client policies. No
 production results have been recorded yet.

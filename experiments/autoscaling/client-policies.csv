@@ -1,0 +1,5 @@
+case_id,policy_id,mode,executor,buffer_capacity_requests,max_queue_wait_seconds,description
+burst-direct,direct,direct,ramping-arrival-rate,0,0,open-loop clients submit arrivals immediately
+burst-queued,bounded-queue,queued,ramping-vus,240,60,closed-loop clients approximate a bounded queue while capacity scales
+spike-direct,direct,direct,ramping-arrival-rate,0,0,open-loop spike submits arrivals immediately
+spike-queued,bounded-queue,queued,ramping-vus,200,60,closed-loop spike approximates queued admission while capacity scales

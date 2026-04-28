@@ -1,0 +1,5 @@
+case_id,prompt_token_target,max_tokens,start_rate,target_rate,ramp_up_duration,steady_duration,ramp_down_duration,pre_allocated_vus,max_vus,timeout_seconds,description
+burst-direct,512,128,0,24,15s,2m,30s,64,256,180,open-loop overloaded burst that exposes request drops while capacity scales
+burst-queued,512,128,1,24,15s,2m,30s,64,256,180,closed-loop burst that approximates bounded client backpressure
+spike-direct,512,128,0,20,10s,90s,10s,64,256,180,open-loop spike to zero for provisioning and cooldown timing
+spike-queued,512,128,1,20,10s,90s,10s,64,256,180,closed-loop spike to zero with bounded queued admission

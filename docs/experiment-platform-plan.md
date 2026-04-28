@@ -228,7 +228,7 @@ Notes:
 
 ## Slice 8 - Autoscaling And Queueing Behavior
 
-Status: planned.
+Status: implemented.
 
 Purpose:
 
@@ -240,12 +240,27 @@ Implementation:
 - split scale-up into NodeClaim creation, node Ready, pod scheduled, container
   started, model Ready, and first successful completion
 - compare direct client pressure with queued/backpressured behavior
+- add `experiments/autoscaling/` with direct and queued versions of overloaded
+  burst and spike-to-zero cases
+- add optional `client-policies.csv` support so load rendering can preserve
+  direct versus bounded-queue client behavior
+- render open-loop direct pressure with k6 `ramping-arrival-rate` and
+  backpressure-style queued pressure with k6 `ramping-vus`
+- add report fields for dropped client iterations, buffering required, failure
+  attribution, pod scheduled time, and container started time
 
 Acceptance criteria:
 
 - burst failures are attributed to provisioning delay, queue limits, or serving
   saturation
 - reports can state how much buffering would have been required
+
+Notes:
+
+- The queued cases are a controlled closed-loop approximation of backpressure,
+  not a production queue implementation. Live cluster runs still need
+  Prometheus/Kubernetes rollups to fill the scale-up timeline and result
+  attribution fields.
 
 ## Slice 9 - Cost Per Useful Work
 

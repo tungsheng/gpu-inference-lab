@@ -50,6 +50,24 @@
             "additionalProperties": false
           }
         },
+        "client_policy": {
+          "type": "object",
+          "required": [
+            "id",
+            "mode",
+            "executor",
+            "buffer_capacity_requests",
+            "max_queue_wait_seconds"
+          ],
+          "properties": {
+            "id": { "type": "string" },
+            "mode": { "type": "string" },
+            "executor": { "type": "string" },
+            "buffer_capacity_requests": { "type": "integer" },
+            "max_queue_wait_seconds": { "type": "integer" }
+          },
+          "additionalProperties": false
+        },
         "arrival": {
           "type": "object",
           "required": [
@@ -154,7 +172,10 @@
           "properties": {
             "peak_waiting_requests": { "type": ["number", "null"] },
             "peak_running_requests": { "type": ["number", "null"] },
-            "peak_active_requests": { "type": ["number", "null"] }
+            "peak_active_requests": { "type": ["number", "null"] },
+            "dropped_iterations": { "type": ["number", "null"] },
+            "buffering_required_requests": { "type": ["number", "null"] },
+            "failure_attribution": { "type": ["string", "null"] }
           },
           "additionalProperties": false
         },
@@ -173,6 +194,8 @@
           "properties": {
             "first_nodeclaim_seconds": { "type": ["number", "null"] },
             "first_gpu_node_seconds": { "type": ["number", "null"] },
+            "pod_scheduled_seconds": { "type": ["number", "null"] },
+            "container_started_seconds": { "type": ["number", "null"] },
             "model_ready_seconds": { "type": ["number", "null"] },
             "first_successful_completion_seconds": { "type": ["number", "null"] }
           },

@@ -1,14 +1,11 @@
-# Template for experiment metadata.
-#
-# Keep experiment-specific workload cases in a sibling cases.csv file so shell
-# tooling can render jobs without adding a YAML parser dependency.
+# Controlled autoscaling experiment for burst queueing behavior.
 
-name: example-experiment
-title: Example Experiment
-status: planned
+name: autoscaling
+title: Autoscaling And Queueing Behavior
+status: scaffolded
 owner: local
 
-question: What systems tradeoff does this experiment make visible?
+question: How much burst traffic is lost or delayed while Karpenter and vLLM capacity are still coming online?
 
 serving_profile:
   model: Qwen/Qwen2.5-0.5B-Instruct
@@ -17,13 +14,12 @@ serving_profile:
   max_model_len: 2048
   gpu_memory_utilization: 0.85
   notes:
-    - Override these values only when the experiment requires it.
+    - Run direct and queued cases with the same serving profile before changing HPA or Karpenter settings.
 
 workload:
   generator: k6
   endpoint: /v1/completions
   cases_file: cases.csv
-  request_shapes_file: request-shapes.csv
   client_policies_file: client-policies.csv
   serving_profiles_file: serving-profiles.csv
   prompt_strategy: approximate-token-target
@@ -34,20 +30,26 @@ metrics:
     - p95_request_latency_seconds
     - p99_request_latency_seconds
   serving:
-    - p95_ttft_seconds
     - requests_per_second
     - generation_tokens_per_second
     - peak_waiting_requests
     - peak_running_requests
     - peak_active_requests
+    - dropped_iterations
+    - buffering_required_requests
+    - failure_attribution
+  scaling:
+    - first_nodeclaim_seconds
+    - first_gpu_node_seconds
+    - pod_scheduled_seconds
+    - container_started_seconds
+    - model_ready_seconds
+    - first_successful_completion_seconds
   gpu:
     - average_gpu_utilization_percent
     - max_gpu_utilization_percent
     - gpu_memory_used_bytes
     - gpu_memory_free_bytes
-  cost:
-    - cost_per_1000_successful_requests
-    - cost_per_1m_generated_tokens
 
 artifacts:
   readme: README.md

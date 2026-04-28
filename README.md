@@ -65,7 +65,8 @@ EKS cluster
   lightweight `gpu-warm-placeholder` deployment
 - An experiment catalog under `experiments/` for KV-cache, long-context,
   prefill/decode timing, batching scheduler tradeoffs, request-pattern
-  utilization, and future cost and failure-injection work
+  utilization, autoscaling queueing behavior, and future cost and
+  failure-injection work
 
 ## Quick Start
 
@@ -97,6 +98,10 @@ These commands do not require AWS access or a live Kubernetes cluster:
   --experiment request-patterns \
   --case uneven-size-mix \
   --output /tmp/request-patterns-uneven-size-mix.yaml
+./scripts/experiment render-load \
+  --experiment autoscaling \
+  --case burst-queued \
+  --output /tmp/autoscaling-burst-queued.yaml
 ./scripts/experiment render-report \
   --experiment kv-cache \
   --case prompt-8192-output-300 \
@@ -162,6 +167,10 @@ Run a live experiment case:
   --experiment request-patterns \
   --case steady-small \
   --profile default
+./scripts/experiment run \
+  --experiment autoscaling \
+  --case burst-direct \
+  --profile default
 ```
 
 Tear everything down:
@@ -201,8 +210,9 @@ Tear everything down:
   renders local Kubernetes manifests plus Markdown/JSON report scaffolds, and
   can run one live load or streaming case/profile at a time against a
   configured cluster. This is the front door for KV-cache, prefill/decode,
-  batching scheduler tradeoffs, request-pattern utilization, and future cost,
-  failure-injection, and multi-model experiments.
+  batching scheduler tradeoffs, request-pattern utilization, autoscaling
+  queueing behavior, and future cost, failure-injection, and multi-model
+  experiments.
 - `./scripts/down` removes runtime resources, observability, GPU capacity
   definitions, controllers, and Terraform-managed infrastructure. The optional
   `--cleanup-orphan-enis` flag retries one failed `terraform destroy` after

@@ -83,6 +83,11 @@ experiment_request_shapes_path() {
   printf '%s/request-shapes.csv\n' "$(experiment_dir "${experiment_name}")"
 }
 
+experiment_client_policies_path() {
+  local experiment_name=$1
+  printf '%s/client-policies.csv\n' "$(experiment_dir "${experiment_name}")"
+}
+
 require_experiment() {
   local experiment_name=$1
   local metadata_path
@@ -134,6 +139,7 @@ show_experiment() {
   local cases_path
   local serving_profiles_path
   local request_shapes_path
+  local client_policies_path
 
   require_experiment "${experiment_name}"
 
@@ -141,6 +147,7 @@ show_experiment() {
   cases_path=$(experiment_cases_path "${experiment_name}")
   serving_profiles_path=$(experiment_serving_profiles_path "${experiment_name}")
   request_shapes_path=$(experiment_request_shapes_path "${experiment_name}")
+  client_policies_path=$(experiment_client_policies_path "${experiment_name}")
 
   printf 'Experiment: %s\n' "${experiment_name}"
   printf 'Title: %s\n' "$(experiment_title "${experiment_name}")"
@@ -164,6 +171,16 @@ show_experiment() {
     ' "${request_shapes_path}"
   fi
 
+  if [[ -f "${client_policies_path}" ]]; then
+    printf 'Client policies:\n'
+    awk -F',' '
+      NR == 1 { next }
+      NF > 0 && $1 !~ /^#/ {
+        printf "  - %s/%s: mode=%s executor=%s buffer_capacity=%s max_queue_wait=%ss\n", $1, $2, $3, $4, $5, $6
+      }
+    ' "${client_policies_path}"
+  fi
+
   if [[ -f "${serving_profiles_path}" ]]; then
     printf 'Serving profiles:\n'
     awk -F',' '
@@ -184,6 +201,15 @@ require_positive_integer() {
   local label=$2
 
   if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
+    die "Invalid ${label}: ${value}"
+  fi
+}
+
+require_non_negative_integer() {
+  local value=$1
+  local label=$2
+
+  if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
     die "Invalid ${label}: ${value}"
   fi
 }
@@ -249,6 +275,19 @@ json_optional_number() {
     printf 'null'
   else
     printf '%s' "${value}"
+  fi
+}
+
+json_optional_string() {
+  local value=${1:-}
+
+  if [[ -z "${value}" ]]; then
+    printf 'null'
+  else
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//$'\n'/\\n}
+    printf '"%s"' "${value}"
   fi
 }
 
@@ -365,6 +404,51 @@ load_serving_profile() {
   done < "${profiles_path}"
 
   die "Unknown serving profile ${requested_profile_id} for experiment ${experiment_name}"
+}
+
+load_client_policy() {
+  local experiment_name=$1
+  local requested_case_id=$2
+  local policies_path
+  local row_case_id
+  local row_policy_id
+
+  policies_path=$(experiment_client_policies_path "${experiment_name}")
+
+  CLIENT_POLICY_ID="direct"
+  CLIENT_MODE="direct"
+  CLIENT_EXECUTOR="ramping-arrival-rate"
+  CLIENT_BUFFER_CAPACITY_REQUESTS="0"
+  CLIENT_MAX_QUEUE_WAIT_SECONDS="0"
+  CLIENT_POLICY_DESCRIPTION="default direct open-loop client policy"
+
+  if [[ ! -f "${policies_path}" ]]; then
+    return 0
+  fi
+
+  while IFS=',' read -r row_case_id row_policy_id CLIENT_MODE CLIENT_EXECUTOR CLIENT_BUFFER_CAPACITY_REQUESTS CLIENT_MAX_QUEUE_WAIT_SECONDS CLIENT_POLICY_DESCRIPTION; do
+    if [[ -z "${row_case_id}" || "${row_case_id}" == "case_id" || "${row_case_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "${row_case_id}" == "${requested_case_id}" ]]; then
+      CLIENT_POLICY_ID=${row_policy_id}
+      require_name "${CLIENT_POLICY_ID}" "client policy id"
+      require_name "${CLIENT_MODE}" "client policy mode"
+      case "${CLIENT_EXECUTOR}" in
+        ramping-arrival-rate|ramping-vus)
+          ;;
+        *)
+          die "Invalid client executor: ${CLIENT_EXECUTOR}"
+          ;;
+      esac
+      require_non_negative_integer "${CLIENT_BUFFER_CAPACITY_REQUESTS}" "client buffer capacity"
+      require_non_negative_integer "${CLIENT_MAX_QUEUE_WAIT_SECONDS}" "client max queue wait seconds"
+      return 0
+    fi
+  done < "${policies_path}"
+
+  return 0
 }
 
 render_request_shapes_js() {
@@ -537,6 +621,45 @@ validate_case_profile_compatibility() {
   fi
 }
 
+render_k6_scenario() {
+  case "${CLIENT_EXECUTOR}" in
+    ramping-arrival-rate)
+      cat <<EOF
+        inference_burst: {
+          executor: "ramping-arrival-rate",
+          startRate: ${START_RATE},
+          timeUnit: "1s",
+          preAllocatedVUs: ${PRE_ALLOCATED_VUS},
+          maxVUs: ${MAX_VUS},
+          stages: [
+            { duration: "${RAMP_UP_DURATION}", target: ${TARGET_RATE} },
+            { duration: "${STEADY_DURATION}", target: ${TARGET_RATE} },
+            { duration: "${RAMP_DOWN_DURATION}", target: 0 },
+          ],
+        },
+EOF
+      ;;
+    ramping-vus)
+      require_non_negative_integer "${START_RATE}" "ramping-vus start VUs"
+      require_non_negative_integer "${TARGET_RATE}" "ramping-vus target VUs"
+      cat <<EOF
+        inference_burst: {
+          executor: "ramping-vus",
+          startVUs: ${START_RATE},
+          stages: [
+            { duration: "${RAMP_UP_DURATION}", target: ${TARGET_RATE} },
+            { duration: "${STEADY_DURATION}", target: ${TARGET_RATE} },
+            { duration: "${RAMP_DOWN_DURATION}", target: 0 },
+          ],
+        },
+EOF
+      ;;
+    *)
+      die "Invalid client executor: ${CLIENT_EXECUTOR}"
+      ;;
+  esac
+}
+
 render_optional_vllm_scheduler_args() {
   if [[ -n "${MAX_NUM_SEQS}" ]]; then
     cat <<EOF
@@ -661,6 +784,7 @@ render_load_manifest() {
 
   require_experiment "${experiment_name}"
   load_case "${experiment_name}" "${case_id}"
+  load_client_policy "${experiment_name}" "${CASE_ID}"
 
   job_name="${experiment_name}-${CASE_ID}"
   configmap_name="${job_name}-load"
@@ -687,6 +811,10 @@ data:
     const promptTokenTarget = ${PROMPT_TOKEN_TARGET};
     const maxTokens = ${MAX_TOKENS};
     const timeoutSeconds = ${TIMEOUT_SECONDS};
+    const clientPolicy = "${CLIENT_POLICY_ID}";
+    const clientMode = "${CLIENT_MODE}";
+    const bufferCapacityRequests = ${CLIENT_BUFFER_CAPACITY_REQUESTS};
+    const maxQueueWaitSeconds = ${CLIENT_MAX_QUEUE_WAIT_SECONDS};
     const requestShapes = ${request_shapes_js};
     const completionTokens = new Counter("completion_tokens");
 
@@ -694,20 +822,11 @@ data:
       tags: {
         experiment: experimentName,
         case_id: caseId,
+        client_policy: clientPolicy,
+        client_mode: clientMode,
       },
       scenarios: {
-        inference_burst: {
-          executor: "ramping-arrival-rate",
-          startRate: ${START_RATE},
-          timeUnit: "1s",
-          preAllocatedVUs: ${PRE_ALLOCATED_VUS},
-          maxVUs: ${MAX_VUS},
-          stages: [
-            { duration: "${RAMP_UP_DURATION}", target: ${TARGET_RATE} },
-            { duration: "${STEADY_DURATION}", target: ${TARGET_RATE} },
-            { duration: "${RAMP_DOWN_DURATION}", target: 0 },
-          ],
-        },
+$(render_k6_scenario)
       },
       thresholds: {
         http_req_failed: ["rate<0.05"],
@@ -802,6 +921,7 @@ data:
     export function handleSummary(data) {
       const completedRequests = metricValue(data, "http_reqs", "count");
       const failedRate = metricValue(data, "http_req_failed", "rate");
+      const droppedIterations = metricValue(data, "dropped_iterations", "count");
       const generatedTokensPerSecond = metricValue(data, "completion_tokens", "rate");
       const failedRequests = completedRequests === "" || failedRate === ""
         ? ""
@@ -812,6 +932,8 @@ data:
           "GPU_LAB_K6_SUMMARY_BEGIN",
           "completed_requests=" + completedRequests,
           "failed_requests=" + failedRequests,
+          "dropped_iterations=" + droppedIterations,
+          "buffering_required_requests=" + droppedIterations,
           "p50_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "med")),
           "p95_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "p(95)")),
           "p99_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "p(99)")),
@@ -1076,6 +1198,10 @@ render_report_markdown() {
   local run_status="${RUN_STATUS:-pending}"
   local run_source="${RUN_SOURCE:-scripts/experiment render-report}"
   local request_shapes_display_value
+  local load_unit="req/s"
+  local dropped_iterations_display
+  local buffering_required_display
+  local failure_attribution_display
   local completed_requests_display
   local failed_requests_display
   local oom_events_display
@@ -1097,6 +1223,8 @@ render_report_markdown() {
   local gpu_memory_free_display
   local first_nodeclaim_display
   local first_gpu_node_display
+  local pod_scheduled_display
+  local container_started_display
   local model_ready_display
   local first_successful_completion_display
   local estimated_burst_cost_display
@@ -1105,10 +1233,14 @@ render_report_markdown() {
 
   require_experiment "${experiment_name}"
   load_case "${experiment_name}" "${case_id}"
+  load_client_policy "${experiment_name}" "${CASE_ID}"
   load_serving_profile "${experiment_name}" "${profile_id}"
 
   experiment_title_value=$(experiment_title "${experiment_name}")
   request_shapes_display_value=$(request_shapes_display "${experiment_name}")
+  if [[ "${CLIENT_EXECUTOR}" == "ramping-vus" ]]; then
+    load_unit="VUs"
+  fi
   if [[ -n "${MAX_NUM_SEQS}" ]]; then
     max_num_seqs_display=${MAX_NUM_SEQS}
   fi
@@ -1119,6 +1251,9 @@ render_report_markdown() {
   completed_requests_display=$(display_optional_metric "${RESULT_COMPLETED_REQUESTS:-}")
   failed_requests_display=$(display_optional_metric "${RESULT_FAILED_REQUESTS:-}")
   oom_events_display=$(display_optional_metric "${RESULT_OOM_EVENTS:-}")
+  dropped_iterations_display=$(display_optional_metric "${RESULT_DROPPED_ITERATIONS:-}")
+  buffering_required_display=$(display_optional_metric "${RESULT_BUFFERING_REQUIRED_REQUESTS:-}")
+  failure_attribution_display=$(display_optional_metric "${RESULT_FAILURE_ATTRIBUTION:-}")
   p50_latency_display=$(display_optional_metric "${RESULT_P50_REQUEST_LATENCY_SECONDS:-}")
   p95_latency_display=$(display_optional_metric "${RESULT_P95_REQUEST_LATENCY_SECONDS:-}")
   p99_latency_display=$(display_optional_metric "${RESULT_P99_REQUEST_LATENCY_SECONDS:-}")
@@ -1137,6 +1272,8 @@ render_report_markdown() {
   gpu_memory_free_display=$(display_optional_metric "${RESULT_GPU_MEMORY_FREE_BYTES:-}")
   first_nodeclaim_display=$(display_optional_metric "${RESULT_FIRST_NODECLAIM_SECONDS:-}")
   first_gpu_node_display=$(display_optional_metric "${RESULT_FIRST_GPU_NODE_SECONDS:-}")
+  pod_scheduled_display=$(display_optional_metric "${RESULT_POD_SCHEDULED_SECONDS:-}")
+  container_started_display=$(display_optional_metric "${RESULT_CONTAINER_STARTED_SECONDS:-}")
   model_ready_display=$(display_optional_metric "${RESULT_MODEL_READY_SECONDS:-}")
   first_successful_completion_display=$(display_optional_metric "${RESULT_FIRST_SUCCESSFUL_COMPLETION_SECONDS:-}")
   estimated_burst_cost_display=$(display_optional_metric "${RESULT_ESTIMATED_BURST_COST_USD:-}")
@@ -1161,8 +1298,13 @@ render_report_markdown() {
 | Prompt token target | ${PROMPT_TOKEN_TARGET} |
 | Max output tokens | ${MAX_TOKENS} |
 | Request shapes | ${request_shapes_display_value} |
-| Start rate | ${START_RATE} req/s |
-| Target rate | ${TARGET_RATE} req/s |
+| Client policy | ${CLIENT_POLICY_ID} |
+| Client mode | ${CLIENT_MODE} |
+| Load executor | ${CLIENT_EXECUTOR} |
+| Buffer capacity | ${CLIENT_BUFFER_CAPACITY_REQUESTS} requests |
+| Max queue wait | ${CLIENT_MAX_QUEUE_WAIT_SECONDS}s |
+| Start load | ${START_RATE} ${load_unit} |
+| Target load | ${TARGET_RATE} ${load_unit} |
 | Ramp up | ${RAMP_UP_DURATION} |
 | Steady duration | ${STEADY_DURATION} |
 | Ramp down | ${RAMP_DOWN_DURATION} |
@@ -1189,6 +1331,9 @@ render_report_markdown() {
 | --- | --- |
 | Completed requests | ${completed_requests_display} |
 | Failed requests | ${failed_requests_display} |
+| Dropped client iterations | ${dropped_iterations_display} |
+| Buffering required | ${buffering_required_display} |
+| Failure attribution | ${failure_attribution_display} |
 | OOM events | ${oom_events_display} |
 | p50 request latency | ${p50_latency_display} |
 | p95 request latency | ${p95_latency_display} |
@@ -1208,6 +1353,8 @@ render_report_markdown() {
 | GPU memory free | ${gpu_memory_free_display} |
 | First NodeClaim | ${first_nodeclaim_display} |
 | First GPU node | ${first_gpu_node_display} |
+| Pod scheduled | ${pod_scheduled_display} |
+| Container started | ${container_started_display} |
 | Model ready | ${model_ready_display} |
 | First successful completion | ${first_successful_completion_display} |
 | Estimated burst cost | ${estimated_burst_cost_display} |
@@ -1236,6 +1383,7 @@ render_report_json() {
 
   require_experiment "${experiment_name}"
   load_case "${experiment_name}" "${case_id}"
+  load_client_policy "${experiment_name}" "${CASE_ID}"
   load_serving_profile "${experiment_name}" "${profile_id}"
 
   experiment_title_value=$(experiment_title "${experiment_name}")
@@ -1255,6 +1403,13 @@ render_report_json() {
     "prompt_token_target": ${PROMPT_TOKEN_TARGET},
     "max_tokens": ${MAX_TOKENS},
     "request_shapes": ${request_shapes_json},
+    "client_policy": {
+      "id": "${CLIENT_POLICY_ID}",
+      "mode": "${CLIENT_MODE}",
+      "executor": "${CLIENT_EXECUTOR}",
+      "buffer_capacity_requests": ${CLIENT_BUFFER_CAPACITY_REQUESTS},
+      "max_queue_wait_seconds": ${CLIENT_MAX_QUEUE_WAIT_SECONDS}
+    },
     "arrival": {
       "start_rate": ${START_RATE},
       "target_rate": ${TARGET_RATE},
@@ -1304,7 +1459,10 @@ render_report_json() {
     "queue": {
       "peak_waiting_requests": $(json_optional_number "${RESULT_PEAK_WAITING_REQUESTS:-}"),
       "peak_running_requests": $(json_optional_number "${RESULT_PEAK_RUNNING_REQUESTS:-}"),
-      "peak_active_requests": $(json_optional_number "${RESULT_PEAK_ACTIVE_REQUESTS:-}")
+      "peak_active_requests": $(json_optional_number "${RESULT_PEAK_ACTIVE_REQUESTS:-}"),
+      "dropped_iterations": $(json_optional_number "${RESULT_DROPPED_ITERATIONS:-}"),
+      "buffering_required_requests": $(json_optional_number "${RESULT_BUFFERING_REQUIRED_REQUESTS:-}"),
+      "failure_attribution": $(json_optional_string "${RESULT_FAILURE_ATTRIBUTION:-}")
     },
     "gpu": {
       "average_gpu_utilization_percent": $(json_optional_number "${RESULT_AVERAGE_GPU_UTILIZATION_PERCENT:-}"),
@@ -1315,6 +1473,8 @@ render_report_json() {
     "scaling": {
       "first_nodeclaim_seconds": $(json_optional_number "${RESULT_FIRST_NODECLAIM_SECONDS:-}"),
       "first_gpu_node_seconds": $(json_optional_number "${RESULT_FIRST_GPU_NODE_SECONDS:-}"),
+      "pod_scheduled_seconds": $(json_optional_number "${RESULT_POD_SCHEDULED_SECONDS:-}"),
+      "container_started_seconds": $(json_optional_number "${RESULT_CONTAINER_STARTED_SECONDS:-}"),
       "model_ready_seconds": $(json_optional_number "${RESULT_MODEL_READY_SECONDS:-}"),
       "first_successful_completion_seconds": $(json_optional_number "${RESULT_FIRST_SUCCESSFUL_COMPLETION_SECONDS:-}")
     },
@@ -1364,6 +1524,9 @@ parse_k6_summary_log() {
 
   RESULT_COMPLETED_REQUESTS=""
   RESULT_FAILED_REQUESTS=""
+  RESULT_DROPPED_ITERATIONS=""
+  RESULT_BUFFERING_REQUIRED_REQUESTS=""
+  RESULT_FAILURE_ATTRIBUTION=""
   RESULT_P50_REQUEST_LATENCY_SECONDS=""
   RESULT_P95_REQUEST_LATENCY_SECONDS=""
   RESULT_P99_REQUEST_LATENCY_SECONDS=""
@@ -1395,6 +1558,12 @@ parse_k6_summary_log() {
       failed_requests)
         RESULT_FAILED_REQUESTS=${value}
         ;;
+      dropped_iterations)
+        RESULT_DROPPED_ITERATIONS=${value}
+        ;;
+      buffering_required_requests)
+        RESULT_BUFFERING_REQUIRED_REQUESTS=${value}
+        ;;
       p50_request_latency_seconds)
         RESULT_P50_REQUEST_LATENCY_SECONDS=${value}
         ;;
@@ -1412,6 +1581,14 @@ parse_k6_summary_log() {
         ;;
     esac
   done < "${log_path}"
+
+  if [[ -n "${RESULT_DROPPED_ITERATIONS}" ]] && awk -v value="${RESULT_DROPPED_ITERATIONS}" 'BEGIN { exit !((value + 0) > 0) }'; then
+    RESULT_FAILURE_ATTRIBUTION="client_queue_limit"
+  elif [[ -n "${RESULT_FAILED_REQUESTS}" ]] && awk -v value="${RESULT_FAILED_REQUESTS}" 'BEGIN { exit !((value + 0) > 0) }'; then
+    RESULT_FAILURE_ATTRIBUTION="serving_or_provisioning"
+  elif [[ -n "${RESULT_COMPLETED_REQUESTS}" ]]; then
+    RESULT_FAILURE_ATTRIBUTION="none"
+  fi
 }
 
 parse_stream_summary_log() {

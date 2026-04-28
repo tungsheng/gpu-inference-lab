@@ -18,6 +18,8 @@ run_experiment_list_test() {
   assert_contains "${COMMAND_OUTPUT}" "Batching Scheduler Tradeoffs" "experiment list should include the batching title"
   assert_contains "${COMMAND_OUTPUT}" "request-patterns" "experiment list should include the request-pattern experiment"
   assert_contains "${COMMAND_OUTPUT}" "Request Pattern Utilization" "experiment list should include the request-pattern title"
+  assert_contains "${COMMAND_OUTPUT}" "autoscaling" "experiment list should include the autoscaling experiment"
+  assert_contains "${COMMAND_OUTPUT}" "Autoscaling And Queueing Behavior" "experiment list should include the autoscaling title"
 }
 
 run_experiment_show_test() {
@@ -72,6 +74,20 @@ run_request_patterns_show_test() {
   assert_contains "${COMMAND_OUTPUT}" "Serving profiles:" "show output should include the shared serving profile"
 }
 
+run_autoscaling_show_test() {
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" show autoscaling
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/experiment show should succeed for autoscaling"
+  assert_contains "${COMMAND_OUTPUT}" "Experiment: autoscaling" "show output should include the autoscaling experiment name"
+  assert_contains "${COMMAND_OUTPUT}" "burst-direct" "show output should include the direct burst case"
+  assert_contains "${COMMAND_OUTPUT}" "burst-queued" "show output should include the queued burst case"
+  assert_contains "${COMMAND_OUTPUT}" "spike-direct" "show output should include the direct spike case"
+  assert_contains "${COMMAND_OUTPUT}" "spike-queued" "show output should include the queued spike case"
+  assert_contains "${COMMAND_OUTPUT}" "Client policies:" "show output should include client policies"
+  assert_contains "${COMMAND_OUTPUT}" "burst-direct/direct: mode=direct executor=ramping-arrival-rate buffer_capacity=0 max_queue_wait=0s" "show output should include the direct client policy"
+  assert_contains "${COMMAND_OUTPUT}" "burst-queued/bounded-queue: mode=queued executor=ramping-vus buffer_capacity=240 max_queue_wait=60s" "show output should include the queued client policy"
+}
+
 run_render_load_test() {
   setup_test_tmpdir
 
@@ -90,13 +106,42 @@ run_render_load_test() {
   assert_contains "${RENDERED_MANIFEST}" "name: kv-cache-prompt-512-output-100" "rendered manifest should name the Job from the experiment and case"
   assert_contains "${RENDERED_MANIFEST}" "const promptTokenTarget = 512;" "rendered manifest should include the prompt token target"
   assert_contains "${RENDERED_MANIFEST}" "const maxTokens = 100;" "rendered manifest should include the output token cap"
+  assert_contains "${RENDERED_MANIFEST}" 'const clientPolicy = "direct";' "rendered manifest should default to the direct client policy"
+  assert_contains "${RENDERED_MANIFEST}" 'executor: "ramping-arrival-rate"' "rendered manifest should default to open-loop arrival rate"
   assert_contains "${RENDERED_MANIFEST}" 'import { Counter } from "k6/metrics";' "rendered manifest should include a token counter"
   assert_contains "${RENDERED_MANIFEST}" 'const completionTokens = new Counter("completion_tokens");' "rendered manifest should track completion tokens"
   assert_contains "${RENDERED_MANIFEST}" "GPU_LAB_K6_SUMMARY_BEGIN" "rendered manifest should emit a parseable k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "p99_request_latency_seconds=" "rendered manifest should include p99 latency in the k6 summary"
+  assert_contains "${RENDERED_MANIFEST}" "dropped_iterations=" "rendered manifest should include dropped iterations in the k6 summary"
+  assert_contains "${RENDERED_MANIFEST}" "buffering_required_requests=" "rendered manifest should include buffering required in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "generation_tokens_per_second=" "rendered manifest should include generated token throughput in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "summaryTrendStats" "rendered manifest should request p95 and p99 k6 summaries"
   assert_contains "${RENDERED_MANIFEST}" "value: http://vllm-openai.app.svc.cluster.local/v1/completions" "rendered manifest should target the in-cluster vLLM service"
+
+  teardown_test_tmpdir
+}
+
+run_render_autoscaling_load_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-load \
+    --experiment autoscaling \
+    --case burst-queued \
+    --output "${TEST_TMPDIR}/autoscaling-burst-queued.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-load should render the queued autoscaling case"
+  assert_file_exists "${TEST_TMPDIR}/autoscaling-burst-queued.yaml" "render-load should write the queued autoscaling manifest"
+
+  AUTOSCALING_MANIFEST=$(cat "${TEST_TMPDIR}/autoscaling-burst-queued.yaml")
+
+  assert_contains "${AUTOSCALING_MANIFEST}" 'const clientPolicy = "bounded-queue";' "queued load manifest should include the bounded queue policy"
+  assert_contains "${AUTOSCALING_MANIFEST}" 'const clientMode = "queued";' "queued load manifest should include the queued client mode"
+  assert_contains "${AUTOSCALING_MANIFEST}" "const bufferCapacityRequests = 240;" "queued load manifest should include buffer capacity metadata"
+  assert_contains "${AUTOSCALING_MANIFEST}" "const maxQueueWaitSeconds = 60;" "queued load manifest should include max queue wait metadata"
+  assert_contains "${AUTOSCALING_MANIFEST}" "client_policy: clientPolicy" "queued load manifest should tag the client policy"
+  assert_contains "${AUTOSCALING_MANIFEST}" 'executor: "ramping-vus"' "queued load manifest should use the closed-loop ramping-vus executor"
+  assert_contains "${AUTOSCALING_MANIFEST}" "startVUs: 1" "queued load manifest should render start VUs from the case"
+  assert_contains "${AUTOSCALING_MANIFEST}" '{ duration: "15s", target: 24 }' "queued load manifest should render target VUs from the case"
 
   teardown_test_tmpdir
 }
@@ -341,6 +386,44 @@ run_render_request_pattern_report_test() {
   teardown_test_tmpdir
 }
 
+run_render_autoscaling_report_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-report \
+    --experiment autoscaling \
+    --case burst-queued \
+    --profile default \
+    --report "${TEST_TMPDIR}/autoscaling-report.md" \
+    --json-report "${TEST_TMPDIR}/autoscaling-report.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-report should render the autoscaling report scaffold"
+  assert_file_exists "${TEST_TMPDIR}/autoscaling-report.md" "render-report should write the autoscaling Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/autoscaling-report.json" "render-report should write the autoscaling JSON report"
+
+  AUTOSCALING_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/autoscaling-report.md")
+  AUTOSCALING_JSON_CONTENT=$(cat "${TEST_TMPDIR}/autoscaling-report.json")
+
+  assert_contains "${AUTOSCALING_REPORT_CONTENT}" "# Autoscaling And Queueing Behavior - burst-queued" "autoscaling report should include the experiment title and case"
+  assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Client policy | bounded-queue |" "autoscaling report should include the bounded queue policy"
+  assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Load executor | ramping-vus |" "autoscaling report should include the queued load executor"
+  assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Buffer capacity | 240 requests |" "autoscaling report should include buffer capacity"
+  assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Start load | 1 VUs |" "autoscaling report should label queued load as VUs"
+  assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Dropped client iterations | n/a |" "autoscaling report should include dropped client iterations"
+  assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Buffering required | n/a |" "autoscaling report should include buffering required"
+  assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Pod scheduled | n/a |" "autoscaling report should include pod scheduling timing"
+  assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"name\": \"autoscaling\"" "autoscaling JSON report should include the experiment name"
+  assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"client_policy\": {" "autoscaling JSON report should include client policy metadata"
+  assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"id\": \"bounded-queue\"" "autoscaling JSON report should include the bounded queue policy id"
+  assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"executor\": \"ramping-vus\"" "autoscaling JSON report should include the queued executor"
+  assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"buffer_capacity_requests\": 240" "autoscaling JSON report should include buffer capacity"
+  assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"buffering_required_requests\": null" "autoscaling JSON report should include buffering required result field"
+  assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"failure_attribution\": null" "autoscaling JSON report should include failure attribution"
+  assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"pod_scheduled_seconds\": null" "autoscaling JSON report should include pod scheduling timing"
+  assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"container_started_seconds\": null" "autoscaling JSON report should include container startup timing"
+
+  teardown_test_tmpdir
+}
+
 run_render_report_default_path_test() {
   setup_test_tmpdir
 
@@ -385,6 +468,8 @@ write_experiment_run_kubectl_stub() {
 "    printf '%s\n' 'GPU_LAB_K6_SUMMARY_BEGIN'" \
 "    printf '%s\n' 'completed_requests=42'" \
 "    printf '%s\n' 'failed_requests=1'" \
+"    printf '%s\n' 'dropped_iterations=3'" \
+"    printf '%s\n' 'buffering_required_requests=3'" \
 "    printf '%s\n' 'p50_request_latency_seconds=0.25'" \
 "    printf '%s\n' 'p95_request_latency_seconds=0.75'" \
 "    printf '%s\n' 'p99_request_latency_seconds=1.5'" \
@@ -434,6 +519,9 @@ run_live_experiment_runner_test() {
   assert_contains "${RUN_JSON_CONTENT}" "\"source\": \"scripts/experiment run\"" "experiment run should record the live runner source"
   assert_contains "${RUN_JSON_CONTENT}" "\"completed_requests\": 42" "experiment run should write completed requests to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"failed_requests\": 1" "experiment run should write failed requests to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"dropped_iterations\": 3" "experiment run should write dropped iterations to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"buffering_required_requests\": 3" "experiment run should write buffering required to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"failure_attribution\": \"client_queue_limit\"" "experiment run should attribute dropped iterations to the client queue limit"
   assert_contains "${RUN_JSON_CONTENT}" "\"oom_events\": null" "experiment run should leave OOM events null when pod status has no termination reason"
   assert_contains "${RUN_JSON_CONTENT}" "\"p95_request_latency_seconds\": 0.75" "experiment run should write p95 latency to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"requests_per_second\": 5.5" "experiment run should write request throughput to JSON"
@@ -564,7 +652,9 @@ run_experiment_show_test
 run_prefill_decode_show_test
 run_batching_show_test
 run_request_patterns_show_test
+run_autoscaling_show_test
 run_render_load_test
+run_render_autoscaling_load_test
 run_render_request_pattern_load_test
 run_render_stream_test
 run_render_unknown_case_test
@@ -575,6 +665,7 @@ run_render_unknown_serving_profile_test
 run_render_report_test
 run_render_batching_report_test
 run_render_request_pattern_report_test
+run_render_autoscaling_report_test
 run_render_report_default_path_test
 run_live_experiment_runner_test
 run_incompatible_case_profile_test
