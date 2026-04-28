@@ -13,6 +13,7 @@ results.
 | `./scripts/evaluate --profile zero-idle` | you want the original baseline experiment | running-request HPA from a true zero-GPU baseline |
 | `./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4` | you want the capacity-aware experiment directly | active-pressure HPA from the same zero-GPU baseline |
 | `./scripts/evaluate --profile zero-idle --resilience spot-unavailable` | you want the first degraded-capacity experiment | spot burst capacity is withdrawn, on-demand fallback is measured, and the report records the fallback outcome plus zones |
+| `./scripts/evaluate --profile zero-idle --resilience spot-interruption` | you want the live resilience drill | the workflow withdraws on-demand before the burst so the second node must land on spot, then interrupts that live spot-backed burst node and records replacement timing plus recovery capacity |
 | `./scripts/evaluate --profile warm-1 --policy compare --active-target 6` | you want the most informative operator readout | sequential running versus active-pressure comparison with one warm on-demand serving node |
 | `./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8` | you want to tune active-pressure capacity instead of just proving it exists | per-target active-pressure experiments plus a recommendation summary |
 | `./scripts/down` | you want a clean teardown | runtime surface, observability, capacity definitions, and Terraform infrastructure are removed |
@@ -42,8 +43,10 @@ After `./scripts/evaluate`:
   `.json`
 - compare runs wrote the two per-policy artifacts plus a compare summary report
 - sweep runs wrote one per-target report pair plus a sweep summary report
-- degraded-capacity runs also recorded the resilience mode, fallback outcome,
-  and GPU availability zones
+- resilience runs also recorded the resilience mode, fallback or recovery
+  outcome, GPU availability zones, and interruption recovery timing when used
+- a late Prometheus/DCGM collection failure wrote a `partial` report instead
+  of failing the completed evaluation run
 - the overall workflow returned profile-specific warm capacity to zero GPU nodes
 
 ## Questions This Repo Can Answer Today
@@ -63,6 +66,8 @@ After `./scripts/evaluate`:
 - What do you gain or pay by keeping one warm GPU node around?
 - What happens when the preferred spot burst path is unavailable before the
   burst starts?
+- What happens when a live spot burst node disappears after scale-out has
+  already happened?
 
 ## Observability And Artifacts
 
@@ -75,8 +80,12 @@ The scripted workflow ships with:
 - DCGM exporter metrics for GPU utilization
 - `docs/reports/*.md` and `docs/reports/*.json` outputs from
   `./scripts/evaluate`
+- partial-report metadata when final Prometheus or DCGM reads are unavailable
+  after workload cleanup
 - Pushgateway experiment metrics labeled by `profile`, `resilience`, `policy`,
   and target
+- experiment dashboard panels for interruption-to-recovery GPU node and
+  interruption-to-recovered-ready timing
 
 ## What To Watch During A Run
 
@@ -102,10 +111,13 @@ intentionally simple:
 
 - queue reporting is derived from waiting depth over request completion rate,
   not a dedicated queue-wait histogram
+- final Prometheus/DCGM reads are best-effort; partial reports keep timeline,
+  cost, and resilience data, but unavailable metric values are `n/a` or `null`
 - the sweep recommendation is still heuristic rather than backed by a dedicated
   queue histogram or full per-GPU capacity model
-- the new resilience path simulates spot scarcity before the burst; it does not
-  yet inject a live spot interruption after the second node is already serving
+- the live interruption path is still synthetic: it deletes the burst
+  `NodeClaim` and withdraws the spot `NodePool`, rather than consuming a
+  cloud-native interruption notice
 
 ## Dev Boundary
 

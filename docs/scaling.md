@@ -59,9 +59,15 @@ This path answers whether the zero-idle story works at all.
 - waits for scale-in and cleanup
 - writes per-policy, compare, or sweep reports with timing, utilization,
   derived queue wait, and cost fields
+- marks reports as `partial` when final Prometheus/DCGM reads fail after the
+  control-loop and cleanup timeline has already completed
 - can also withdraw the preferred spot `NodePool` for the run through
   `./scripts/evaluate --resilience spot-unavailable` and report the resulting
   on-demand fallback path plus GPU node zones
+- can also withdraw the on-demand serving pool before the burst, interrupt the
+  live spot-backed burst node through `./scripts/evaluate --resilience
+  spot-interruption`, and report the replacement timing plus recovered capacity
+  type
 
 This path answers whether the control loop can add capacity fast enough to
 handle bursty inference traffic.
@@ -98,24 +104,23 @@ In compare mode, the workflow restores that warm baseline between the two
 policy runs and then removes it at the very end so the environment still
 returns to zero GPU nodes after reporting.
 
-## Current Resilience Direction
+## Current Resilience Coverage
 
-Milestone 11 has started with a degraded-capacity experiment:
+Milestone 11 now includes both resilience drills:
 
 - `./scripts/evaluate --resilience spot-unavailable` deletes the preferred
-  `gpu-serving-spot` `NodePool` for the run
-- the burst still scales from one to two replicas, but the second GPU node is
-  expected to come from `gpu-serving-ondemand`
-- reports now call out the resilience mode, fallback outcome, and first/second
-  GPU availability zones so capacity scarcity is easier to reason about
+  `gpu-serving-spot` `NodePool` before the run, so the burst has to fall back
+  to `gpu-serving-ondemand`
+- `./scripts/evaluate --resilience spot-interruption` temporarily deletes
+  `gpu-serving-ondemand` after the first replica is ready so the burst node
+  must land on spot, then deletes the live spot-backed burst `NodeClaim`,
+  withdraws the spot pool, restores on-demand, and waits for the second ready
+  replica to recover on replacement capacity
+- reports and the experiment dashboard now call out resilience mode, outcome,
+  first/second/recovery GPU zones, and interruption recovery timing
 
-The next slice inside this milestone is true interruption handling:
-
-- inject a live spot-node loss during the burst instead of only withdrawing the
-  spot pool beforehand
-- measure replacement time and whether the second ready replica recovers on
-  on-demand capacity
-- keep pushing AZ placement and degraded-capacity visibility into the reports
+That moves the repo from a simple capacity demo into a real degraded-capacity
+control-loop experiment.
 
 ## Version Pins
 

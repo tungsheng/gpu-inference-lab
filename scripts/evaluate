@@ -6,7 +6,7 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/_common.sh"
 
-TOTAL_STAGES=10
+TOTAL_STAGES=11
 EVALUATION_PROFILE="zero-idle"
 EVALUATION_POLICY="running"
 EVALUATION_RESILIENCE="healthy"
@@ -29,6 +29,7 @@ WARM_PLACEHOLDER_APPLIED=0
 PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS=0
 PRESERVE_PROFILE_BASELINE=0
 SPOT_NODEPOOL_DISABLED=0
+ONDEMAND_NODEPOOL_DISABLED=0
 
 PUBLIC_INFERENCE_URL=""
 PROMETHEUS_LOCAL_PORT=""
@@ -50,6 +51,7 @@ CURRENT_STAGE_PREFIX=""
 
 EVALUATION_START_TIME=""
 FIRST_NODECLAIM_TIME=""
+FIRST_NODECLAIM_NAME=""
 FIRST_GPU_NODE_TIME=""
 FIRST_READY_TIME=""
 FIRST_RESPONSE_TIME=""
@@ -64,6 +66,7 @@ FIRST_GPU_AVAILABILITY_ZONE=""
 LOAD_START_TIME=""
 HPA_SCALE_OUT_TIME=""
 SECOND_NODECLAIM_TIME=""
+SECOND_NODECLAIM_NAME=""
 SECOND_GPU_NODE_TIME=""
 SECOND_READY_TIME=""
 SECOND_GPU_NODE_NAME=""
@@ -71,6 +74,18 @@ SECOND_GPU_NODEPOOL_NAME=""
 SECOND_GPU_INSTANCE_TYPE=""
 SECOND_GPU_CAPACITY_TYPE=""
 SECOND_GPU_AVAILABILITY_ZONE=""
+INTERRUPTION_TRIGGER_TIME=""
+INTERRUPTED_NODECLAIM_REMOVED_TIME=""
+INTERRUPTED_GPU_NODE_REMOVED_TIME=""
+RECOVERY_NODECLAIM_TIME=""
+RECOVERY_NODECLAIM_NAME=""
+RECOVERY_GPU_NODE_TIME=""
+RECOVERY_READY_TIME=""
+RECOVERY_GPU_NODE_NAME=""
+RECOVERY_GPU_NODEPOOL_NAME=""
+RECOVERY_GPU_INSTANCE_TYPE=""
+RECOVERY_GPU_CAPACITY_TYPE=""
+RECOVERY_GPU_AVAILABILITY_ZONE=""
 LOAD_FINISH_TIME=""
 SCALE_IN_TIME=""
 PROFILE_BASELINE_RESTORED_TIME=""
@@ -102,6 +117,8 @@ CAPACITY_ASSESSMENT=""
 CAPACITY_ASSESSMENT_REASON=""
 RESILIENCE_OUTCOME=""
 RESILIENCE_OUTCOME_REASON=""
+METRICS_COLLECTION_STATUS=""
+METRICS_COLLECTION_REASON=""
 SWEEP_RECOMMENDED_TARGET=""
 SWEEP_RECOMMENDATION_STATUS=""
 SWEEP_RECOMMENDATION_REASON=""
@@ -109,13 +126,14 @@ SWEEP_RECOMMENDATION_REASON=""
 usage() {
   cat <<EOF
 Usage:
-  ./scripts/evaluate [--profile zero-idle|warm-1] [--policy running|active-pressure|compare|sweep] [--resilience healthy|spot-unavailable] [--active-target requests] [--active-targets csv] [--report path] [--json-report path]
+  ./scripts/evaluate [--profile zero-idle|warm-1] [--policy running|active-pressure|compare|sweep] [--resilience healthy|spot-unavailable|spot-interruption] [--active-target requests] [--active-targets csv] [--report path] [--json-report path]
 
 Examples:
   ./scripts/evaluate --profile zero-idle
   ./scripts/evaluate --profile warm-1
   ./scripts/evaluate --profile zero-idle --policy active-pressure
   ./scripts/evaluate --profile zero-idle --resilience spot-unavailable
+  ./scripts/evaluate --profile zero-idle --resilience spot-interruption
   ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
   ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
   ./scripts/evaluate --profile zero-idle --report docs/reports/latest.md
@@ -199,11 +217,11 @@ parse_args() {
   esac
 
   case "${EVALUATION_RESILIENCE}" in
-    healthy|spot-unavailable)
+    healthy|spot-unavailable|spot-interruption)
       ;;
     *)
       printf 'Unsupported resilience mode: %s\n' "${EVALUATION_RESILIENCE}" >&2
-      printf 'Supported resilience modes: healthy, spot-unavailable\n' >&2
+      printf 'Supported resilience modes: healthy, spot-unavailable, spot-interruption\n' >&2
       exit 1
       ;;
   esac
@@ -401,6 +419,10 @@ cleanup_evaluate() {
     kubectl apply -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" >/dev/null 2>&1 || true
     SPOT_NODEPOOL_DISABLED=0
   fi
+  if [[ "${ONDEMAND_NODEPOOL_DISABLED}" == "1" ]]; then
+    kubectl apply -f "${KARPENTER_ONDEMAND_NODEPOOL_MANIFEST}" >/dev/null 2>&1 || true
+    ONDEMAND_NODEPOOL_DISABLED=0
+  fi
 
   if ((${#TEMP_FILES[@]} > 0)); then
     for temporary_file in "${TEMP_FILES[@]}"; do
@@ -419,6 +441,10 @@ is_warm_profile() {
 
 is_spot_unavailable_mode() {
   [[ "${EVALUATION_RESILIENCE}" == "spot-unavailable" ]]
+}
+
+is_spot_interruption_mode() {
+  [[ "${EVALUATION_RESILIENCE}" == "spot-interruption" ]]
 }
 
 is_compare_mode() {
@@ -462,6 +488,7 @@ reset_policy_measurements() {
 
   EVALUATION_START_TIME=""
   FIRST_NODECLAIM_TIME=""
+  FIRST_NODECLAIM_NAME=""
   FIRST_GPU_NODE_TIME=""
   FIRST_READY_TIME=""
   FIRST_RESPONSE_TIME=""
@@ -476,6 +503,7 @@ reset_policy_measurements() {
   LOAD_START_TIME=""
   HPA_SCALE_OUT_TIME=""
   SECOND_NODECLAIM_TIME=""
+  SECOND_NODECLAIM_NAME=""
   SECOND_GPU_NODE_TIME=""
   SECOND_READY_TIME=""
   SECOND_GPU_NODE_NAME=""
@@ -483,6 +511,18 @@ reset_policy_measurements() {
   SECOND_GPU_INSTANCE_TYPE=""
   SECOND_GPU_CAPACITY_TYPE=""
   SECOND_GPU_AVAILABILITY_ZONE=""
+  INTERRUPTION_TRIGGER_TIME=""
+  INTERRUPTED_NODECLAIM_REMOVED_TIME=""
+  INTERRUPTED_GPU_NODE_REMOVED_TIME=""
+  RECOVERY_NODECLAIM_TIME=""
+  RECOVERY_NODECLAIM_NAME=""
+  RECOVERY_GPU_NODE_TIME=""
+  RECOVERY_READY_TIME=""
+  RECOVERY_GPU_NODE_NAME=""
+  RECOVERY_GPU_NODEPOOL_NAME=""
+  RECOVERY_GPU_INSTANCE_TYPE=""
+  RECOVERY_GPU_CAPACITY_TYPE=""
+  RECOVERY_GPU_AVAILABILITY_ZONE=""
   LOAD_FINISH_TIME=""
   SCALE_IN_TIME=""
   PROFILE_BASELINE_RESTORED_TIME=""
@@ -514,6 +554,8 @@ reset_policy_measurements() {
   CAPACITY_ASSESSMENT_REASON=""
   RESILIENCE_OUTCOME=""
   RESILIENCE_OUTCOME_REASON=""
+  METRICS_COLLECTION_STATUS=""
+  METRICS_COLLECTION_REASON=""
 }
 
 set_policy_context() {
@@ -557,6 +599,21 @@ first_pod_name() {
   pod_names | sed -n '1p'
 }
 
+serving_nodeclaim_names() {
+  kubectl get nodeclaims \
+    -l "${KARPENTER_SERVING_NODEPOOL_SELECTOR}" \
+    --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+}
+
+first_nodeclaim_name() {
+  serving_nodeclaim_names | sed -n '1p'
+}
+
+second_nodeclaim_name() {
+  serving_nodeclaim_names | sed -n '2p'
+}
+
 first_gpu_node_name() {
   kubectl get nodes \
     -l 'workload=gpu' \
@@ -569,6 +626,63 @@ second_gpu_node_name() {
     -l 'workload=gpu' \
     --sort-by=.metadata.creationTimestamp \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | sed -n '2p'
+}
+
+name_is_excluded() {
+  local candidate_name=$1
+  shift || true
+
+  while (($# > 0)); do
+    if [[ -n "${1:-}" && "${candidate_name}" == "$1" ]]; then
+      return 0
+    fi
+    shift
+  done
+
+  return 1
+}
+
+serving_nodeclaim_name_excluding() {
+  local candidate_name
+
+  while IFS= read -r candidate_name; do
+    if [[ -z "${candidate_name}" ]]; then
+      continue
+    fi
+
+    if name_is_excluded "${candidate_name}" "$@"; then
+      continue
+    fi
+
+    printf '%s\n' "${candidate_name}"
+    return 0
+  done < <(serving_nodeclaim_names)
+
+  printf '%s\n' ""
+}
+
+serving_gpu_node_name_excluding() {
+  local candidate_name
+
+  while IFS= read -r candidate_name; do
+    if [[ -z "${candidate_name}" ]]; then
+      continue
+    fi
+
+    if name_is_excluded "${candidate_name}" "$@"; then
+      continue
+    fi
+
+    printf '%s\n' "${candidate_name}"
+    return 0
+  done < <(
+    kubectl get nodes \
+      -l 'workload=gpu' \
+      --sort-by=.metadata.creationTimestamp \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+  )
+
+  printf '%s\n' ""
 }
 
 node_instance_type() {
@@ -612,6 +726,20 @@ populate_second_gpu_node_identity() {
   SECOND_GPU_AVAILABILITY_ZONE=$(node_availability_zone "${SECOND_GPU_NODE_NAME}")
   if [[ -z "${SECOND_GPU_CAPACITY_TYPE}" ]]; then
     SECOND_GPU_CAPACITY_TYPE=$(nodepool_capacity_type "${SECOND_GPU_NODEPOOL_NAME}")
+  fi
+}
+
+populate_recovery_gpu_node_identity() {
+  if [[ -z "${RECOVERY_GPU_NODE_NAME}" ]]; then
+    return 0
+  fi
+
+  RECOVERY_GPU_INSTANCE_TYPE=$(node_instance_type "${RECOVERY_GPU_NODE_NAME}")
+  RECOVERY_GPU_NODEPOOL_NAME=$(node_nodepool "${RECOVERY_GPU_NODE_NAME}")
+  RECOVERY_GPU_CAPACITY_TYPE=$(node_capacity_type "${RECOVERY_GPU_NODE_NAME}")
+  RECOVERY_GPU_AVAILABILITY_ZONE=$(node_availability_zone "${RECOVERY_GPU_NODE_NAME}")
+  if [[ -z "${RECOVERY_GPU_CAPACITY_TYPE}" ]]; then
+    RECOVERY_GPU_CAPACITY_TYPE=$(nodepool_capacity_type "${RECOVERY_GPU_NODEPOOL_NAME}")
   fi
 }
 
@@ -944,11 +1072,7 @@ prepare_warm_profile_capacity() {
   fi
 }
 
-prepare_resilience_mode() {
-  if ! is_spot_unavailable_mode; then
-    return 0
-  fi
-
+disable_spot_nodepool() {
   if [[ "${SPOT_NODEPOOL_DISABLED}" == "1" ]]; then
     return 0
   fi
@@ -956,6 +1080,24 @@ prepare_resilience_mode() {
   kubectl delete -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion nodepool "${KARPENTER_SPOT_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   SPOT_NODEPOOL_DISABLED=1
+}
+
+disable_ondemand_nodepool() {
+  if [[ "${ONDEMAND_NODEPOOL_DISABLED}" == "1" ]]; then
+    return 0
+  fi
+
+  kubectl delete -f "${KARPENTER_ONDEMAND_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
+  wait_for_resource_deletion nodepool "${KARPENTER_ONDEMAND_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  ONDEMAND_NODEPOOL_DISABLED=1
+}
+
+prepare_resilience_mode() {
+  if ! is_spot_unavailable_mode; then
+    return 0
+  fi
+
+  disable_spot_nodepool || return 1
 }
 
 restore_resilience_mode() {
@@ -966,6 +1108,24 @@ restore_resilience_mode() {
   kubectl apply -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" || return 1
   wait_for_resource_existence nodepool "${KARPENTER_SPOT_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   SPOT_NODEPOOL_DISABLED=0
+}
+
+restore_ondemand_nodepool() {
+  if [[ "${ONDEMAND_NODEPOOL_DISABLED}" != "1" ]]; then
+    return 0
+  fi
+
+  kubectl apply -f "${KARPENTER_ONDEMAND_NODEPOOL_MANIFEST}" || return 1
+  wait_for_resource_existence nodepool "${KARPENTER_ONDEMAND_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  ONDEMAND_NODEPOOL_DISABLED=0
+}
+
+prepare_spot_interruption_scale_out() {
+  if ! is_spot_interruption_mode; then
+    return 0
+  fi
+
+  disable_ondemand_nodepool || return 1
 }
 
 prepare_edge_and_profile() {
@@ -996,6 +1156,7 @@ seed_profile_baseline_events() {
   fi
 
   set_if_unset FIRST_NODECLAIM_TIME "${EVALUATION_START_TIME}"
+  set_if_unset FIRST_NODECLAIM_NAME "$(first_nodeclaim_name)"
   set_if_unset FIRST_GPU_NODE_TIME "${EVALUATION_START_TIME}"
   populate_first_gpu_node_identity
 }
@@ -1010,6 +1171,7 @@ apply_inference_stack() {
 wait_for_first_ready_and_response() {
   wait_for_serving_nodeclaims_at_least_with_progress 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   set_if_unset FIRST_NODECLAIM_TIME "$(date +%s)"
+  set_if_unset FIRST_NODECLAIM_NAME "$(first_nodeclaim_name)"
 
   wait_for_serving_gpu_nodes_at_least_with_progress 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   set_if_unset FIRST_GPU_NODE_TIME "$(date +%s)"
@@ -1036,6 +1198,8 @@ wait_for_first_ready_and_response() {
 
 run_load_and_wait_for_scale_out() {
   local start_time
+
+  prepare_spot_interruption_scale_out || return 1
 
   kubectl apply -f "${GPU_LOAD_TEST_MANIFEST}" || return 1
   LOAD_TEST_APPLIED=1
@@ -1073,14 +1237,120 @@ run_load_and_wait_for_scale_out() {
 
   wait_for_serving_nodeclaims_at_least_with_progress 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   SECOND_NODECLAIM_TIME=$(date +%s)
+  SECOND_NODECLAIM_NAME=$(second_nodeclaim_name)
 
   wait_for_serving_gpu_nodes_at_least_with_progress 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   SECOND_GPU_NODE_TIME=$(date +%s)
   populate_second_gpu_node_identity
 
+  if [[ -z "${SECOND_NODECLAIM_NAME}" ]]; then
+    SECOND_NODECLAIM_NAME=$(serving_nodeclaim_name_excluding "${FIRST_NODECLAIM_NAME}")
+  fi
+
   wait_for_ready_replicas_at_least_with_progress 2 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
   SECOND_READY_TIME=$(date +%s)
 
+  wait_for_http_200 "${PUBLIC_INFERENCE_URL}" "${VERIFY_RESPONSE_TIMEOUT_SECONDS}"
+}
+
+wait_for_spot_interruption_recovery() {
+  local start_time
+  local last_log_time=0
+
+  start_time=$(date +%s)
+
+  while true; do
+    local now
+    local candidate_name
+    local ready_replicas
+
+    now=$(date +%s)
+
+    if [[ -n "${SECOND_NODECLAIM_NAME}" && -z "${INTERRUPTED_NODECLAIM_REMOVED_TIME}" ]]; then
+      if ! resource_exists nodeclaim "${SECOND_NODECLAIM_NAME}" ""; then
+        INTERRUPTED_NODECLAIM_REMOVED_TIME=${now}
+      fi
+    fi
+
+    if [[ -n "${SECOND_GPU_NODE_NAME}" && -z "${INTERRUPTED_GPU_NODE_REMOVED_TIME}" ]]; then
+      if ! resource_exists node "${SECOND_GPU_NODE_NAME}" ""; then
+        INTERRUPTED_GPU_NODE_REMOVED_TIME=${now}
+      fi
+    fi
+
+    if [[ -z "${RECOVERY_NODECLAIM_NAME}" ]]; then
+      candidate_name=$(serving_nodeclaim_name_excluding "${FIRST_NODECLAIM_NAME}" "${SECOND_NODECLAIM_NAME}")
+      if [[ -n "${candidate_name}" ]]; then
+        RECOVERY_NODECLAIM_NAME=${candidate_name}
+        RECOVERY_NODECLAIM_TIME=${now}
+      fi
+    fi
+
+    if [[ -z "${RECOVERY_GPU_NODE_NAME}" ]]; then
+      candidate_name=$(serving_gpu_node_name_excluding "${FIRST_GPU_NODE_NAME}" "${SECOND_GPU_NODE_NAME}")
+      if [[ -n "${candidate_name}" ]]; then
+        RECOVERY_GPU_NODE_NAME=${candidate_name}
+        RECOVERY_GPU_NODE_TIME=${now}
+        populate_recovery_gpu_node_identity
+      fi
+    fi
+
+    if [[ -z "${RECOVERY_READY_TIME}" ]]; then
+      ready_replicas=$(deployment_ready_replicas "${APP_NAMESPACE}" "${GPU_INFERENCE_DEPLOYMENT_NAME}")
+      ready_replicas=${ready_replicas:-0}
+      if (( ready_replicas >= 2 )) && [[ -n "${RECOVERY_GPU_NODE_NAME}" ]]; then
+        RECOVERY_READY_TIME=${now}
+      fi
+    fi
+
+    if [[ -n "${INTERRUPTED_NODECLAIM_REMOVED_TIME}" && -n "${RECOVERY_NODECLAIM_TIME}" && -n "${RECOVERY_GPU_NODE_TIME}" && -n "${RECOVERY_READY_TIME}" ]]; then
+      return 0
+    fi
+
+    if (( now - last_log_time >= WAIT_CONTEXT_LOG_INTERVAL_SECONDS )); then
+      printf 'Waiting for spot interruption recovery; replacement nodeclaim=%s replacement node=%s recovered ready=%s interrupted nodeclaim removed=%s interrupted node removed=%s\n' \
+        "${RECOVERY_NODECLAIM_NAME:-pending}" \
+        "${RECOVERY_GPU_NODE_NAME:-pending}" \
+        "${RECOVERY_READY_TIME:-pending}" \
+        "${INTERRUPTED_NODECLAIM_REMOVED_TIME:-pending}" \
+        "${INTERRUPTED_GPU_NODE_REMOVED_TIME:-pending}" >&2
+      print_serving_nodeclaim_snapshot
+      print_serving_node_snapshot
+      print_serving_pod_snapshot
+      last_log_time=${now}
+    fi
+
+    if (( now - start_time >= EVALUATE_SCALE_TIMEOUT_SECONDS )); then
+      printf 'Timed out waiting for spot interruption recovery to restore two ready replicas\n' >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+trigger_spot_interruption_and_wait_for_recovery() {
+  if ! is_spot_interruption_mode; then
+    return 0
+  fi
+
+  if [[ "${SECOND_GPU_CAPACITY_TYPE}" != "spot" ]]; then
+    printf 'spot-interruption requires the burst node to be spot, but the second GPU node reported %s\n' "${SECOND_GPU_CAPACITY_TYPE:-unknown}" >&2
+    return 1
+  fi
+
+  if [[ -z "${SECOND_NODECLAIM_NAME}" ]]; then
+    printf 'spot-interruption could not identify the burst NodeClaim to interrupt\n' >&2
+    return 1
+  fi
+
+  disable_spot_nodepool || return 1
+  restore_ondemand_nodepool || return 1
+
+  kubectl delete nodeclaim "${SECOND_NODECLAIM_NAME}" --ignore-not-found=true || return 1
+  INTERRUPTION_TRIGGER_TIME=$(date +%s)
+
+  wait_for_spot_interruption_recovery || return 1
   wait_for_http_200 "${PUBLIC_INFERENCE_URL}" "${VERIFY_RESPONSE_TIMEOUT_SECONDS}"
 }
 
@@ -1507,6 +1777,12 @@ estimate_costs() {
   fi
 }
 
+finalize_derived_readouts() {
+  estimate_costs
+  derive_capacity_readout
+  derive_resilience_outcome
+}
+
 collect_production_metrics() {
   local window
   local waiting_query
@@ -1550,9 +1826,9 @@ collect_production_metrics() {
   PEAK_ACTIVE_ONDEMAND_NODECLAIMS=$(prometheus_query_scalar "${ondemand_nodeclaim_query}") || return 1
   PEAK_ACTIVE_SPOT_NODECLAIMS=$(prometheus_query_scalar "${spot_nodeclaim_query}") || return 1
 
-  estimate_costs
-  derive_capacity_readout
-  derive_resilience_outcome
+  finalize_derived_readouts
+  METRICS_COLLECTION_STATUS="complete"
+  METRICS_COLLECTION_REASON=""
 }
 
 append_pushgateway_metric() {
@@ -1595,6 +1871,9 @@ push_summary_metrics() {
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_first_external_completion_seconds" "$(seconds_since_start "${FIRST_RESPONSE_TIME}")"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_second_gpu_node_seconds" "$(seconds_since_start "${SECOND_GPU_NODE_TIME}")"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_second_ready_replica_seconds" "$(seconds_since_start "${SECOND_READY_TIME}")"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_interruption_to_nodeclaim_removal_seconds" "$(seconds_between "${INTERRUPTION_TRIGGER_TIME}" "${INTERRUPTED_NODECLAIM_REMOVED_TIME}")"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_interruption_to_recovery_gpu_node_seconds" "$(seconds_between "${INTERRUPTION_TRIGGER_TIME}" "${RECOVERY_GPU_NODE_TIME}")"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_interruption_to_recovery_ready_seconds" "$(seconds_between "${INTERRUPTION_TRIGGER_TIME}" "${RECOVERY_READY_TIME}")"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_scale_down_to_zero_gpu_nodes_seconds" "$(seconds_between "${LOAD_FINISH_TIME}" "${POLICY_FINISH_TIME}")"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_estimated_idle_cost_per_hour" "${ESTIMATED_IDLE_COST_PER_HOUR}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_estimated_burst_cost" "${ESTIMATED_BURST_COST}"
@@ -1798,10 +2077,49 @@ expected_burst_capacity_type() {
   printf 'spot\n'
 }
 
+expected_recovery_capacity_type() {
+  if is_spot_interruption_mode; then
+    printf 'on-demand\n'
+    return 0
+  fi
+
+  printf '%s\n' ""
+}
+
 derive_resilience_outcome() {
   local expected_capacity_type
 
   expected_capacity_type=$(expected_burst_capacity_type)
+
+  if is_spot_interruption_mode; then
+    if [[ "${SECOND_GPU_CAPACITY_TYPE}" != "spot" ]]; then
+      RESILIENCE_OUTCOME="interruption-precondition-failed"
+      RESILIENCE_OUTCOME_REASON="the burst never landed on a spot-backed second GPU node, so the live spot interruption path could not be exercised"
+      return 0
+    fi
+
+    if [[ -z "${RECOVERY_GPU_CAPACITY_TYPE}" || -z "${RECOVERY_READY_TIME}" ]]; then
+      RESILIENCE_OUTCOME="interruption-recovery-incomplete"
+      RESILIENCE_OUTCOME_REASON="the spot interruption was triggered, but the run did not capture a complete recovery back to two ready replicas"
+      return 0
+    fi
+
+    if [[ "${RECOVERY_GPU_CAPACITY_TYPE}" == "on-demand" ]]; then
+      RESILIENCE_OUTCOME="interruption-recovered"
+      RESILIENCE_OUTCOME_REASON="the burst started on spot, the interrupted spot capacity was withdrawn, and the service recovered to two ready replicas on on-demand capacity"
+      return 0
+    fi
+
+    if [[ "${RECOVERY_GPU_CAPACITY_TYPE}" == "spot" ]]; then
+      RESILIENCE_OUTCOME="interruption-recovered-on-spot"
+      RESILIENCE_OUTCOME_REASON="the spot burst node was interrupted, but recovery still landed on spot capacity instead of the expected on-demand fallback"
+      return 0
+    fi
+
+    RESILIENCE_OUTCOME="unexpected-capacity-type"
+    RESILIENCE_OUTCOME_REASON="the interruption recovery path completed, but the replacement GPU node reported an unrecognized capacity type"
+    return 0
+  fi
 
   if [[ -z "${SECOND_GPU_CAPACITY_TYPE}" ]]; then
     RESILIENCE_OUTCOME="unknown"
@@ -1885,6 +2203,8 @@ write_reports() {
 - Profile: ${EVALUATION_PROFILE}
 - Policy: ${CURRENT_POLICY}
 - Resilience mode: ${EVALUATION_RESILIENCE}
+- Metrics collection status: ${METRICS_COLLECTION_STATUS:-unknown}
+- Metrics collection note: ${METRICS_COLLECTION_REASON:-n/a}
 - HPA metric name: ${CURRENT_HPA_METRIC_NAME}
 - HPA target average value: ${CURRENT_HPA_TARGET_AVERAGE_VALUE}
 - Public endpoint: ${PUBLIC_INFERENCE_URL}
@@ -1894,6 +2214,9 @@ write_reports() {
 - Second GPU capacity type: ${SECOND_GPU_CAPACITY_TYPE:-n/a}
 - Second GPU instance type: ${SECOND_GPU_INSTANCE_TYPE:-n/a}
 - Second GPU availability zone: ${SECOND_GPU_AVAILABILITY_ZONE:-n/a}
+- Recovery GPU capacity type: ${RECOVERY_GPU_CAPACITY_TYPE:-n/a}
+- Recovery GPU instance type: ${RECOVERY_GPU_INSTANCE_TYPE:-n/a}
+- Recovery GPU availability zone: ${RECOVERY_GPU_AVAILABILITY_ZONE:-n/a}
 
 ## Timeline
 
@@ -1908,6 +2231,12 @@ write_reports() {
 | Second NodeClaim | $(display_duration "$(seconds_since_start "${SECOND_NODECLAIM_TIME}")") |
 | Second GPU node | $(display_duration "$(seconds_since_start "${SECOND_GPU_NODE_TIME}")") |
 | Second ready replica | $(display_duration "$(seconds_since_start "${SECOND_READY_TIME}")") |
+| Interruption triggered | $(display_duration "$(seconds_since_start "${INTERRUPTION_TRIGGER_TIME}")") |
+| Interrupted NodeClaim removed | $(display_duration "$(seconds_since_start "${INTERRUPTED_NODECLAIM_REMOVED_TIME}")") |
+| Interrupted GPU node removed | $(display_duration "$(seconds_since_start "${INTERRUPTED_GPU_NODE_REMOVED_TIME}")") |
+| Recovery NodeClaim | $(display_duration "$(seconds_since_start "${RECOVERY_NODECLAIM_TIME}")") |
+| Recovery GPU node | $(display_duration "$(seconds_since_start "${RECOVERY_GPU_NODE_TIME}")") |
+| Recovery second ready replica | $(display_duration "$(seconds_since_start "${RECOVERY_READY_TIME}")") |
 | Load job complete | $(display_duration "$(seconds_since_start "${LOAD_FINISH_TIME}")") |
 | Scale-in back to one GPU node | $(display_duration "$(seconds_since_start "${SCALE_IN_TIME}")") |
 | Warm baseline restored | $(display_duration "$(seconds_since_start "${PROFILE_BASELINE_RESTORED_TIME}")") |
@@ -1921,10 +2250,14 @@ write_reports() {
 - First public response: $(display_duration "$(seconds_since_start "${FIRST_RESPONSE_TIME}")")
 - Scale-out to second GPU node: $(display_duration "$(seconds_since_start "${SECOND_GPU_NODE_TIME}")")
 - Scale-out to second ready replica: $(display_duration "$(seconds_since_start "${SECOND_READY_TIME}")")
+- Interruption to replacement GPU node: $(display_duration "$(seconds_between "${INTERRUPTION_TRIGGER_TIME}" "${RECOVERY_GPU_NODE_TIME}")")
+- Interruption to recovered second ready replica: $(display_duration "$(seconds_between "${INTERRUPTION_TRIGGER_TIME}" "${RECOVERY_READY_TIME}")")
 - Scale-in after load completion: $(display_duration "$(seconds_between "${LOAD_FINISH_TIME}" "${SCALE_IN_TIME}")")
 - Final cleanup to zero GPU nodes: $(display_duration "$(seconds_between "${LOAD_FINISH_TIME}" "${CLEANUP_FINISH_TIME}")")
 - Resilience outcome: ${RESILIENCE_OUTCOME:-n/a}
 - Resilience rationale: ${RESILIENCE_OUTCOME_REASON:-n/a}
+- Metrics collection status: ${METRICS_COLLECTION_STATUS:-unknown}
+- Metrics collection note: ${METRICS_COLLECTION_REASON:-n/a}
 
 ## Metrics
 
@@ -1951,6 +2284,8 @@ write_reports() {
 - Useful work per active GPU node peaked at $(display_metric "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}") active requests while average GPU headroom stayed at $(display_metric "${AVG_GPU_HEADROOM_PERCENT}" "%")
 - Preferred burst capacity type for this resilience mode: $(expected_burst_capacity_type)
 - Observed second-node capacity type: ${SECOND_GPU_CAPACITY_TYPE:-n/a}
+- Expected recovery capacity type after interruption: $(display_metric "$(expected_recovery_capacity_type)")
+- Observed recovery-node capacity type: ${RECOVERY_GPU_CAPACITY_TYPE:-n/a}
 
 ## Cost
 
@@ -1966,7 +2301,8 @@ write_reports() {
 - \`Container started -> Ready\` is reported as the model-load proxy because the baseline experiment does not rely on a separate vLLM model-load completion metric.
 - \`p95 estimated queue wait\` is derived from waiting-request depth divided by request completion rate, so it is a capacity estimate rather than a dedicated queue histogram.
 - The HPA is validated from the custom metric \`${CURRENT_HPA_METRIC_NAME}\` with target average value \`${CURRENT_HPA_TARGET_AVERAGE_VALUE}\`, not CPU utilization.
-- \`${EVALUATION_RESILIENCE}\` controls whether the preferred spot burst path stays available for the run or is withdrawn to test on-demand fallback behavior.
+- Final Prometheus and DCGM collection is best-effort; if the Kubernetes API is unavailable after workload cleanup, the report keeps timeline, cost, and resilience data while metric fields remain \`n/a\` or \`null\`.
+- \`${EVALUATION_RESILIENCE}\` controls whether the preferred spot burst path stays available, is withdrawn before the run, or is interrupted mid-burst and forced to recover on replacement capacity.
 - Spot prices use the repo's fixed conservative estimate table so reports stay deterministic across runs.
 - ${cleanup_note#- }
 ${compare_mode_cleanup_note}
@@ -1978,6 +2314,8 @@ EOF
   "profile": $(json_escape "${EVALUATION_PROFILE}"),
   "policy": $(json_escape "${CURRENT_POLICY}"),
   "resilience_mode": $(json_escape "${EVALUATION_RESILIENCE}"),
+  "metrics_collection_status": $(json_escape "${METRICS_COLLECTION_STATUS:-unknown}"),
+  "metrics_collection_reason": $(json_nullable_string "${METRICS_COLLECTION_REASON}"),
   "hpa_metric_name": $(json_escape "${CURRENT_HPA_METRIC_NAME}"),
   "hpa_target_average_value": $(json_escape "${CURRENT_HPA_TARGET_AVERAGE_VALUE}"),
   "public_endpoint": $(json_escape "${PUBLIC_INFERENCE_URL}"),
@@ -1989,6 +2327,10 @@ EOF
   "second_gpu_instance_type": $(json_nullable_string "${SECOND_GPU_INSTANCE_TYPE}"),
   "second_gpu_nodepool": $(json_nullable_string "${SECOND_GPU_NODEPOOL_NAME}"),
   "second_gpu_availability_zone": $(json_nullable_string "${SECOND_GPU_AVAILABILITY_ZONE}"),
+  "recovery_gpu_capacity_type": $(json_nullable_string "${RECOVERY_GPU_CAPACITY_TYPE}"),
+  "recovery_gpu_instance_type": $(json_nullable_string "${RECOVERY_GPU_INSTANCE_TYPE}"),
+  "recovery_gpu_nodepool": $(json_nullable_string "${RECOVERY_GPU_NODEPOOL_NAME}"),
+  "recovery_gpu_availability_zone": $(json_nullable_string "${RECOVERY_GPU_AVAILABILITY_ZONE}"),
   "timeline": {
     "first_nodeclaim_seconds": $(json_nullable_number "$(seconds_since_start "${FIRST_NODECLAIM_TIME}")"),
     "first_gpu_node_seconds": $(json_nullable_number "$(seconds_since_start "${FIRST_GPU_NODE_TIME}")"),
@@ -1999,6 +2341,12 @@ EOF
     "second_nodeclaim_seconds": $(json_nullable_number "$(seconds_since_start "${SECOND_NODECLAIM_TIME}")"),
     "second_gpu_node_seconds": $(json_nullable_number "$(seconds_since_start "${SECOND_GPU_NODE_TIME}")"),
     "second_ready_seconds": $(json_nullable_number "$(seconds_since_start "${SECOND_READY_TIME}")"),
+    "interruption_trigger_seconds": $(json_nullable_number "$(seconds_since_start "${INTERRUPTION_TRIGGER_TIME}")"),
+    "interrupted_nodeclaim_removed_seconds": $(json_nullable_number "$(seconds_since_start "${INTERRUPTED_NODECLAIM_REMOVED_TIME}")"),
+    "interrupted_gpu_node_removed_seconds": $(json_nullable_number "$(seconds_since_start "${INTERRUPTED_GPU_NODE_REMOVED_TIME}")"),
+    "recovery_nodeclaim_seconds": $(json_nullable_number "$(seconds_since_start "${RECOVERY_NODECLAIM_TIME}")"),
+    "recovery_gpu_node_seconds": $(json_nullable_number "$(seconds_since_start "${RECOVERY_GPU_NODE_TIME}")"),
+    "recovery_ready_seconds": $(json_nullable_number "$(seconds_since_start "${RECOVERY_READY_TIME}")"),
     "load_complete_seconds": $(json_nullable_number "$(seconds_since_start "${LOAD_FINISH_TIME}")"),
     "scale_in_seconds": $(json_nullable_number "$(seconds_since_start "${SCALE_IN_TIME}")"),
     "warm_baseline_restored_seconds": $(json_nullable_number "$(seconds_since_start "${PROFILE_BASELINE_RESTORED_TIME}")"),
@@ -2006,7 +2354,9 @@ EOF
   },
   "operator_summary": {
     "pod_scheduled_to_ready_seconds": $(json_nullable_number "${pod_schedule_ready_seconds}"),
-    "container_started_to_ready_seconds": $(json_nullable_number "${container_ready_seconds}")
+    "container_started_to_ready_seconds": $(json_nullable_number "${container_ready_seconds}"),
+    "interruption_to_recovery_gpu_node_seconds": $(json_nullable_number "$(seconds_between "${INTERRUPTION_TRIGGER_TIME}" "${RECOVERY_GPU_NODE_TIME}")"),
+    "interruption_to_recovery_ready_seconds": $(json_nullable_number "$(seconds_between "${INTERRUPTION_TRIGGER_TIME}" "${RECOVERY_READY_TIME}")")
   },
   "metrics": {
     "p95_request_latency_seconds": $(json_nullable_number "${P95_REQUEST_LATENCY_SECONDS}"),
@@ -2034,6 +2384,7 @@ EOF
   "resilience": {
     "mode": $(json_escape "${EVALUATION_RESILIENCE}"),
     "preferred_burst_capacity_type": $(json_escape "$(expected_burst_capacity_type)"),
+    "expected_recovery_capacity_type": $(json_nullable_string "$(expected_recovery_capacity_type)"),
     "outcome": $(json_nullable_string "${RESILIENCE_OUTCOME}"),
     "reason": $(json_nullable_string "${RESILIENCE_OUTCOME_REASON}")
   },
@@ -2087,6 +2438,8 @@ capture_compare_policy_result() {
   set_policy_snapshot_value "${policy}" JSON_REPORT_PATH "${JSON_REPORT_PATH}"
   set_policy_snapshot_value "${policy}" HPA_METRIC_NAME "${CURRENT_HPA_METRIC_NAME}"
   set_policy_snapshot_value "${policy}" HPA_TARGET_AVERAGE_VALUE "${CURRENT_HPA_TARGET_AVERAGE_VALUE}"
+  set_policy_snapshot_value "${policy}" METRICS_COLLECTION_STATUS "${METRICS_COLLECTION_STATUS}"
+  set_policy_snapshot_value "${policy}" METRICS_COLLECTION_REASON "${METRICS_COLLECTION_REASON}"
   set_policy_snapshot_value "${policy}" P95_REQUEST_LATENCY_SECONDS "${P95_REQUEST_LATENCY_SECONDS}"
   set_policy_snapshot_value "${policy}" P95_ESTIMATED_QUEUE_WAIT_SECONDS "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}"
   set_policy_snapshot_value "${policy}" P95_TTFT_SECONDS "${P95_TTFT_SECONDS}"
@@ -2099,9 +2452,11 @@ capture_compare_policy_result() {
   set_policy_snapshot_value "${policy}" MAX_GPU_UTILIZATION_PERCENT "${MAX_GPU_UTILIZATION_PERCENT}"
   set_policy_snapshot_value "${policy}" PEAK_ACTIVE_NODECLAIMS "${PEAK_ACTIVE_NODECLAIMS}"
   set_policy_snapshot_value "${policy}" SECOND_READY_SECONDS "$(seconds_since_start "${SECOND_READY_TIME}")"
+  set_policy_snapshot_value "${policy}" RECOVERY_READY_SECONDS "$(seconds_since_start "${RECOVERY_READY_TIME}")"
   set_policy_snapshot_value "${policy}" ESTIMATED_BURST_COST "${ESTIMATED_BURST_COST}"
   set_policy_snapshot_value "${policy}" CAPACITY_ASSESSMENT "${CAPACITY_ASSESSMENT}"
   set_policy_snapshot_value "${policy}" CAPACITY_ASSESSMENT_REASON "${CAPACITY_ASSESSMENT_REASON}"
+  set_policy_snapshot_value "${policy}" RESILIENCE_OUTCOME "${RESILIENCE_OUTCOME}"
 }
 
 compare_duration_value() {
@@ -2295,6 +2650,8 @@ capture_sweep_target_result() {
   set_sweep_target_value "${target}" JSON_REPORT_PATH "${JSON_REPORT_PATH}"
   set_sweep_target_value "${target}" HPA_METRIC_NAME "${CURRENT_HPA_METRIC_NAME}"
   set_sweep_target_value "${target}" HPA_TARGET_AVERAGE_VALUE "${CURRENT_HPA_TARGET_AVERAGE_VALUE}"
+  set_sweep_target_value "${target}" METRICS_COLLECTION_STATUS "${METRICS_COLLECTION_STATUS}"
+  set_sweep_target_value "${target}" METRICS_COLLECTION_REASON "${METRICS_COLLECTION_REASON}"
   set_sweep_target_value "${target}" P95_REQUEST_LATENCY_SECONDS "${P95_REQUEST_LATENCY_SECONDS}"
   set_sweep_target_value "${target}" P95_ESTIMATED_QUEUE_WAIT_SECONDS "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}"
   set_sweep_target_value "${target}" P95_TTFT_SECONDS "${P95_TTFT_SECONDS}"
@@ -2307,6 +2664,7 @@ capture_sweep_target_result() {
   set_sweep_target_value "${target}" MAX_GPU_UTILIZATION_PERCENT "${MAX_GPU_UTILIZATION_PERCENT}"
   set_sweep_target_value "${target}" PEAK_ACTIVE_NODECLAIMS "${PEAK_ACTIVE_NODECLAIMS}"
   set_sweep_target_value "${target}" SECOND_READY_SECONDS "$(seconds_since_start "${SECOND_READY_TIME}")"
+  set_sweep_target_value "${target}" RECOVERY_READY_SECONDS "$(seconds_since_start "${RECOVERY_READY_TIME}")"
   set_sweep_target_value "${target}" ESTIMATED_BURST_COST "${ESTIMATED_BURST_COST}"
   set_sweep_target_value "${target}" STATUS "${status}"
   set_sweep_target_value "${target}" STATUS_REASON "${reason}"
@@ -2448,6 +2806,13 @@ write_compare_reports() {
 | running | $(get_policy_snapshot_value running HPA_METRIC_NAME) | $(get_policy_snapshot_value running HPA_TARGET_AVERAGE_VALUE) |
 | active-pressure | $(get_policy_snapshot_value active-pressure HPA_METRIC_NAME) | $(get_policy_snapshot_value active-pressure HPA_TARGET_AVERAGE_VALUE) |
 
+## Collection Status
+
+| Policy | Metrics collection status | Note |
+| --- | --- | --- |
+| running | $(get_policy_snapshot_value running METRICS_COLLECTION_STATUS) | $(display_metric "$(get_policy_snapshot_value running METRICS_COLLECTION_REASON)") |
+| active-pressure | $(get_policy_snapshot_value active-pressure METRICS_COLLECTION_STATUS) | $(display_metric "$(get_policy_snapshot_value active-pressure METRICS_COLLECTION_REASON)") |
+
 ## Side-By-Side Metrics
 
 | Metric | running | active-pressure |
@@ -2464,8 +2829,10 @@ write_compare_reports() {
 | Max GPU utilization | $(compare_metric_value running MAX_GPU_UTILIZATION_PERCENT "%") | $(compare_metric_value active-pressure MAX_GPU_UTILIZATION_PERCENT "%") |
 | Peak active NodeClaims | $(compare_metric_value running PEAK_ACTIVE_NODECLAIMS "") | $(compare_metric_value active-pressure PEAK_ACTIVE_NODECLAIMS "") |
 | Second ready replica | $(compare_duration_value running SECOND_READY_SECONDS) | $(compare_duration_value active-pressure SECOND_READY_SECONDS) |
+| Recovery ready after interruption | $(compare_duration_value running RECOVERY_READY_SECONDS) | $(compare_duration_value active-pressure RECOVERY_READY_SECONDS) |
 | Burst cost | $(compare_metric_value running ESTIMATED_BURST_COST "") | $(compare_metric_value active-pressure ESTIMATED_BURST_COST "") |
 | Capacity assessment | $(get_policy_snapshot_value running CAPACITY_ASSESSMENT) | $(get_policy_snapshot_value active-pressure CAPACITY_ASSESSMENT) |
+| Resilience outcome | $(get_policy_snapshot_value running RESILIENCE_OUTCOME) | $(get_policy_snapshot_value active-pressure RESILIENCE_OUTCOME) |
 
 ## Interpretation
 
@@ -2483,6 +2850,8 @@ EOF
     "json_report_path": $(json_escape "$(get_policy_snapshot_value running JSON_REPORT_PATH)"),
     "hpa_metric_name": $(json_escape "$(get_policy_snapshot_value running HPA_METRIC_NAME)"),
     "hpa_target_average_value": $(json_escape "$(get_policy_snapshot_value running HPA_TARGET_AVERAGE_VALUE)"),
+    "metrics_collection_status": $(json_nullable_string "$(get_policy_snapshot_value running METRICS_COLLECTION_STATUS)"),
+    "metrics_collection_reason": $(json_nullable_string "$(get_policy_snapshot_value running METRICS_COLLECTION_REASON)"),
     "metrics": {
       "p95_request_latency_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_REQUEST_LATENCY_SECONDS)"),
       "p95_estimated_queue_wait_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_ESTIMATED_QUEUE_WAIT_SECONDS)"),
@@ -2496,7 +2865,11 @@ EOF
       "max_gpu_utilization_percent": $(json_nullable_number "$(get_policy_snapshot_value running MAX_GPU_UTILIZATION_PERCENT)"),
       "peak_active_nodeclaims": $(json_nullable_number "$(get_policy_snapshot_value running PEAK_ACTIVE_NODECLAIMS)"),
       "second_ready_seconds": $(json_nullable_number "$(get_policy_snapshot_value running SECOND_READY_SECONDS)"),
+      "recovery_ready_seconds": $(json_nullable_number "$(get_policy_snapshot_value running RECOVERY_READY_SECONDS)"),
       "estimated_burst_cost": $(json_nullable_number "$(get_policy_snapshot_value running ESTIMATED_BURST_COST)")
+    },
+    "resilience": {
+      "outcome": $(json_nullable_string "$(get_policy_snapshot_value running RESILIENCE_OUTCOME)")
     },
     "capacity_assessment": {
       "status": $(json_nullable_string "$(get_policy_snapshot_value running CAPACITY_ASSESSMENT)"),
@@ -2508,6 +2881,8 @@ EOF
     "json_report_path": $(json_escape "$(get_policy_snapshot_value active-pressure JSON_REPORT_PATH)"),
     "hpa_metric_name": $(json_escape "$(get_policy_snapshot_value active-pressure HPA_METRIC_NAME)"),
     "hpa_target_average_value": $(json_escape "$(get_policy_snapshot_value active-pressure HPA_TARGET_AVERAGE_VALUE)"),
+    "metrics_collection_status": $(json_nullable_string "$(get_policy_snapshot_value active-pressure METRICS_COLLECTION_STATUS)"),
+    "metrics_collection_reason": $(json_nullable_string "$(get_policy_snapshot_value active-pressure METRICS_COLLECTION_REASON)"),
     "metrics": {
       "p95_request_latency_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_REQUEST_LATENCY_SECONDS)"),
       "p95_estimated_queue_wait_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_ESTIMATED_QUEUE_WAIT_SECONDS)"),
@@ -2521,7 +2896,11 @@ EOF
       "max_gpu_utilization_percent": $(json_nullable_number "$(get_policy_snapshot_value active-pressure MAX_GPU_UTILIZATION_PERCENT)"),
       "peak_active_nodeclaims": $(json_nullable_number "$(get_policy_snapshot_value active-pressure PEAK_ACTIVE_NODECLAIMS)"),
       "second_ready_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure SECOND_READY_SECONDS)"),
+      "recovery_ready_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure RECOVERY_READY_SECONDS)"),
       "estimated_burst_cost": $(json_nullable_number "$(get_policy_snapshot_value active-pressure ESTIMATED_BURST_COST)")
+    },
+    "resilience": {
+      "outcome": $(json_nullable_string "$(get_policy_snapshot_value active-pressure RESILIENCE_OUTCOME)")
     },
     "capacity_assessment": {
       "status": $(json_nullable_string "$(get_policy_snapshot_value active-pressure CAPACITY_ASSESSMENT)"),
@@ -2554,14 +2933,15 @@ write_sweep_reports() {
 
 ## Target Summary
 
-| Active target | Status | p95 request latency | p95 estimated queue wait | p95 TTFT | Peak waiting requests | Peak active requests | Peak active/GPU node | Average GPU utilization | Max GPU utilization | Peak active NodeClaims | Second ready replica | Burst cost | Markdown report |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Active target | Status | Metrics collection | p95 request latency | p95 estimated queue wait | p95 TTFT | Peak waiting requests | Peak active requests | Peak active/GPU node | Average GPU utilization | Max GPU utilization | Peak active NodeClaims | Second ready replica | Recovery ready after interruption | Burst cost | Markdown report |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 EOF
 
   for target in "${ACTIVE_TARGET_SWEEP_VALUES[@]}"; do
-    printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+    printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
       "${target}" \
       "$(get_sweep_target_value "${target}" STATUS)" \
+      "$(get_sweep_target_value "${target}" METRICS_COLLECTION_STATUS)" \
       "$(sweep_metric_value "${target}" P95_REQUEST_LATENCY_SECONDS "s")" \
       "$(sweep_metric_value "${target}" P95_ESTIMATED_QUEUE_WAIT_SECONDS "s")" \
       "$(sweep_metric_value "${target}" P95_TTFT_SECONDS "s")" \
@@ -2572,6 +2952,7 @@ EOF
       "$(sweep_metric_value "${target}" MAX_GPU_UTILIZATION_PERCENT "%")" \
       "$(sweep_metric_value "${target}" PEAK_ACTIVE_NODECLAIMS)" \
       "$(sweep_duration_value "${target}" SECOND_READY_SECONDS)" \
+      "$(sweep_duration_value "${target}" RECOVERY_READY_SECONDS)" \
       "$(sweep_metric_value "${target}" ESTIMATED_BURST_COST)" \
       "$(get_sweep_target_value "${target}" REPORT_PATH)" \
       >> "${SWEEP_REPORT_PATH}"
@@ -2644,6 +3025,8 @@ EOF
       printf '      "json_report_path": %s,\n' "$(json_nullable_string "$(get_sweep_target_value "${target}" JSON_REPORT_PATH)")"
       printf '      "hpa_metric_name": %s,\n' "$(json_nullable_string "$(get_sweep_target_value "${target}" HPA_METRIC_NAME)")"
       printf '      "hpa_target_average_value": %s,\n' "$(json_nullable_string "$(get_sweep_target_value "${target}" HPA_TARGET_AVERAGE_VALUE)")"
+      printf '      "metrics_collection_status": %s,\n' "$(json_nullable_string "$(get_sweep_target_value "${target}" METRICS_COLLECTION_STATUS)")"
+      printf '      "metrics_collection_reason": %s,\n' "$(json_nullable_string "$(get_sweep_target_value "${target}" METRICS_COLLECTION_REASON)")"
       printf '      "metrics": {\n'
       printf '        "p95_request_latency_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_REQUEST_LATENCY_SECONDS)")"
       printf '        "p95_estimated_queue_wait_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_ESTIMATED_QUEUE_WAIT_SECONDS)")"
@@ -2657,6 +3040,7 @@ EOF
       printf '        "max_gpu_utilization_percent": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" MAX_GPU_UTILIZATION_PERCENT)")"
       printf '        "peak_active_nodeclaims": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" PEAK_ACTIVE_NODECLAIMS)")"
       printf '        "second_ready_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" SECOND_READY_SECONDS)")"
+      printf '        "recovery_ready_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" RECOVERY_READY_SECONDS)")"
       printf '        "estimated_burst_cost": %s\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" ESTIMATED_BURST_COST)")"
       printf '      }\n'
       printf '    }'
@@ -2669,7 +3053,13 @@ EOF
 }
 
 collect_metrics_and_write_reports() {
-  collect_production_metrics || return 1
+  if ! collect_production_metrics; then
+    METRICS_COLLECTION_STATUS="partial"
+    METRICS_COLLECTION_REASON="Prometheus metric collection failed after workload cleanup; report contains Kubernetes timeline, cost, and resilience data with unavailable metrics set to null."
+    printf 'Warning: unable to collect Prometheus metrics; writing partial report with available timeline, cost, and resilience data.\n' >&2
+    finalize_derived_readouts
+  fi
+
   push_summary_metrics || true
   write_reports
 }
@@ -2729,28 +3119,35 @@ run_single_policy_evaluation() {
   run_stage 6 "${TOTAL_STAGES}" "$(policy_stage_label "run load and wait for scale-out")" run_load_and_wait_for_scale_out
 
   set_failure_hints \
+    "kubectl get nodeclaims -o wide" \
+    "kubectl get nodes -L workload,karpenter.sh/nodepool,karpenter.sh/capacity-type,node.kubernetes.io/instance-type -o wide" \
+    "kubectl get pods -n ${APP_NAMESPACE} -o wide" \
+    "kubectl describe hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE}"
+  run_stage 7 "${TOTAL_STAGES}" "$(policy_stage_label "handle resilience event and wait for recovery")" trigger_spot_interruption_and_wait_for_recovery
+
+  set_failure_hints \
     "kubectl get job ${GPU_LOAD_TEST_JOB_NAME} -n ${APP_NAMESPACE} -o yaml" \
     "kubectl logs -n ${APP_NAMESPACE} job/${GPU_LOAD_TEST_JOB_NAME}" \
     "kubectl get hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE} -o yaml"
-  run_stage 7 "${TOTAL_STAGES}" "$(policy_stage_label "wait for the burst to complete")" wait_for_burst_completion
+  run_stage 8 "${TOTAL_STAGES}" "$(policy_stage_label "wait for the burst to complete")" wait_for_burst_completion
 
   set_failure_hints \
     "kubectl get hpa ${GPU_INFERENCE_HPA_NAME} -n ${APP_NAMESPACE}" \
     "kubectl get deployment ${GPU_INFERENCE_DEPLOYMENT_NAME} -n ${APP_NAMESPACE} -o yaml" \
     "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
-  run_stage 8 "${TOTAL_STAGES}" "$(policy_stage_label "remove load and wait for scale-in")" remove_load_and_wait_for_scale_in
+  run_stage 9 "${TOTAL_STAGES}" "$(policy_stage_label "remove load and wait for scale-in")" remove_load_and_wait_for_scale_in
 
   set_failure_hints \
     "kubectl get deployment,hpa -n ${APP_NAMESPACE}" \
     "kubectl get deployment ${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME} -n ${APP_NAMESPACE}" \
     "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
-  run_stage 9 "${TOTAL_STAGES}" "$(policy_stage_label "delete inference workload and clean profile capacity")" delete_inference_and_clean_profile_capacity
+  run_stage 10 "${TOTAL_STAGES}" "$(policy_stage_label "delete inference workload and clean profile capacity")" delete_inference_and_clean_profile_capacity
 
   set_failure_hints \
     "kubectl get svc -n ${MONITORING_NAMESPACE}" \
     "kubectl get pods -n ${MONITORING_NAMESPACE}" \
     "kubectl get podmonitor,servicemonitor -n ${MONITORING_NAMESPACE}"
-  run_stage 10 "${TOTAL_STAGES}" "$(policy_stage_label "collect metrics and write reports")" collect_metrics_and_write_reports
+  run_stage 11 "${TOTAL_STAGES}" "$(policy_stage_label "collect metrics and write reports")" collect_metrics_and_write_reports
 }
 
 print_single_policy_summary() {
@@ -2762,9 +3159,11 @@ print_single_policy_summary() {
   printf '  HPA target average value: %s\n' "${CURRENT_HPA_TARGET_AVERAGE_VALUE}"
   printf '  First GPU capacity type: %s\n' "${FIRST_GPU_CAPACITY_TYPE:-n/a}"
   printf '  Second GPU capacity type: %s\n' "${SECOND_GPU_CAPACITY_TYPE:-n/a}"
+  printf '  Recovery GPU capacity type: %s\n' "${RECOVERY_GPU_CAPACITY_TYPE:-n/a}"
   printf '  Resilience outcome: %s\n' "${RESILIENCE_OUTCOME:-n/a}"
   printf '  First public response: %s\n' "$(display_duration "$(seconds_since_start "${FIRST_RESPONSE_TIME}")")"
   printf '  Second ready replica: %s\n' "$(display_duration "$(seconds_since_start "${SECOND_READY_TIME}")")"
+  printf '  Recovery ready replica after interruption: %s\n' "$(display_duration "$(seconds_since_start "${RECOVERY_READY_TIME}")")"
   printf '  p95 request latency: %s\n' "$(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")"
   printf '  p95 estimated queue wait: %s\n' "$(display_metric "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}" "s")"
   printf '  Peak waiting requests: %s\n' "$(display_metric "${PEAK_WAITING_REQUESTS}")"

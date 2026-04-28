@@ -14,6 +14,10 @@ write_evaluate_kubectl_stub() {
 "cmd=\"\$*\"" \
 "if [[ \"\$1\" == 'port-forward' ]]; then" \
 "  if [[ \"\$cmd\" == *'kube-prometheus-stack-prometheus'* ]]; then" \
+"    if [[ -f \"${TEST_TMPDIR}/prometheus-port-forward-fails\" ]]; then" \
+"      printf '%s\n' 'Unable to connect to the server: dial tcp: lookup cluster.example.com: no such host' >&2" \
+"      exit 1" \
+"    fi" \
 "    printf '%s\n' 'Forwarding from 127.0.0.1:39090 -> 9090'" \
 "  else" \
 "    printf '%s\n' 'Forwarding from 127.0.0.1:39091 -> 9091'" \
@@ -49,8 +53,20 @@ write_evaluate_kubectl_stub() {
 "    : > \"${TEST_TMPDIR}/spot-nodepool-disabled\"" \
 "    exit 0" \
 "    ;;" \
+"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true')" \
+"    : > \"${TEST_TMPDIR}/ondemand-nodepool-disabled\"" \
+"    exit 0" \
+"    ;;" \
+"  'delete nodeclaim gpu-serving-2 --ignore-not-found=true')" \
+"    : > \"${TEST_TMPDIR}/interruption-triggered\"" \
+"    exit 0" \
+"    ;;" \
 "  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml')" \
 "    rm -f \"${TEST_TMPDIR}/spot-nodepool-disabled\"" \
+"    exit 0" \
+"    ;;" \
+"  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml')" \
+"    rm -f \"${TEST_TMPDIR}/ondemand-nodepool-disabled\"" \
 "    exit 0" \
 "    ;;" \
 "  'get nodepool gpu-serving-spot')" \
@@ -60,6 +76,13 @@ write_evaluate_kubectl_stub() {
 "    printf '%s\n' 'gpu-serving-spot'" \
 "    exit 0" \
 "    ;;" \
+"  'get nodepool gpu-serving-ondemand')" \
+"    if [[ -f \"${TEST_TMPDIR}/ondemand-nodepool-disabled\" ]]; then" \
+"      exit 1" \
+"    fi" \
+"    printf '%s\n' 'gpu-serving-ondemand'" \
+"    exit 0" \
+"    ;;" \
 "  'apply -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml')" \
 "    : > \"${TEST_TMPDIR}/warm-placeholder-applied\"" \
 "    exit 0" \
@@ -67,7 +90,9 @@ write_evaluate_kubectl_stub() {
 "  'get nodes -l workload=gpu -o name')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" || -f \"${TEST_TMPDIR}/warm-placeholder-applied\" ]]; then" \
 "      printf '%s\n' 'node/gpu-serving-1'" \
-"      if [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+"      if [[ -f \"${TEST_TMPDIR}/interruption-triggered\" && ( -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ) ]]; then" \
+"        printf '%s\n' 'node/gpu-serving-3'" \
+"      elif [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
 "        printf '%s\n' 'node/gpu-serving-2'" \
 "      fi" \
 "    fi" \
@@ -76,20 +101,65 @@ write_evaluate_kubectl_stub() {
 "  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" || -f \"${TEST_TMPDIR}/warm-placeholder-applied\" ]]; then" \
 "      printf '%s\n' 'nodeclaim/gpu-serving-1'" \
-"      if [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+"      if [[ -f \"${TEST_TMPDIR}/interruption-triggered\" && ( -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ) ]]; then" \
+"        printf '%s\n' 'nodeclaim/gpu-serving-3'" \
+"      elif [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
 "        printf '%s\n' 'nodeclaim/gpu-serving-2'" \
 "      fi" \
 "    fi" \
 "    exit 0" \
 "    ;;" \
-"  'get nodes -l workload=gpu --sort-by=.metadata.creationTimestamp -o jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}')" \
+"  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) --sort-by=.metadata.creationTimestamp -o jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" || -f \"${TEST_TMPDIR}/warm-placeholder-applied\" ]]; then" \
 "      printf '%s\n' 'gpu-serving-1'" \
-"      if [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+"      if [[ -f \"${TEST_TMPDIR}/interruption-triggered\" && ( -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ) ]]; then" \
+"        printf '%s\n' 'gpu-serving-3'" \
+"      elif [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
 "        printf '%s\n' 'gpu-serving-2'" \
 "      fi" \
 "    fi" \
 "    exit 0" \
+"    ;;" \
+"  'get nodeclaim gpu-serving-1') printf '%s\n' 'gpu-serving-1'; exit 0 ;;" \
+"  'get nodeclaim gpu-serving-2')" \
+"    if [[ -f \"${TEST_TMPDIR}/interruption-triggered\" ]]; then" \
+"      exit 1" \
+"    fi" \
+"    printf '%s\n' 'gpu-serving-2'" \
+"    exit 0" \
+"    ;;" \
+"  'get nodeclaim gpu-serving-3')" \
+"    if [[ -f \"${TEST_TMPDIR}/interruption-triggered\" ]]; then" \
+"      printf '%s\n' 'gpu-serving-3'" \
+"      exit 0" \
+"    fi" \
+"    exit 1" \
+"    ;;" \
+"  'get nodes -l workload=gpu --sort-by=.metadata.creationTimestamp -o jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" || -f \"${TEST_TMPDIR}/warm-placeholder-applied\" ]]; then" \
+"      printf '%s\n' 'gpu-serving-1'" \
+"      if [[ -f \"${TEST_TMPDIR}/interruption-triggered\" && ( -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ) ]]; then" \
+"        printf '%s\n' 'gpu-serving-3'" \
+"      elif [[ -f \"${TEST_TMPDIR}/load-applied\" || -f \"${TEST_TMPDIR}/load-finished\" ]]; then" \
+"        printf '%s\n' 'gpu-serving-2'" \
+"      fi" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get node gpu-serving-1') printf '%s\n' 'gpu-serving-1'; exit 0 ;;" \
+"  'get node gpu-serving-2')" \
+"    if [[ -f \"${TEST_TMPDIR}/interruption-triggered\" ]]; then" \
+"      exit 1" \
+"    fi" \
+"    printf '%s\n' 'gpu-serving-2'" \
+"    exit 0" \
+"    ;;" \
+"  'get node gpu-serving-3')" \
+"    if [[ -f \"${TEST_TMPDIR}/interruption-triggered\" ]]; then" \
+"      printf '%s\n' 'gpu-serving-3'" \
+"      exit 0" \
+"    fi" \
+"    exit 1" \
 "    ;;" \
 "  'get node gpu-serving-1 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g5.xlarge'; exit 0 ;;" \
 "  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-ondemand'; exit 0 ;;" \
@@ -127,6 +197,10 @@ write_evaluate_kubectl_stub() {
 "    fi" \
 "    exit 0" \
 "    ;;" \
+"  'get node gpu-serving-3 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g5.xlarge'; exit 0 ;;" \
+"  'get node gpu-serving-3 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-ondemand'; exit 0 ;;" \
+"  'get node gpu-serving-3 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'on-demand'; exit 0 ;;" \
+"  'get node gpu-serving-3 -o jsonpath={.metadata.labels.topology\.kubernetes\.io/zone}') printf '%s\n' 'us-west-2b'; exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml')" \
 "    : > \"${TEST_TMPDIR}/deployment-applied\"" \
 "    exit 0" \
@@ -251,7 +325,7 @@ run_running_policy_test() {
     --json-report "${TEST_TMPDIR}/report.json"
 
   assert_status 0 "${COMMAND_STATUS}" "scripts/evaluate should complete the running-policy workflow by default"
-  assert_contains "${COMMAND_OUTPUT}" "OK 5/10 wait for hpa metric pipeline and apply hpa" "running policy should keep the original stage label"
+  assert_contains "${COMMAND_OUTPUT}" "OK 5/11 wait for hpa metric pipeline and apply hpa" "running policy should keep the original stage label"
   assert_contains "${COMMAND_OUTPUT}" "Policy: running" "running policy output should print the selected policy"
   assert_contains "${COMMAND_OUTPUT}" "HPA metric: vllm_requests_running" "running policy output should print the running metric"
   assert_contains "${COMMAND_OUTPUT}" "Markdown report: ${TEST_TMPDIR}/report.md" "running policy should print the Markdown report path"
@@ -291,6 +365,43 @@ run_running_policy_test() {
   teardown_test_tmpdir
 }
 
+run_metrics_collection_failure_partial_report_test() {
+  setup_test_tmpdir
+  write_evaluate_kubectl_stub
+  write_evaluate_curl_stub
+  : > "${TEST_TMPDIR}/prometheus-port-forward-fails"
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
+    TMPDIR=/tmp \
+    /bin/bash "${REPO_ROOT}/scripts/evaluate" \
+    --profile zero-idle \
+    --report "${TEST_TMPDIR}/partial.md" \
+    --json-report "${TEST_TMPDIR}/partial.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/evaluate should write a partial report when final Prometheus collection fails"
+  assert_contains "${COMMAND_OUTPUT}" "Unable to connect to the server: dial tcp: lookup cluster.example.com: no such host" "the failed Prometheus port-forward error should remain visible"
+  assert_contains "${COMMAND_OUTPUT}" "Warning: unable to collect Prometheus metrics; writing partial report" "the evaluator should explain that it is writing a partial report"
+  assert_contains "${COMMAND_OUTPUT}" "OK 11/11 collect metrics and write reports" "the final stage should complete after writing the partial report"
+
+  assert_file_exists "${TEST_TMPDIR}/partial.md" "partial collection should still write the Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/partial.json" "partial collection should still write the JSON report"
+
+  REPORT_CONTENT=$(cat "${TEST_TMPDIR}/partial.md")
+  JSON_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/partial.json")
+
+  assert_contains "${REPORT_CONTENT}" "Metrics collection status: partial" "the Markdown report should mark partial metric collection"
+  assert_contains "${REPORT_CONTENT}" "Prometheus metric collection failed after workload cleanup" "the Markdown report should include the partial collection reason"
+  assert_contains "${REPORT_CONTENT}" "p95 request latency during burst: n/a" "Prometheus-derived metrics should be shown as unavailable in the partial report"
+  assert_contains "${REPORT_CONTENT}" "Resilience outcome: preferred-capacity-available" "derived resilience fields should still be computed from Kubernetes timeline data"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"metrics_collection_status\": \"partial\"" "the JSON report should mark partial metric collection"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"metrics_collection_reason\": \"Prometheus metric collection failed after workload cleanup" "the JSON report should include the partial collection reason"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"p95_request_latency_seconds\": null" "Prometheus-derived JSON metrics should remain null in the partial report"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"outcome\": \"preferred-capacity-available\"" "derived resilience JSON fields should still be present in the partial report"
+
+  teardown_test_tmpdir
+}
+
 run_active_pressure_policy_test() {
   setup_test_tmpdir
   write_evaluate_kubectl_stub
@@ -307,7 +418,7 @@ run_active_pressure_policy_test() {
     --json-report "${TEST_TMPDIR}/active.json"
 
   assert_status 0 "${COMMAND_STATUS}" "scripts/evaluate should complete the active-pressure workflow"
-  assert_contains "${COMMAND_OUTPUT}" "OK 5/10 active-pressure: wait for hpa metric pipeline and apply hpa" "active-pressure should prefix the stage label"
+  assert_contains "${COMMAND_OUTPUT}" "OK 5/11 active-pressure: wait for hpa metric pipeline and apply hpa" "active-pressure should prefix the stage label"
   assert_contains "${COMMAND_OUTPUT}" "Policy: active-pressure" "active-pressure output should print the selected policy"
   assert_contains "${COMMAND_OUTPUT}" "HPA metric: vllm_requests_active" "active-pressure output should print the active metric"
   assert_contains "${COMMAND_OUTPUT}" "HPA target average value: 6" "active-pressure output should print the overridden target"
@@ -360,8 +471,8 @@ run_compare_policy_test() {
     --json-report "${TEST_TMPDIR}/compare.json"
 
   assert_status 0 "${COMMAND_STATUS}" "scripts/evaluate should complete the compare workflow"
-  assert_contains "${COMMAND_OUTPUT}" "OK 1/10 running: checking prerequisites" "compare mode should prefix the running-policy stages"
-  assert_contains "${COMMAND_OUTPUT}" "OK 1/10 active-pressure: checking prerequisites" "compare mode should run the active-pressure stages after running"
+  assert_contains "${COMMAND_OUTPUT}" "OK 1/11 running: checking prerequisites" "compare mode should prefix the running-policy stages"
+  assert_contains "${COMMAND_OUTPUT}" "OK 1/11 active-pressure: checking prerequisites" "compare mode should run the active-pressure stages after running"
   assert_contains "${COMMAND_OUTPUT}" "Compared:" "compare mode should print a compare summary"
   assert_contains "${COMMAND_OUTPUT}" "Compare report: ${TEST_TMPDIR}/compare-compare.md" "compare mode should print the compare Markdown report path"
 
@@ -414,8 +525,8 @@ run_sweep_policy_test() {
     --json-report "${TEST_TMPDIR}/sweep.json"
 
   assert_status 0 "${COMMAND_STATUS}" "scripts/evaluate should complete the sweep workflow"
-  assert_contains "${COMMAND_OUTPUT}" "OK 1/10 active-pressure@2: checking prerequisites" "sweep mode should prefix stages with the first target"
-  assert_contains "${COMMAND_OUTPUT}" "OK 1/10 active-pressure@8: checking prerequisites" "sweep mode should execute later active targets in order"
+  assert_contains "${COMMAND_OUTPUT}" "OK 1/11 active-pressure@2: checking prerequisites" "sweep mode should prefix stages with the first target"
+  assert_contains "${COMMAND_OUTPUT}" "OK 1/11 active-pressure@8: checking prerequisites" "sweep mode should execute later active targets in order"
   assert_contains "${COMMAND_OUTPUT}" "Swept:" "sweep mode should print a sweep summary"
   assert_contains "${COMMAND_OUTPUT}" "Recommended active target: 8" "sweep mode should print the recommended target"
   assert_contains "${COMMAND_OUTPUT}" "Sweep report: ${TEST_TMPDIR}/sweep-active-pressure-sweep.md" "sweep mode should print the sweep Markdown report path"
@@ -505,8 +616,78 @@ run_spot_unavailable_resilience_test() {
   teardown_test_tmpdir
 }
 
+run_spot_interruption_resilience_test() {
+  setup_test_tmpdir
+  write_evaluate_kubectl_stub
+  write_evaluate_curl_stub
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
+    TMPDIR=/tmp \
+    /bin/bash "${REPO_ROOT}/scripts/evaluate" \
+    --profile zero-idle \
+    --resilience spot-interruption \
+    --report "${TEST_TMPDIR}/interruption.md" \
+    --json-report "${TEST_TMPDIR}/interruption.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/evaluate should complete the spot-interruption resilience workflow"
+  assert_contains "${COMMAND_OUTPUT}" "OK 7/11 handle resilience event and wait for recovery" "the interruption workflow should execute the live resilience stage"
+  assert_contains "${COMMAND_OUTPUT}" "Resilience mode: spot-interruption" "the interruption workflow should print the selected resilience mode"
+  assert_contains "${COMMAND_OUTPUT}" "Resilience outcome: interruption-recovered" "the interruption workflow should summarize the recovery outcome"
+  assert_contains "${COMMAND_OUTPUT}" "Recovery GPU capacity type: on-demand" "the interruption workflow should summarize the replacement capacity type"
+
+  assert_file_exists "${TEST_TMPDIR}/interruption.md" "the interruption workflow should write the Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/interruption.json" "the interruption workflow should write the JSON report"
+
+  REPORT_CONTENT=$(cat "${TEST_TMPDIR}/interruption.md")
+  JSON_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/interruption.json")
+  KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
+  CURL_LOG=$(cat "${TEST_TMPDIR}/curl.log")
+
+  assert_contains "${REPORT_CONTENT}" "Resilience mode: spot-interruption" "the Markdown report should include the live interruption mode"
+  assert_contains "${REPORT_CONTENT}" "Second GPU capacity type: spot" "the Markdown report should preserve the interrupted spot burst node"
+  assert_contains "${REPORT_CONTENT}" "Recovery GPU capacity type: on-demand" "the Markdown report should include the replacement on-demand node"
+  assert_contains "${REPORT_CONTENT}" "Recovery GPU availability zone: us-west-2b" "the Markdown report should include the replacement node zone"
+  assert_contains "${REPORT_CONTENT}" "Interruption triggered" "the Markdown report should include the interruption timeline row"
+  assert_contains "${REPORT_CONTENT}" "Recovery second ready replica" "the Markdown report should include the recovery-ready timeline row"
+  assert_contains "${REPORT_CONTENT}" "Interruption to recovered second ready replica" "the Markdown report should summarize the recovery duration"
+  assert_contains "${REPORT_CONTENT}" "Expected recovery capacity type after interruption: on-demand" "the Markdown report should explain the expected replacement capacity"
+  assert_contains "${REPORT_CONTENT}" "Observed recovery-node capacity type: on-demand" "the Markdown report should include the observed replacement capacity"
+  assert_contains "${REPORT_CONTENT}" "Resilience outcome: interruption-recovered" "the Markdown report should record the successful recovery outcome"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"resilience_mode\": \"spot-interruption\"" "the JSON report should include the live interruption mode"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"recovery_gpu_capacity_type\": \"on-demand\"" "the JSON report should record the replacement capacity type"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"recovery_gpu_availability_zone\": \"us-west-2b\"" "the JSON report should include the replacement node zone"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"interruption_trigger_seconds\":" "the JSON report should include the interruption timeline field"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"recovery_ready_seconds\":" "the JSON report should include the recovery-ready timeline field"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"interruption_to_recovery_ready_seconds\":" "the JSON report should include the interruption-to-recovery summary metric"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"expected_recovery_capacity_type\": \"on-demand\"" "the JSON report should include the expected replacement capacity type"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"outcome\": \"interruption-recovered\"" "the JSON report should include the interruption recovery outcome"
+  assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true" "the interruption workflow should withdraw the on-demand NodePool before the burst so the scale-out node must land on spot"
+  assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" "the interruption workflow should withdraw the spot NodePool before recovery"
+  assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" "the interruption workflow should restore the on-demand NodePool before deleting the interrupted spot nodeclaim"
+  assert_contains "${KUBECTL_LOG}" "delete nodeclaim gpu-serving-2 --ignore-not-found=true" "the interruption workflow should delete the live burst NodeClaim"
+  assert_occurs_before "${KUBECTL_LOG}" \
+    "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true" \
+    "apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml" \
+    "the interruption workflow should remove on-demand burst capacity before the load starts"
+  assert_occurs_before "${KUBECTL_LOG}" \
+    "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" \
+    "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" \
+    "the interruption workflow should withdraw the spot pool before re-enabling on-demand recovery capacity"
+  assert_occurs_before "${KUBECTL_LOG}" \
+    "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" \
+    "delete nodeclaim gpu-serving-2 --ignore-not-found=true" \
+    "the interruption workflow should restore on-demand capacity before deleting the live spot nodeclaim"
+  assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml" "the interruption workflow should restore the spot NodePool after the run"
+  assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/resilience/spot-interruption/policy/running/target/128" "the interruption workflow should label Pushgateway metrics with the interruption mode"
+
+  teardown_test_tmpdir
+}
+
 run_running_policy_test
+run_metrics_collection_failure_partial_report_test
 run_active_pressure_policy_test
 run_compare_policy_test
 run_sweep_policy_test
 run_spot_unavailable_resilience_test
+run_spot_interruption_resilience_test

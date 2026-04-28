@@ -310,6 +310,72 @@ data:
           ],
           "title": "Peak Active Requests Per GPU Node",
           "type": "stat"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 21
+          },
+          "id": 10,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (profile, resilience, policy, target) (gpu_serving_measure_interruption_to_recovery_gpu_node_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{resilience}}/{{policy}}/{{target}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Interruption To Recovery GPU Node",
+          "type": "stat"
+        },
+        {
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 21
+          },
+          "id": 11,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (profile, resilience, policy, target) (gpu_serving_measure_interruption_to_recovery_ready_seconds{job=\"gpu-serving-measure\"})",
+              "legendFormat": "{{profile}}/{{resilience}}/{{policy}}/{{target}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Interruption To Recovery Ready",
+          "type": "stat"
         }
       ],
       "refresh": "30s",

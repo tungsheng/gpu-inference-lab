@@ -24,6 +24,7 @@ is intentionally opinionated:
 ./scripts/verify
 ./scripts/evaluate --profile zero-idle
 ./scripts/evaluate --profile zero-idle --resilience spot-unavailable
+./scripts/evaluate --profile zero-idle --resilience spot-interruption
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
@@ -107,6 +108,12 @@ Degraded-capacity baseline with the preferred spot burst path withdrawn:
 ./scripts/evaluate --profile zero-idle --resilience spot-unavailable
 ```
 
+Live interruption drill with replacement timing:
+
+```bash
+./scripts/evaluate --profile zero-idle --resilience spot-interruption
+```
+
 Capacity-aware policy on the same zero-idle baseline:
 
 ```bash
@@ -135,11 +142,15 @@ The evaluation workflow is the deeper platform exercise:
 6. waits for HPA desired replicas to reach `2`
 7. waits for the second serving `NodeClaim`, second GPU node, and second Ready
    replica
-8. waits for the burst to finish and scale back in
-9. deletes the workload and profile-specific warm capacity, or restores the
+8. optionally deletes the live spot-backed burst `NodeClaim` and waits for the
+   replacement GPU node plus recovered second Ready replica
+9. waits for the burst to finish and scale back in
+10. deletes the workload and profile-specific warm capacity, or restores the
    warm baseline between policy or target runs in compare and sweep mode
-10. collects Prometheus and DCGM metrics and writes per-policy, compare, or
-    sweep reports
+11. collects Prometheus and DCGM metrics and writes per-policy, compare, or
+    sweep reports; this final collection is best-effort, so a late API or
+    Prometheus access failure writes a partial report instead of discarding the
+    completed run
 
 Profile behavior:
 
@@ -163,6 +174,7 @@ Resilience behavior:
 | --- | --- |
 | `healthy` | leaves the preferred spot burst path available and reports whether the second node arrived on spot or on-demand |
 | `spot-unavailable` | withdraws `gpu-serving-spot` before the run, measures whether burst scale-out falls back to on-demand, and restores the spot `NodePool` afterward |
+| `spot-interruption` | temporarily withdraws `gpu-serving-ondemand` before the burst so the scale-out node must land on spot, then restores on-demand, deletes the live spot-backed burst `NodeClaim`, and records replacement timing |
 
 Reports are written to:
 
@@ -176,17 +188,20 @@ Reports are written to:
 
 Those reports capture:
 
-- selected resilience mode, resilience outcome, and the rationale behind the observed fallback behavior
+- selected resilience mode, resilience outcome, and the rationale behind the observed fallback or recovery behavior
 - selected policy, HPA metric name, and HPA target average value
-- timeline events for node launch, readiness, scale-out, scale-in, and cleanup
+- metric collection status, so partial reports are explicit when final
+  Prometheus/DCGM reads were unavailable
+- timeline events for node launch, readiness, scale-out, interruption, recovery, scale-in, and cleanup
 - p95 request latency, p95 estimated queue wait, and p95 time to first token
 - peak waiting requests and peak active requests
 - peak active requests per active GPU node and average completed requests per
   second
 - generation throughput
 - average GPU utilization, GPU headroom, and max GPU utilization
-- first and second GPU availability zones, plus the observed second-node capacity type
+- first, second, and recovery GPU availability zones, plus the observed second-node and recovery-node capacity types
 - peak serving `NodeClaim` count, split by capacity type
+- interruption-to-replacement and interruption-to-recovered-ready timings when the live interruption workflow is used
 - estimated serving GPU cost for the run
 - in sweep mode, a summary table plus a recommended active target from the
   built-in heuristic

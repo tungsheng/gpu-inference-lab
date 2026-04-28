@@ -106,6 +106,7 @@ With the scripted path:
 ./scripts/evaluate --profile zero-idle
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
 ./scripts/evaluate --profile zero-idle --resilience spot-unavailable
+./scripts/evaluate --profile zero-idle --resilience spot-interruption
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ```
@@ -120,6 +121,8 @@ The repo proves:
 - second-node provisioning through Karpenter
 - degraded-capacity fallback behavior when the preferred spot burst path is
   withdrawn
+- live interruption recovery behavior when a spot-backed burst node is deleted
+  during the load
 - report generation for latency, derived queue wait, TTFT, waiting pressure,
   utilization, and cost
 
@@ -151,12 +154,13 @@ curl "http://${EDGE_HOST}/v1/completions" \
   -d '{"model":"qwen2.5-0.5b","prompt":"Say hello from the public edge.","max_tokens":32,"temperature":0}'
 ```
 
-## Current Resilience Step
+## Resilience Coverage
 
-The next systems question is no longer just capacity calibration. It is
-resilience under degraded capacity:
+Milestone 11 now covers two resilience drills:
 
-- `--resilience spot-unavailable` already proves the platform can fall back to
-  on-demand GPU nodes when the preferred spot path is withdrawn
-- the next follow-up is a true spot interruption experiment during the burst,
-  not just pre-run scarcity
+- `--resilience spot-unavailable` proves the platform can still scale out when
+  the preferred spot burst path disappears before the load starts
+- `--resilience spot-interruption` temporarily withdraws the on-demand serving
+  pool before the burst so the second node must land on spot, then proves the
+  platform can recover after that live spot-backed burst node is deleted during
+  the load, and it records the replacement timing plus recovery capacity type

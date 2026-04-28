@@ -386,7 +386,7 @@ run_evaluate_scale_out_timeout_test() {
     /bin/bash "${REPO_ROOT}/scripts/evaluate" --profile zero-idle --report "${TEST_TMPDIR}/report.md"
 
   assert_status 1 "${COMMAND_STATUS}" "evaluate should fail when the HPA never scales out"
-  assert_contains "${COMMAND_OUTPUT}" "FAIL 6/10 run load and wait for scale-out" "evaluate should fail in the scale-out stage when desired replicas never increase"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 6/11 run load and wait for scale-out" "evaluate should fail in the scale-out stage when desired replicas never increase"
   assert_contains "${COMMAND_OUTPUT}" "Load job completed before HPA scaled out; desired replicas stayed at 1" "evaluate should stop waiting once the load finishes without any scale-out signal"
   teardown_test_tmpdir
 }
@@ -474,7 +474,7 @@ run_evaluate_metric_pipeline_timeout_test() {
     /bin/bash "${REPO_ROOT}/scripts/evaluate" --profile zero-idle --report "${TEST_TMPDIR}/report.md"
 
   assert_status 1 "${COMMAND_STATUS}" "evaluate should fail fast when the HPA metric pipeline never becomes available"
-  assert_contains "${COMMAND_OUTPUT}" "FAIL 5/10 wait for hpa metric pipeline and apply hpa" "evaluate should fail in the metric preflight stage when the custom metric never resolves"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 5/11 wait for hpa metric pipeline and apply hpa" "evaluate should fail in the metric preflight stage when the custom metric never resolves"
   teardown_test_tmpdir
 }
 
@@ -561,7 +561,7 @@ run_evaluate_active_pressure_metric_pipeline_timeout_test() {
     /bin/bash "${REPO_ROOT}/scripts/evaluate" --profile zero-idle --policy active-pressure --report "${TEST_TMPDIR}/report.md"
 
   assert_status 1 "${COMMAND_STATUS}" "active-pressure evaluate should fail fast when the active metric never becomes available"
-  assert_contains "${COMMAND_OUTPUT}" "FAIL 5/10 active-pressure: wait for hpa metric pipeline and apply hpa" "active-pressure should fail in the metric preflight stage when the custom metric never resolves"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 5/11 active-pressure: wait for hpa metric pipeline and apply hpa" "active-pressure should fail in the metric preflight stage when the custom metric never resolves"
   assert_file_not_exists "${TEST_TMPDIR}/report.md" "active-pressure metric failures should stop before writing a report"
 
   KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
@@ -634,7 +634,7 @@ run_evaluate_warm_profile_capacity_timeout_test() {
     /bin/bash "${REPO_ROOT}/scripts/evaluate" --profile warm-1 --report "${TEST_TMPDIR}/report.md"
 
   assert_status 1 "${COMMAND_STATUS}" "evaluate should fail when the warm placeholder never gets a GPU node"
-  assert_contains "${COMMAND_OUTPUT}" "FAIL 2/10 prepare evaluation edge and profile" "warm-profile provisioning failures should stop in stage 2"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 2/11 prepare evaluation edge and profile" "warm-profile provisioning failures should stop in stage 2"
   assert_contains "${COMMAND_OUTPUT}" "Warm-profile diagnostics:" "warm-profile failures should print inline diagnostics before exiting"
   assert_contains "${COMMAND_OUTPUT}" "preserved for inspection: yes" "warm-profile failures should preserve the placeholder deployment for debugging"
 
@@ -800,7 +800,7 @@ run_evaluate_compare_second_policy_failure_test() {
     /bin/bash "${REPO_ROOT}/scripts/evaluate" --profile zero-idle --policy compare --report "${TEST_TMPDIR}/compare.md" --json-report "${TEST_TMPDIR}/compare.json"
 
   assert_status 1 "${COMMAND_STATUS}" "compare mode should stop when the second policy cannot resolve its metric"
-  assert_contains "${COMMAND_OUTPUT}" "FAIL 5/10 active-pressure: wait for hpa metric pipeline and apply hpa" "compare mode should surface the active-pressure metric preflight failure"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 5/11 active-pressure: wait for hpa metric pipeline and apply hpa" "compare mode should surface the active-pressure metric preflight failure"
   assert_not_contains "${COMMAND_OUTPUT}" "Compared:" "compare mode should not print a compare summary when the second policy fails"
   assert_file_exists "${TEST_TMPDIR}/compare-running.md" "compare mode should preserve the completed running-policy Markdown report"
   assert_file_exists "${TEST_TMPDIR}/compare-running.json" "compare mode should preserve the completed running-policy JSON report"
@@ -986,7 +986,7 @@ run_evaluate_sweep_second_target_failure_test() {
     /bin/bash "${REPO_ROOT}/scripts/evaluate" --profile zero-idle --policy sweep --active-targets 2,4,8 --report "${TEST_TMPDIR}/sweep.md" --json-report "${TEST_TMPDIR}/sweep.json"
 
   assert_status 1 "${COMMAND_STATUS}" "sweep mode should stop when a later target cannot resolve its metric"
-  assert_contains "${COMMAND_OUTPUT}" "FAIL 5/10 active-pressure@4: wait for hpa metric pipeline and apply hpa" "sweep mode should surface the later target metric preflight failure"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 5/11 active-pressure@4: wait for hpa metric pipeline and apply hpa" "sweep mode should surface the later target metric preflight failure"
   assert_not_contains "${COMMAND_OUTPUT}" "Swept:" "sweep mode should not print a sweep summary when a later target fails"
   assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-target-2.md" "sweep mode should preserve the completed target-2 Markdown report"
   assert_file_exists "${TEST_TMPDIR}/sweep-active-pressure-target-2.json" "sweep mode should preserve the completed target-2 JSON report"
@@ -1075,7 +1075,7 @@ run_evaluate_compare_warm_profile_capacity_timeout_test() {
     /bin/bash "${REPO_ROOT}/scripts/evaluate" --profile warm-1 --policy compare --report "${TEST_TMPDIR}/compare.md"
 
   assert_status 1 "${COMMAND_STATUS}" "compare mode should fail when the warm placeholder never gets a GPU node"
-  assert_contains "${COMMAND_OUTPUT}" "FAIL 2/10 running: prepare evaluation edge and profile" "compare warm-profile failures should preserve the running-policy stage label"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 2/11 running: prepare evaluation edge and profile" "compare warm-profile failures should preserve the running-policy stage label"
   assert_contains "${COMMAND_OUTPUT}" "Warm-profile diagnostics:" "compare warm-profile failures should still print inline diagnostics"
   assert_contains "${COMMAND_OUTPUT}" "preserved for inspection: yes" "compare warm-profile failures should preserve the placeholder deployment for debugging"
 

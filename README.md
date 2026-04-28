@@ -90,6 +90,7 @@ Run the burst evaluation path:
 ./scripts/evaluate --profile zero-idle
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
 ./scripts/evaluate --profile zero-idle --resilience spot-unavailable
+./scripts/evaluate --profile zero-idle --resilience spot-interruption
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ```
@@ -120,13 +121,19 @@ Run the local shell tests:
   active-pressure HPA policy, or sweeps multiple active-pressure targets, runs
   the checked-in burst load, waits for a second replica and second GPU node,
   collects Prometheus and DCGM metrics, estimates serving-node cost, and
-  writes reports. `--policy compare` runs the running baseline first and the
+  writes reports. Final metric collection is best-effort: if the Kubernetes API
+  or Prometheus access fails after cleanup, the script still writes a partial
+  report with timeline, cost, and resilience fields preserved. `--policy
+  compare` runs the running baseline first and the
   active-pressure policy second, then writes a side-by-side compare report.
   `--policy sweep` runs one active-pressure experiment per target in
   `--active-targets` and writes a recommendation summary. `--resilience
   spot-unavailable` withdraws the preferred spot `NodePool` for the run,
   proves on-demand fallback behavior under burst load, and restores the spot
-  pool afterward.
+  pool afterward. `--resilience spot-interruption` temporarily withdraws the
+  on-demand serving `NodePool` before the burst so the second node must land on
+  spot, then restores on-demand, deletes the live spot-backed burst
+  `NodeClaim`, forces on-demand recovery, and reports replacement timing.
 - `./scripts/down` removes runtime resources, observability, GPU capacity
   definitions, controllers, and Terraform-managed infrastructure. The optional
   `--cleanup-orphan-enis` flag retries one failed `terraform destroy` after
@@ -150,6 +157,8 @@ Run the local shell tests:
   cost?
 - What happens when the preferred spot burst path is unavailable and the burst
   has to fall back to on-demand GPU capacity?
+- What happens when a live spot-backed burst node disappears mid-burst, and how
+  long does replacement take?
 
 ## Current Autoscaling Story
 
@@ -164,9 +173,9 @@ The repo now ships with two HPA policies:
 active-pressure targets in one pass. The remaining gap is no longer "can this
 scale?" but "is the target calibrated from the right queue and per-GPU
 capacity signals?" Queue reporting now derives a p95 queue-wait estimate from
-waiting depth over request completion rate, and the repo now also has a first
-resilience experiment through `--resilience spot-unavailable` to show what
-happens when the preferred spot burst path disappears before the load arrives.
+waiting depth over request completion rate, and the repo now also covers both
+pre-run spot scarcity and a live interruption drill through
+`--resilience spot-unavailable` and `--resilience spot-interruption`.
 
 ## Dev Boundary
 

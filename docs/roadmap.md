@@ -40,8 +40,8 @@ What is still not true:
 - the active-pressure target can now be swept heuristically, but it is still
   not derived from a true per-GPU efficiency model
 - the repo does not yet prove GPU bin-packing efficiency
-- live spot interruption injection is still ahead even though spot-scarcity
-  fallback experiments are now implemented
+- the interruption drill is synthetic `NodeClaim` deletion, not a cloud-native
+  interruption notice
 
 ## Implemented Milestones
 
@@ -163,23 +163,20 @@ Why this follows Milestone 9:
 
 ### Milestone 11 - Resilience and interruption handling
 
-Status: in progress.
+Status: implemented.
 
-Implemented so far:
+Outcome:
 
-- `./scripts/evaluate --resilience healthy|spot-unavailable`
+- `./scripts/evaluate --resilience healthy|spot-unavailable|spot-interruption`
 - a degraded-capacity experiment that withdraws the preferred spot `NodePool`
   for the run, then records whether the burst falls back to on-demand GPU
   capacity
-- report fields for resilience mode, fallback outcome, and first/second GPU
-  availability zones
-
-Still ahead:
-
-- inject a live spot interruption during the burst instead of only simulating
-  pre-run spot scarcity
-- measure replacement time and recovery quality after the interrupted capacity
-  disappears
+- a live interruption drill that deletes the active spot-backed burst
+  `NodeClaim`, withdraws the spot pool, and measures replacement timing plus
+  recovery back to two ready replicas
+- report and dashboard fields for resilience mode, fallback or recovery
+  outcome, first/second/recovery GPU availability zones, and interruption
+  recovery timing
 
 ### Milestone 12 - Production hardening
 
