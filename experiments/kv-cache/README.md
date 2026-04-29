@@ -34,7 +34,7 @@ Local render:
   --output /tmp/kv-cache-load.yaml
 ```
 
-Live run after `./scripts/up`:
+Measured live-cluster run after `./scripts/up`:
 
 ```bash
 ./scripts/experiment run \

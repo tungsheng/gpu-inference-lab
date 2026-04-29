@@ -1,6 +1,6 @@
 # KV Cache Vs Concurrency Results
 
-Status: no curated production run recorded yet.
+Status: no curated live-cluster run recorded yet.
 
 ## Run Matrix
 

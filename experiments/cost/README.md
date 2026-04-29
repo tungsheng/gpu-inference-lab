@@ -34,7 +34,7 @@ Render a report scaffold:
   --profile optimized-batched
 ```
 
-Live runs after `./scripts/up`:
+Measured live-cluster runs after `./scripts/up`:
 
 ```bash
 ./scripts/experiment run \

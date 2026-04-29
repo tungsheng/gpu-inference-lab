@@ -7,7 +7,9 @@ The repo has one active environment: `infra/env/dev`. The workflow is:
 3. measure burst behavior with `./scripts/evaluate`
 4. tear everything down
 
-Use [operations.md](operations.md) when you only need to choose a command.
+Use [operations.md](operations.md) when you only need to choose a command. For
+experiments, remember that `render-*`, `list`, `show`, and `validate` are local
+catalog operations; `run` and `run-stream` are measured cluster operations.
 
 ## Prerequisites
 

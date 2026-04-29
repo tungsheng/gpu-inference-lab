@@ -59,7 +59,9 @@ EKS cluster
 
 ## Quick Start
 
-Local checks do not require AWS access:
+Local catalog checks and render-only commands do not require AWS access. These
+commands validate experiment definitions and generate manifests or empty report
+scaffolds; they do not run workloads or produce measured results.
 
 ```bash
 ./scripts/experiment list
@@ -80,8 +82,9 @@ Local checks do not require AWS access:
 ./test/run.sh
 ```
 
-Live AWS/EKS usage requires Terraform, AWS CLI, `kubectl`, `helm`, AWS
-credentials, and access to `us-west-2`:
+Measured validation and experiment runs require Terraform, AWS CLI, `kubectl`,
+`helm`, AWS credentials, access to `us-west-2`, and a live cluster from
+`./scripts/up`:
 
 ```bash
 ./scripts/up
@@ -90,6 +93,10 @@ credentials, and access to `us-west-2`:
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
+./scripts/experiment run \
+  --experiment kv-cache \
+  --case prompt-512-output-100 \
+  --profile default
 ./scripts/down
 ```
 

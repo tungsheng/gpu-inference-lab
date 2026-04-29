@@ -1,8 +1,9 @@
 # Reports
 
-`./scripts/evaluate` and `./scripts/experiment run` write generated artifacts
-into this directory by default. Generated report files are intentionally ignored
-by Git; keep curated conclusions in `docs/experiments-summary.md` or
+`./scripts/evaluate`, `./scripts/experiment run`, and
+`./scripts/experiment run-stream` write generated artifacts into this directory
+by default. Generated report files are intentionally ignored by Git; keep
+curated conclusions in `docs/experiments-summary.md` or
 `experiments/<name>/results.md`.
 
 Each evaluation run can produce:

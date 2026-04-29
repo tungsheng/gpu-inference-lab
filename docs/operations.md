@@ -9,6 +9,9 @@ you need the full setup and teardown walkthrough.
 | --- | --- | --- |
 | `./scripts/experiment list` | you want to inspect local experiment definitions | prints the experiment catalog |
 | `./scripts/experiment validate` | you changed experiment CSVs, profiles, or templates | validates catalog contracts without AWS |
+| `./scripts/experiment render-load|render-stream|render-serving|render-report ...` | you want generated manifests or empty report scaffolds | renders local artifacts only; no workload runs and no cluster metrics are collected |
+| `./scripts/experiment run ...` | you want to execute one measured experiment case | requires a live cluster from `./scripts/up`, applies rendered manifests, waits for the load job, and writes measured reports |
+| `./scripts/experiment run-stream ...` | you want to execute one measured streaming case | requires a live cluster from `./scripts/up`, runs the streaming client, and writes measured TTFT/inter-token reports |
 | `./scripts/up` | you need the dev platform online | Terraform, controllers, observability, Karpenter, GPU prerequisites, service, and ingress are ready |
 | `./scripts/verify` | you want the fastest end-to-end proof | one GPU node appears, vLLM becomes Ready, `/v1/completions` returns `200`, then GPU nodes return to zero |
 | `./scripts/evaluate --profile zero-idle` | you want the default burst baseline | running-request HPA scales from a true zero-GPU baseline |

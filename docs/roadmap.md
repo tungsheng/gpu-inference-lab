@@ -38,7 +38,7 @@ Implemented platform capabilities:
   repo does not yet compare multiple packing shapes or node sizes.
 - Spot interruption testing deletes a live `NodeClaim`; it does not consume
   cloud-native interruption notices.
-- Experiment result summaries are scaffolded, but curated production run
+- Experiment result summaries are scaffolded, but curated live-run
   conclusions have not been recorded.
 
 ## Next Work

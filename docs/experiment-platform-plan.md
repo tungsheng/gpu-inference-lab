@@ -19,7 +19,9 @@ question being asked.
 
 ## Local Commands
 
-These commands do not require a live cluster:
+These commands do not require a live cluster because they only inspect the
+catalog or render local artifacts. They do not apply Kubernetes resources, run
+traffic, collect metrics, or produce measured results.
 
 ```bash
 ./scripts/experiment list
@@ -41,7 +43,7 @@ These commands do not require a live cluster:
 
 ## Live Commands
 
-Live runs require a configured Kubernetes context from `./scripts/up`:
+Measured runs require a configured Kubernetes context from `./scripts/up`:
 
 ```bash
 ./scripts/experiment run \
@@ -56,10 +58,10 @@ Live runs require a configured Kubernetes context from `./scripts/up`:
   --samples 5
 ```
 
-The runner applies rendered serving and load manifests, waits for the job,
-parses client summaries, writes Markdown and JSON reports under `docs/reports/`,
-stores the client log next to the JSON report, and cleans up rendered resources
-unless `--preserve-serving` or `--preserve-load` is used.
+The runner applies rendered serving and load manifests to the cluster, waits for
+the job, parses client summaries, writes Markdown and JSON reports under
+`docs/reports/`, stores the client log next to the JSON report, and cleans up
+rendered resources unless `--preserve-serving` or `--preserve-load` is used.
 
 ## Report Rules
 

@@ -1,7 +1,7 @@
 # Script Templates
 
 These templates are rendered by `./scripts/experiment` into Kubernetes
-ConfigMaps for local experiment workloads.
+ConfigMaps for experiment client workloads.
 
 - `experiment-load-test.js.tpl`: k6 completion load client
 - `experiment-stream-client.py.tpl`: Python streaming completion client

@@ -28,7 +28,7 @@ Render a mixed load job:
   --output /tmp/request-patterns-uneven-size-mix.yaml
 ```
 
-Live run after `./scripts/up`:
+Measured live-cluster run after `./scripts/up`:
 
 ```bash
 ./scripts/experiment run \

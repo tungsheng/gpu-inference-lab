@@ -26,7 +26,7 @@ Render a streaming client:
   --output /tmp/prefill-heavy-stream.yaml
 ```
 
-Live run after `./scripts/up`:
+Measured live-cluster run after `./scripts/up`:
 
 ```bash
 ./scripts/experiment run-stream \

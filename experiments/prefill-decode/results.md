@@ -1,6 +1,6 @@
 # Prefill Vs Decode Timing Results
 
-Status: no curated production run recorded yet.
+Status: no curated live-cluster run recorded yet.
 
 ## Run Matrix
 

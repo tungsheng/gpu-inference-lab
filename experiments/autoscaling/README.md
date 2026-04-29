@@ -29,7 +29,7 @@ Render a queued load job:
   --output /tmp/autoscaling-burst-queued.yaml
 ```
 
-Live run after `./scripts/up`:
+Measured live-cluster run after `./scripts/up`:
 
 ```bash
 ./scripts/experiment run \

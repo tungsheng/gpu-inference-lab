@@ -1,6 +1,6 @@
 # Cost Per Useful Work Results
 
-No curated production run has been recorded yet.
+No curated live-cluster run has been recorded yet.
 
 ## Planned Comparison
 

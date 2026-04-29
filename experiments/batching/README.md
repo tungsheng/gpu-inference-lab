@@ -34,7 +34,7 @@ Render a serving profile:
   --output /tmp/vllm-batching-constrained.yaml
 ```
 
-Live run after `./scripts/up`:
+Measured live-cluster run after `./scripts/up`:
 
 ```bash
 ./scripts/experiment run \
