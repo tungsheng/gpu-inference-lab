@@ -95,8 +95,18 @@ Prefer `warm-1` when:
 
 ## What Comes Next
 
-The next cost optimization step is not another pricing table. It is better
-per-GPU efficiency data. Now that the repo can compare the running baseline,
-sweep active-pressure targets, and score burst cost side by side, the next cost
-question is how many useful requests a single GPU-backed pod should absorb
-before scaling.
+The cost experiment turns that next question into a controlled run:
+
+```bash
+./scripts/experiment run \
+  --experiment cost \
+  --case steady-cost-efficiency \
+  --profile optimized-batched
+```
+
+Compare `naive-single` and `optimized-batched` with the same case. The report
+calculates successful requests, generated tokens, estimated serving burst cost,
+cost per 1K successful requests, cost per 1M generated tokens, and SLO
+pass/fail. The goal is better per-GPU efficiency data: how many useful requests
+a single GPU-backed pod should absorb before scaling, and where lower cost per
+unit stops being acceptable because latency or failures cross the line.

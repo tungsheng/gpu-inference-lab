@@ -13,6 +13,7 @@ belong under `experiments/<name>/`.
 | Batching scheduler tradeoffs | scaffolded with scheduler profiles | How do explicit vLLM scheduler limits trade throughput for p95/p99 latency? | `experiments/batching/` |
 | Request pattern utilization | scaffolded with mixed request shapes | How do steady, burst, uneven-size, and spike-to-zero traffic patterns affect GPU occupancy? | `experiments/request-patterns/` |
 | Autoscaling and queueing behavior | scaffolded with direct and queued client policies | How much traffic must be buffered while GPU capacity and model readiness catch up? | `experiments/autoscaling/` |
+| Cost per useful work | scaffolded with cost profiles and SLO fields | How much cheaper does the same GPU become when concurrency and batching produce more successful work? | `experiments/cost/` |
 
 ## Reading Results
 
@@ -35,5 +36,6 @@ serving-profile renderer, report scaffold contract, a live one-case load
 runner, a streaming runner for prefill/decode timing, and a batching experiment
 with explicit scheduler-profile comparison. Slice seven adds request-pattern
 cases plus weighted request-shape rendering for mixed-size traffic. Slice eight
-adds autoscaling queueing cases with direct and queued client policies. No
-production results have been recorded yet.
+adds autoscaling queueing cases with direct and queued client policies. Slice
+nine adds cost profiles, useful-work denominators, and SLO pass/fail fields.
+No production results have been recorded yet.

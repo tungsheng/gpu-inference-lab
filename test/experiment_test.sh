@@ -20,6 +20,8 @@ run_experiment_list_test() {
   assert_contains "${COMMAND_OUTPUT}" "Request Pattern Utilization" "experiment list should include the request-pattern title"
   assert_contains "${COMMAND_OUTPUT}" "autoscaling" "experiment list should include the autoscaling experiment"
   assert_contains "${COMMAND_OUTPUT}" "Autoscaling And Queueing Behavior" "experiment list should include the autoscaling title"
+  assert_contains "${COMMAND_OUTPUT}" "cost" "experiment list should include the cost experiment"
+  assert_contains "${COMMAND_OUTPUT}" "Cost Per Useful Work" "experiment list should include the cost title"
 }
 
 run_experiment_show_test() {
@@ -88,6 +90,19 @@ run_autoscaling_show_test() {
   assert_contains "${COMMAND_OUTPUT}" "burst-queued/bounded-queue: mode=queued executor=ramping-vus buffer_capacity=240 max_queue_wait=60s" "show output should include the queued client policy"
 }
 
+run_cost_show_test() {
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" show cost
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/experiment show should succeed for cost"
+  assert_contains "${COMMAND_OUTPUT}" "Experiment: cost" "show output should include the cost experiment name"
+  assert_contains "${COMMAND_OUTPUT}" "steady-cost-efficiency" "show output should include the steady cost case"
+  assert_contains "${COMMAND_OUTPUT}" "burst-cost-efficiency" "show output should include the burst cost case"
+  assert_contains "${COMMAND_OUTPUT}" "Cost profiles:" "show output should include cost profiles"
+  assert_contains "${COMMAND_OUTPUT}" "naive-single: hourly_cost=0.526 scope=serving-gpu-only p95_slo=2.0s p99_slo=5.0s" "show output should include the naive cost profile"
+  assert_contains "${COMMAND_OUTPUT}" "optimized-batched: hourly_cost=0.526 scope=serving-gpu-only p95_slo=2.0s p99_slo=5.0s" "show output should include the optimized cost profile"
+  assert_contains "${COMMAND_OUTPUT}" "max_num_seqs=32 max_num_batched_tokens=8192" "show output should include optimized scheduler settings"
+}
+
 run_render_load_test() {
   setup_test_tmpdir
 
@@ -114,7 +129,9 @@ run_render_load_test() {
   assert_contains "${RENDERED_MANIFEST}" "p99_request_latency_seconds=" "rendered manifest should include p99 latency in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "dropped_iterations=" "rendered manifest should include dropped iterations in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "buffering_required_requests=" "rendered manifest should include buffering required in the k6 summary"
+  assert_contains "${RENDERED_MANIFEST}" "generated_tokens=" "rendered manifest should include generated token counts in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "generation_tokens_per_second=" "rendered manifest should include generated token throughput in the k6 summary"
+  assert_contains "${RENDERED_MANIFEST}" "run_duration_seconds=" "rendered manifest should include run duration in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "summaryTrendStats" "rendered manifest should request p95 and p99 k6 summaries"
   assert_contains "${RENDERED_MANIFEST}" "value: http://vllm-openai.app.svc.cluster.local/v1/completions" "rendered manifest should target the in-cluster vLLM service"
 
@@ -424,6 +441,43 @@ run_render_autoscaling_report_test() {
   teardown_test_tmpdir
 }
 
+run_render_cost_report_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-report \
+    --experiment cost \
+    --case steady-cost-efficiency \
+    --profile optimized-batched \
+    --report "${TEST_TMPDIR}/cost-report.md" \
+    --json-report "${TEST_TMPDIR}/cost-report.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-report should render the cost report scaffold"
+  assert_file_exists "${TEST_TMPDIR}/cost-report.md" "render-report should write the cost Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/cost-report.json" "render-report should write the cost JSON report"
+
+  COST_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/cost-report.md")
+  COST_JSON_CONTENT=$(cat "${TEST_TMPDIR}/cost-report.json")
+
+  assert_contains "${COST_REPORT_CONTENT}" "# Cost Per Useful Work - steady-cost-efficiency" "cost report should include the experiment title and case"
+  assert_contains "${COST_REPORT_CONTENT}" "| Profile | optimized-batched |" "cost report should include the optimized profile"
+  assert_contains "${COST_REPORT_CONTENT}" "| Cost scope | serving-gpu-only |" "cost report should include the cost scope"
+  assert_contains "${COST_REPORT_CONTENT}" "| Serving hourly cost | 0.526 |" "cost report should include the serving hourly cost"
+  assert_contains "${COST_REPORT_CONTENT}" "| p95 request SLO | 2.0 |" "cost report should include the p95 SLO target"
+  assert_contains "${COST_REPORT_CONTENT}" "| Successful requests | n/a |" "cost report should include successful requests"
+  assert_contains "${COST_REPORT_CONTENT}" "| Generated tokens | n/a |" "cost report should include generated tokens"
+  assert_contains "${COST_REPORT_CONTENT}" "| SLO passed | n/a |" "cost report should include SLO status"
+  assert_contains "${COST_JSON_CONTENT}" "\"name\": \"cost\"" "cost JSON report should include the experiment name"
+  assert_contains "${COST_JSON_CONTENT}" "\"cost_profile\": {" "cost JSON report should include cost profile metadata"
+  assert_contains "${COST_JSON_CONTENT}" "\"cost_scope\": \"serving-gpu-only\"" "cost JSON report should include the cost scope"
+  assert_contains "${COST_JSON_CONTENT}" "\"serving_hourly_cost_usd\": 0.526" "cost JSON report should include the serving hourly cost"
+  assert_contains "${COST_JSON_CONTENT}" "\"slo_p95_request_latency_seconds\": 2.0" "cost JSON report should include the p95 SLO"
+  assert_contains "${COST_JSON_CONTENT}" "\"successful_requests\": null" "cost JSON report should include successful requests"
+  assert_contains "${COST_JSON_CONTENT}" "\"generated_tokens\": null" "cost JSON report should include generated tokens"
+  assert_contains "${COST_JSON_CONTENT}" "\"passed\": null" "cost JSON report should include SLO pass/fail"
+
+  teardown_test_tmpdir
+}
+
 run_render_report_default_path_test() {
   setup_test_tmpdir
 
@@ -470,11 +524,13 @@ write_experiment_run_kubectl_stub() {
 "    printf '%s\n' 'failed_requests=1'" \
 "    printf '%s\n' 'dropped_iterations=3'" \
 "    printf '%s\n' 'buffering_required_requests=3'" \
+"    printf '%s\n' 'generated_tokens=4096'" \
 "    printf '%s\n' 'p50_request_latency_seconds=0.25'" \
 "    printf '%s\n' 'p95_request_latency_seconds=0.75'" \
 "    printf '%s\n' 'p99_request_latency_seconds=1.5'" \
 "    printf '%s\n' 'requests_per_second=5.5'" \
 "    printf '%s\n' 'generation_tokens_per_second=704'" \
+"    printf '%s\n' 'run_duration_seconds=120'" \
 "    printf '%s\n' 'GPU_LAB_K6_SUMMARY_END'" \
 "    exit 0" \
 "    ;;" \
@@ -514,10 +570,14 @@ run_live_experiment_runner_test() {
 
   assert_contains "${RUN_REPORT_CONTENT}" "Status: complete" "experiment run should mark the Markdown report complete"
   assert_contains "${RUN_REPORT_CONTENT}" "| Completed requests | 42 |" "experiment run should parse completed requests from k6 logs"
+  assert_contains "${RUN_REPORT_CONTENT}" "| Successful requests | 41 |" "experiment run should derive successful requests from completed minus failed"
   assert_contains "${RUN_REPORT_CONTENT}" "| p99 request latency | 1.5 |" "experiment run should parse p99 latency from k6 logs"
+  assert_contains "${RUN_REPORT_CONTENT}" "| Generated tokens | 4096 |" "experiment run should parse generated token totals from k6 logs"
+  assert_contains "${RUN_REPORT_CONTENT}" "| Run duration | 120 |" "experiment run should parse run duration from k6 logs"
   assert_contains "${RUN_JSON_CONTENT}" "\"status\": \"complete\"" "experiment run should mark the JSON report complete"
   assert_contains "${RUN_JSON_CONTENT}" "\"source\": \"scripts/experiment run\"" "experiment run should record the live runner source"
   assert_contains "${RUN_JSON_CONTENT}" "\"completed_requests\": 42" "experiment run should write completed requests to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"successful_requests\": 41" "experiment run should write successful requests to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"failed_requests\": 1" "experiment run should write failed requests to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"dropped_iterations\": 3" "experiment run should write dropped iterations to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"buffering_required_requests\": 3" "experiment run should write buffering required to JSON"
@@ -525,7 +585,10 @@ run_live_experiment_runner_test() {
   assert_contains "${RUN_JSON_CONTENT}" "\"oom_events\": null" "experiment run should leave OOM events null when pod status has no termination reason"
   assert_contains "${RUN_JSON_CONTENT}" "\"p95_request_latency_seconds\": 0.75" "experiment run should write p95 latency to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"requests_per_second\": 5.5" "experiment run should write request throughput to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"generated_tokens\": 4096" "experiment run should write generated tokens to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"generation_tokens_per_second\": 704" "experiment run should write generation token throughput to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"run_duration_seconds\": 120" "experiment run should write run duration to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"cost_per_1000_successful_requests_usd\": null" "experiment run should leave cost null without a cost profile"
   assert_occurs_before "${KUBECTL_LOG}" \
     "apply -f ${REPO_ROOT}/platform/inference/service.yaml" \
     "rollout status deployment/vllm-openai -n app --timeout=20m" \
@@ -536,6 +599,86 @@ run_live_experiment_runner_test() {
     "experiment run should wait for serving readiness before waiting on load"
   assert_contains "${KUBECTL_LOG}" "delete -f /tmp/gpu-lab-experiment-load." "experiment run should clean up the rendered load manifest"
   assert_contains "${KUBECTL_LOG}" "delete -f /tmp/gpu-lab-experiment-serving." "experiment run should clean up the rendered serving manifest"
+
+  teardown_test_tmpdir
+}
+
+write_cost_run_kubectl_stub() {
+  write_stub kubectl \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/kubectl.log\"" \
+"cmd=\"\$*\"" \
+"case \"\$cmd\" in" \
+"  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
+"  apply\\ -f\\ /tmp/gpu-lab-experiment-serving.*)" \
+"    cp \"\$3\" \"${TEST_TMPDIR}/applied-serving.yaml\"" \
+"    exit 0" \
+"    ;;" \
+"  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
+"  apply\\ -f\\ /tmp/gpu-lab-experiment-load.*)" \
+"    cp \"\$3\" \"${TEST_TMPDIR}/applied-load.yaml\"" \
+"    exit 0" \
+"    ;;" \
+"  'wait --for=condition=complete job/cost-steady-cost-efficiency -n app --timeout=1200s') exit 0 ;;" \
+"  'logs -n app job/cost-steady-cost-efficiency')" \
+"    printf '%s\n' 'GPU_LAB_K6_SUMMARY_BEGIN'" \
+"    printf '%s\n' 'completed_requests=100'" \
+"    printf '%s\n' 'failed_requests=4'" \
+"    printf '%s\n' 'dropped_iterations=0'" \
+"    printf '%s\n' 'buffering_required_requests=0'" \
+"    printf '%s\n' 'generated_tokens=8000'" \
+"    printf '%s\n' 'p50_request_latency_seconds=0.6'" \
+"    printf '%s\n' 'p95_request_latency_seconds=1.25'" \
+"    printf '%s\n' 'p99_request_latency_seconds=4.5'" \
+"    printf '%s\n' 'requests_per_second=10'" \
+"    printf '%s\n' 'generation_tokens_per_second=800'" \
+"    printf '%s\n' 'run_duration_seconds=180'" \
+"    printf '%s\n' 'GPU_LAB_K6_SUMMARY_END'" \
+"    exit 0" \
+"    ;;" \
+"  'get pods -n app -l app=vllm-openai -o jsonpath={range .items[*]}{range .status.containerStatuses[*]}{.state.terminated.reason}{\"\\n\"}{.lastState.terminated.reason}{\"\\n\"}{end}{end}') exit 0 ;;" \
+"  delete\\ -f\\ /tmp/gpu-lab-experiment-load.*\\ --ignore-not-found=true) exit 0 ;;" \
+"  delete\\ -f\\ /tmp/gpu-lab-experiment-serving.*\\ --ignore-not-found=true) exit 0 ;;" \
+"  *) printf 'unexpected kubectl command: %s\n' \"\$cmd\" >&2; exit 1 ;;" \
+"esac"
+}
+
+run_cost_experiment_runner_test() {
+  setup_test_tmpdir
+  write_cost_run_kubectl_stub
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
+    TMPDIR=/tmp \
+    /bin/bash "${REPO_ROOT}/scripts/experiment" run \
+    --experiment cost \
+    --case steady-cost-efficiency \
+    --profile optimized-batched \
+    --report "${TEST_TMPDIR}/cost-run.md" \
+    --json-report "${TEST_TMPDIR}/cost-run.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "cost experiment run should complete when the load job succeeds"
+  assert_contains "${COMMAND_OUTPUT}" "Experiment run status: complete" "cost run output should summarize the complete status"
+  assert_file_exists "${TEST_TMPDIR}/cost-run.md" "cost run should write a Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/cost-run.json" "cost run should write a JSON report"
+
+  COST_RUN_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/cost-run.md")
+  COST_RUN_JSON_CONTENT=$(cat "${TEST_TMPDIR}/cost-run.json")
+
+  assert_contains "${COST_RUN_REPORT_CONTENT}" "| Completed requests | 100 |" "cost run should parse completed requests"
+  assert_contains "${COST_RUN_REPORT_CONTENT}" "| Successful requests | 96 |" "cost run should exclude failed requests from useful work"
+  assert_contains "${COST_RUN_REPORT_CONTENT}" "| Generated tokens | 8000 |" "cost run should parse generated tokens"
+  assert_contains "${COST_RUN_REPORT_CONTENT}" "| SLO passed | true |" "cost run should derive SLO pass status"
+  assert_contains "${COST_RUN_REPORT_CONTENT}" "| Estimated burst cost | 0.026300 |" "cost run should estimate serving burst cost"
+  assert_contains "${COST_RUN_REPORT_CONTENT}" "| Cost per 1K successful requests | 0.273958 |" "cost run should derive request cost from successful requests"
+  assert_contains "${COST_RUN_REPORT_CONTENT}" "| Cost per 1M generated tokens | 3.287500 |" "cost run should derive token cost from generated tokens"
+  assert_contains "${COST_RUN_JSON_CONTENT}" "\"successful_requests\": 96" "cost run JSON should include successful requests"
+  assert_contains "${COST_RUN_JSON_CONTENT}" "\"generated_tokens\": 8000" "cost run JSON should include generated tokens"
+  assert_contains "${COST_RUN_JSON_CONTENT}" "\"passed\": true" "cost run JSON should include SLO pass status"
+  assert_contains "${COST_RUN_JSON_CONTENT}" "\"estimated_burst_cost_usd\": 0.026300" "cost run JSON should include estimated burst cost"
+  assert_contains "${COST_RUN_JSON_CONTENT}" "\"cost_per_1000_successful_requests_usd\": 0.273958" "cost run JSON should include cost per useful request"
+  assert_contains "${COST_RUN_JSON_CONTENT}" "\"cost_per_1m_generated_tokens_usd\": 3.287500" "cost run JSON should include cost per generated token"
 
   teardown_test_tmpdir
 }
@@ -591,6 +734,7 @@ write_stream_run_kubectl_stub() {
 "    printf '%s\n' 'p50_inter_token_latency_seconds=0.01'" \
 "    printf '%s\n' 'p95_inter_token_latency_seconds=0.03'" \
 "    printf '%s\n' 'generation_tokens_per_second=42.5'" \
+"    printf '%s\n' 'run_duration_seconds=6.5'" \
 "    printf '%s\n' 'GPU_LAB_STREAM_SUMMARY_END'" \
 "    exit 0" \
 "    ;;" \
@@ -633,11 +777,13 @@ run_stream_experiment_runner_test() {
   assert_contains "${STREAM_REPORT_CONTENT}" "| p95 inter-token latency | 0.03 |" "run-stream should parse p95 inter-token latency from stream logs"
   assert_contains "${STREAM_JSON_CONTENT}" "\"source\": \"scripts/experiment run-stream\"" "run-stream should record the streaming runner source"
   assert_contains "${STREAM_JSON_CONTENT}" "\"completed_requests\": 5" "run-stream should write completed requests to JSON"
+  assert_contains "${STREAM_JSON_CONTENT}" "\"successful_requests\": 5" "run-stream should derive successful requests"
   assert_contains "${STREAM_JSON_CONTENT}" "\"p50_ttft_seconds\": 0.12" "run-stream should write p50 TTFT to JSON"
   assert_contains "${STREAM_JSON_CONTENT}" "\"p95_ttft_seconds\": 0.20" "run-stream should write p95 TTFT to JSON"
   assert_contains "${STREAM_JSON_CONTENT}" "\"p50_inter_token_latency_seconds\": 0.01" "run-stream should write p50 inter-token latency to JSON"
   assert_contains "${STREAM_JSON_CONTENT}" "\"p95_inter_token_latency_seconds\": 0.03" "run-stream should write p95 inter-token latency to JSON"
   assert_contains "${STREAM_JSON_CONTENT}" "\"generation_tokens_per_second\": 42.5" "run-stream should write streamed chunk throughput to JSON"
+  assert_contains "${STREAM_JSON_CONTENT}" "\"run_duration_seconds\": 6.5" "run-stream should write run duration to JSON"
   assert_occurs_before "${KUBECTL_LOG}" \
     "rollout status deployment/vllm-openai -n app --timeout=20m" \
     "wait --for=condition=complete job/prefill-decode-prefill-heavy-stream -n app --timeout=1200s" \
@@ -653,6 +799,7 @@ run_prefill_decode_show_test
 run_batching_show_test
 run_request_patterns_show_test
 run_autoscaling_show_test
+run_cost_show_test
 run_render_load_test
 run_render_autoscaling_load_test
 run_render_request_pattern_load_test
@@ -666,7 +813,9 @@ run_render_report_test
 run_render_batching_report_test
 run_render_request_pattern_report_test
 run_render_autoscaling_report_test
+run_render_cost_report_test
 run_render_report_default_path_test
 run_live_experiment_runner_test
+run_cost_experiment_runner_test
 run_incompatible_case_profile_test
 run_stream_experiment_runner_test

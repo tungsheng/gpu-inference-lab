@@ -1,0 +1,3 @@
+case_id,prompt_token_target,max_tokens,start_rate,target_rate,ramp_up_duration,steady_duration,ramp_down_duration,pre_allocated_vus,max_vus,timeout_seconds,description
+steady-cost-efficiency,512,128,2,8,30s,5m,30s,16,64,120,steady workload for comparing useful work per serving dollar
+burst-cost-efficiency,512,128,1,16,15s,3m,30s,32,128,120,burst workload for comparing cost efficiency under tail-latency pressure

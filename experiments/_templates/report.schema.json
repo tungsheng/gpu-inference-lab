@@ -113,7 +113,18 @@
         "max_model_len": { "type": "integer" },
         "gpu_memory_utilization": { "type": "number" },
         "max_num_seqs": { "type": ["integer", "null"] },
-        "max_num_batched_tokens": { "type": ["integer", "null"] }
+        "max_num_batched_tokens": { "type": ["integer", "null"] },
+        "cost_profile": {
+          "type": "object",
+          "properties": {
+            "id": { "type": ["string", "null"] },
+            "cost_scope": { "type": ["string", "null"] },
+            "serving_hourly_cost_usd": { "type": ["number", "null"] },
+            "slo_p95_request_latency_seconds": { "type": ["number", "null"] },
+            "slo_p99_request_latency_seconds": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
@@ -135,12 +146,13 @@
     },
     "results": {
       "type": "object",
-      "required": ["success", "latency", "serving", "queue", "gpu", "scaling", "cost"],
+      "required": ["success", "latency", "serving", "queue", "gpu", "scaling", "slo", "cost"],
       "properties": {
         "success": {
           "type": "object",
           "properties": {
             "completed_requests": { "type": ["integer", "null"] },
+            "successful_requests": { "type": ["integer", "null"] },
             "failed_requests": { "type": ["integer", "null"] },
             "oom_events": { "type": ["integer", "null"] }
           },
@@ -163,6 +175,8 @@
             "p50_inter_token_latency_seconds": { "type": ["number", "null"] },
             "p95_inter_token_latency_seconds": { "type": ["number", "null"] },
             "requests_per_second": { "type": ["number", "null"] },
+            "generated_tokens": { "type": ["integer", "null"] },
+            "run_duration_seconds": { "type": ["number", "null"] },
             "generation_tokens_per_second": { "type": ["number", "null"] }
           },
           "additionalProperties": false
@@ -201,9 +215,20 @@
           },
           "additionalProperties": false
         },
+        "slo": {
+          "type": "object",
+          "properties": {
+            "p95_request_latency_target_seconds": { "type": ["number", "null"] },
+            "p99_request_latency_target_seconds": { "type": ["number", "null"] },
+            "passed": { "type": ["boolean", "null"] }
+          },
+          "additionalProperties": false
+        },
         "cost": {
           "type": "object",
           "properties": {
+            "cost_scope": { "type": ["string", "null"] },
+            "serving_hourly_cost_usd": { "type": ["number", "null"] },
             "estimated_burst_cost_usd": { "type": ["number", "null"] },
             "cost_per_1000_successful_requests_usd": { "type": ["number", "null"] },
             "cost_per_1m_generated_tokens_usd": { "type": ["number", "null"] }

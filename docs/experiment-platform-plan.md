@@ -264,7 +264,7 @@ Notes:
 
 ## Slice 9 - Cost Per Useful Work
 
-Status: planned.
+Status: implemented.
 
 Purpose:
 
@@ -281,6 +281,24 @@ Acceptance criteria:
 
 - cost excludes non-serving infrastructure unless explicitly added
 - failed requests are not counted as useful work
+
+Implemented scope:
+
+- add `experiments/cost/` with naive constrained and optimized batched serving
+  profiles
+- add optional `cost-profiles.csv` support with serving-GPU-only hourly cost
+  and p95/p99 SLO targets
+- parse generated-token totals and run duration from k6 summaries
+- derive successful requests, estimated burst cost, cost per 1K successful
+  requests, cost per 1M generated tokens, and SLO pass/fail in reports
+
+Notes:
+
+- the cost model is intentionally narrow and deterministic; it does not include
+  EKS control plane, system nodes, networking, storage, or data transfer
+  charges
+- streaming runs can report successful requests and duration, but generated
+  token cost remains unavailable until the streaming client emits token counts
 
 ## Slice 10 - Failure Injection
 

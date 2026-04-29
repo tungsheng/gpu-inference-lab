@@ -1,14 +1,11 @@
-# Template for experiment metadata.
-#
-# Keep experiment-specific workload cases in a sibling cases.csv file so shell
-# tooling can render jobs without adding a YAML parser dependency.
+# Controlled experiment for cost per useful request and generated token.
 
-name: example-experiment
-title: Example Experiment
-status: planned
+name: cost
+title: Cost Per Useful Work
+status: scaffolded
 owner: local
 
-question: What systems tradeoff does this experiment make visible?
+question: How much cheaper does the same GPU become when useful work is increased through concurrency and batching?
 
 serving_profile:
   model: Qwen/Qwen2.5-0.5B-Instruct
@@ -17,16 +14,15 @@ serving_profile:
   max_model_len: 2048
   gpu_memory_utilization: 0.85
   notes:
-    - Override these values only when the experiment requires it.
+    - The hourly cost model covers serving GPU capacity only.
+    - Failed requests are excluded from useful-request cost denominators.
 
 workload:
   generator: k6
   endpoint: /v1/completions
   cases_file: cases.csv
-  request_shapes_file: request-shapes.csv
-  client_policies_file: client-policies.csv
-  cost_profiles_file: cost-profiles.csv
   serving_profiles_file: serving-profiles.csv
+  cost_profiles_file: cost-profiles.csv
   prompt_strategy: approximate-token-target
 
 metrics:
@@ -35,17 +31,14 @@ metrics:
     - p95_request_latency_seconds
     - p99_request_latency_seconds
   serving:
-    - p95_ttft_seconds
+    - completed_requests
+    - successful_requests
+    - generated_tokens
     - requests_per_second
     - generation_tokens_per_second
-    - peak_waiting_requests
-    - peak_running_requests
-    - peak_active_requests
   gpu:
     - average_gpu_utilization_percent
     - max_gpu_utilization_percent
-    - gpu_memory_used_bytes
-    - gpu_memory_free_bytes
   cost:
     - estimated_burst_cost
     - cost_per_1000_successful_requests

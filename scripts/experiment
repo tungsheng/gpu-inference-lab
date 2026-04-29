@@ -88,6 +88,11 @@ experiment_client_policies_path() {
   printf '%s/client-policies.csv\n' "$(experiment_dir "${experiment_name}")"
 }
 
+experiment_cost_profiles_path() {
+  local experiment_name=$1
+  printf '%s/cost-profiles.csv\n' "$(experiment_dir "${experiment_name}")"
+}
+
 require_experiment() {
   local experiment_name=$1
   local metadata_path
@@ -140,6 +145,7 @@ show_experiment() {
   local serving_profiles_path
   local request_shapes_path
   local client_policies_path
+  local cost_profiles_path
 
   require_experiment "${experiment_name}"
 
@@ -148,6 +154,7 @@ show_experiment() {
   serving_profiles_path=$(experiment_serving_profiles_path "${experiment_name}")
   request_shapes_path=$(experiment_request_shapes_path "${experiment_name}")
   client_policies_path=$(experiment_client_policies_path "${experiment_name}")
+  cost_profiles_path=$(experiment_cost_profiles_path "${experiment_name}")
 
   printf 'Experiment: %s\n' "${experiment_name}"
   printf 'Title: %s\n' "$(experiment_title "${experiment_name}")"
@@ -179,6 +186,16 @@ show_experiment() {
         printf "  - %s/%s: mode=%s executor=%s buffer_capacity=%s max_queue_wait=%ss\n", $1, $2, $3, $4, $5, $6
       }
     ' "${client_policies_path}"
+  fi
+
+  if [[ -f "${cost_profiles_path}" ]]; then
+    printf 'Cost profiles:\n'
+    awk -F',' '
+      NR == 1 { next }
+      NF > 0 && $1 !~ /^#/ {
+        printf "  - %s: hourly_cost=%s scope=%s p95_slo=%ss p99_slo=%ss\n", $1, $2, $3, $4, $5
+      }
+    ' "${cost_profiles_path}"
   fi
 
   if [[ -f "${serving_profiles_path}" ]]; then
@@ -291,6 +308,22 @@ json_optional_string() {
   fi
 }
 
+json_optional_boolean() {
+  local value=${1:-}
+
+  case "${value}" in
+    true|false)
+      printf '%s' "${value}"
+      ;;
+    "")
+      printf 'null'
+      ;;
+    *)
+      die "Invalid boolean value: ${value}"
+      ;;
+  esac
+}
+
 display_optional_metric() {
   local value=${1:-}
 
@@ -299,6 +332,82 @@ display_optional_metric() {
   else
     printf '%s' "${value}"
   fi
+}
+
+duration_to_seconds() {
+  local value=$1
+  local amount
+  local unit
+
+  require_duration "${value}" "duration"
+
+  amount=${value%?}
+  unit=${value: -1}
+
+  case "${unit}" in
+    s)
+      printf '%s\n' "${amount}"
+      ;;
+    m)
+      printf '%s\n' "$((amount * 60))"
+      ;;
+    h)
+      printf '%s\n' "$((amount * 3600))"
+      ;;
+    *)
+      die "Invalid duration: ${value}"
+      ;;
+  esac
+}
+
+case_planned_duration_seconds() {
+  local ramp_up_seconds
+  local steady_seconds
+  local ramp_down_seconds
+
+  ramp_up_seconds=$(duration_to_seconds "${RAMP_UP_DURATION}")
+  steady_seconds=$(duration_to_seconds "${STEADY_DURATION}")
+  ramp_down_seconds=$(duration_to_seconds "${RAMP_DOWN_DURATION}")
+
+  printf '%s\n' "$((ramp_up_seconds + steady_seconds + ramp_down_seconds))"
+}
+
+multiply_decimal_values() {
+  local left_value=${1:-}
+  local right_value=${2:-}
+  local precision=${3:-6}
+
+  if [[ -z "${left_value}" || -z "${right_value}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  awk -v left="${left_value}" -v right="${right_value}" -v precision="${precision}" '
+    BEGIN {
+      format = "%." precision "f\n"
+      printf format, (left + 0) * (right + 0)
+    }'
+}
+
+divide_decimal_values() {
+  local numerator=${1:-}
+  local denominator=${2:-}
+  local precision=${3:-6}
+
+  if [[ -z "${numerator}" || -z "${denominator}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  awk -v numerator="${numerator}" -v denominator="${denominator}" -v precision="${precision}" '
+    BEGIN {
+      if ((denominator + 0) == 0) {
+        exit 1
+      }
+
+      format = "%." precision "f\n"
+      printf format, (numerator + 0) / (denominator + 0)
+    }' 2>/dev/null || printf '%s\n' ""
 }
 
 utc_timestamp() {
@@ -449,6 +558,47 @@ load_client_policy() {
   done < "${policies_path}"
 
   return 0
+}
+
+load_cost_profile() {
+  local experiment_name=$1
+  local requested_profile_id=$2
+  local cost_profiles_path
+  local row_profile_id
+
+  COST_PROFILE_ID=""
+  COST_SERVING_HOURLY_COST_USD=""
+  COST_SCOPE=""
+  COST_SLO_P95_REQUEST_LATENCY_SECONDS=""
+  COST_SLO_P99_REQUEST_LATENCY_SECONDS=""
+  COST_PROFILE_DESCRIPTION=""
+
+  cost_profiles_path=$(experiment_cost_profiles_path "${experiment_name}")
+  if [[ ! -f "${cost_profiles_path}" ]]; then
+    return 0
+  fi
+
+  while IFS=',' read -r row_profile_id COST_SERVING_HOURLY_COST_USD COST_SCOPE COST_SLO_P95_REQUEST_LATENCY_SECONDS COST_SLO_P99_REQUEST_LATENCY_SECONDS COST_PROFILE_DESCRIPTION; do
+    if [[ -z "${row_profile_id}" || "${row_profile_id}" == "profile_id" || "${row_profile_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "${row_profile_id}" == "${requested_profile_id}" ]]; then
+      COST_PROFILE_ID=${row_profile_id}
+      require_name "${COST_PROFILE_ID}" "cost profile id"
+      require_rate "${COST_SERVING_HOURLY_COST_USD}" "serving hourly cost"
+      require_safe_text "${COST_SCOPE}" "cost scope"
+      if [[ -n "${COST_SLO_P95_REQUEST_LATENCY_SECONDS}" ]]; then
+        require_rate "${COST_SLO_P95_REQUEST_LATENCY_SECONDS}" "p95 request latency SLO"
+      fi
+      if [[ -n "${COST_SLO_P99_REQUEST_LATENCY_SECONDS}" ]]; then
+        require_rate "${COST_SLO_P99_REQUEST_LATENCY_SECONDS}" "p99 request latency SLO"
+      fi
+      return 0
+    fi
+  done < "${cost_profiles_path}"
+
+  die "Experiment ${experiment_name} has cost-profiles.csv but no cost profile for serving profile ${requested_profile_id}"
 }
 
 render_request_shapes_js() {
@@ -922,7 +1072,11 @@ $(render_k6_scenario)
       const completedRequests = metricValue(data, "http_reqs", "count");
       const failedRate = metricValue(data, "http_req_failed", "rate");
       const droppedIterations = metricValue(data, "dropped_iterations", "count");
+      const generatedTokens = metricValue(data, "completion_tokens", "count");
       const generatedTokensPerSecond = metricValue(data, "completion_tokens", "rate");
+      const testRunDurationMs = data.state && data.state.testRunDurationMs !== undefined
+        ? String(data.state.testRunDurationMs)
+        : "";
       const failedRequests = completedRequests === "" || failedRate === ""
         ? ""
         : String(Math.round(Number(completedRequests) * Number(failedRate)));
@@ -934,11 +1088,13 @@ $(render_k6_scenario)
           "failed_requests=" + failedRequests,
           "dropped_iterations=" + droppedIterations,
           "buffering_required_requests=" + droppedIterations,
+          "generated_tokens=" + generatedTokens,
           "p50_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "med")),
           "p95_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "p(95)")),
           "p99_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "p(99)")),
           "requests_per_second=" + metricValue(data, "http_reqs", "rate"),
           "generation_tokens_per_second=" + generatedTokensPerSecond,
+          "run_duration_seconds=" + secondsFromMilliseconds(testRunDurationMs),
           "GPU_LAB_K6_SUMMARY_END",
         ].join("\\n") + "\\n",
       };
@@ -1117,6 +1273,7 @@ data:
     inter_token_latencies = []
     chunk_rates = []
     failed_requests = 0
+    run_start = time.perf_counter()
 
     for _ in range(samples):
       try:
@@ -1133,6 +1290,7 @@ data:
       if result["chunks_per_second"] != "":
         chunk_rates.append(result["chunks_per_second"])
 
+    run_duration_seconds = time.perf_counter() - run_start
     completed_requests = len(request_latencies)
     average_chunk_rate = "" if not chunk_rates else sum(chunk_rates) / len(chunk_rates)
 
@@ -1147,6 +1305,7 @@ data:
     print(f"p50_inter_token_latency_seconds={percentile(inter_token_latencies, 50)}")
     print(f"p95_inter_token_latency_seconds={percentile(inter_token_latencies, 95)}")
     print(f"generation_tokens_per_second={average_chunk_rate if average_chunk_rate == '' else f'{average_chunk_rate:.6f}'}")
+    print(f"run_duration_seconds={run_duration_seconds:.6f}")
     print("GPU_LAB_STREAM_SUMMARY_END")
     if completed_requests == 0:
       sys.exit(1)
@@ -1203,6 +1362,7 @@ render_report_markdown() {
   local buffering_required_display
   local failure_attribution_display
   local completed_requests_display
+  local successful_requests_display
   local failed_requests_display
   local oom_events_display
   local p50_latency_display
@@ -1213,7 +1373,9 @@ render_report_markdown() {
   local p50_inter_token_latency_display
   local p95_inter_token_latency_display
   local requests_per_second_display
+  local generated_tokens_display
   local generation_tokens_per_second_display
+  local run_duration_display
   local peak_waiting_requests_display
   local peak_running_requests_display
   local peak_active_requests_display
@@ -1227,14 +1389,20 @@ render_report_markdown() {
   local container_started_display
   local model_ready_display
   local first_successful_completion_display
+  local cost_scope_display
+  local serving_hourly_cost_display
   local estimated_burst_cost_display
   local cost_per_1000_display
   local cost_per_1m_tokens_display
+  local slo_p95_target_display
+  local slo_p99_target_display
+  local slo_passed_display
 
   require_experiment "${experiment_name}"
   load_case "${experiment_name}" "${case_id}"
   load_client_policy "${experiment_name}" "${CASE_ID}"
   load_serving_profile "${experiment_name}" "${profile_id}"
+  load_cost_profile "${experiment_name}" "${profile_id}"
 
   experiment_title_value=$(experiment_title "${experiment_name}")
   request_shapes_display_value=$(request_shapes_display "${experiment_name}")
@@ -1249,6 +1417,7 @@ render_report_markdown() {
   fi
 
   completed_requests_display=$(display_optional_metric "${RESULT_COMPLETED_REQUESTS:-}")
+  successful_requests_display=$(display_optional_metric "${RESULT_SUCCESSFUL_REQUESTS:-}")
   failed_requests_display=$(display_optional_metric "${RESULT_FAILED_REQUESTS:-}")
   oom_events_display=$(display_optional_metric "${RESULT_OOM_EVENTS:-}")
   dropped_iterations_display=$(display_optional_metric "${RESULT_DROPPED_ITERATIONS:-}")
@@ -1262,7 +1431,9 @@ render_report_markdown() {
   p50_inter_token_latency_display=$(display_optional_metric "${RESULT_P50_INTER_TOKEN_LATENCY_SECONDS:-}")
   p95_inter_token_latency_display=$(display_optional_metric "${RESULT_P95_INTER_TOKEN_LATENCY_SECONDS:-}")
   requests_per_second_display=$(display_optional_metric "${RESULT_REQUESTS_PER_SECOND:-}")
+  generated_tokens_display=$(display_optional_metric "${RESULT_GENERATED_TOKENS:-}")
   generation_tokens_per_second_display=$(display_optional_metric "${RESULT_GENERATION_TOKENS_PER_SECOND:-}")
+  run_duration_display=$(display_optional_metric "${RESULT_RUN_DURATION_SECONDS:-}")
   peak_waiting_requests_display=$(display_optional_metric "${RESULT_PEAK_WAITING_REQUESTS:-}")
   peak_running_requests_display=$(display_optional_metric "${RESULT_PEAK_RUNNING_REQUESTS:-}")
   peak_active_requests_display=$(display_optional_metric "${RESULT_PEAK_ACTIVE_REQUESTS:-}")
@@ -1276,9 +1447,14 @@ render_report_markdown() {
   container_started_display=$(display_optional_metric "${RESULT_CONTAINER_STARTED_SECONDS:-}")
   model_ready_display=$(display_optional_metric "${RESULT_MODEL_READY_SECONDS:-}")
   first_successful_completion_display=$(display_optional_metric "${RESULT_FIRST_SUCCESSFUL_COMPLETION_SECONDS:-}")
+  cost_scope_display=$(display_optional_metric "${COST_SCOPE:-}")
+  serving_hourly_cost_display=$(display_optional_metric "${COST_SERVING_HOURLY_COST_USD:-}")
   estimated_burst_cost_display=$(display_optional_metric "${RESULT_ESTIMATED_BURST_COST_USD:-}")
   cost_per_1000_display=$(display_optional_metric "${RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD:-}")
   cost_per_1m_tokens_display=$(display_optional_metric "${RESULT_COST_PER_1M_GENERATED_TOKENS_USD:-}")
+  slo_p95_target_display=$(display_optional_metric "${COST_SLO_P95_REQUEST_LATENCY_SECONDS:-}")
+  slo_p99_target_display=$(display_optional_metric "${COST_SLO_P99_REQUEST_LATENCY_SECONDS:-}")
+  slo_passed_display=$(display_optional_metric "${RESULT_SLO_PASSED:-}")
 
   cat <<EOF
 # ${experiment_title_value} - ${CASE_ID}
@@ -1324,12 +1500,17 @@ render_report_markdown() {
 | GPU memory utilization | ${GPU_MEMORY_UTILIZATION} |
 | Max sequences | ${max_num_seqs_display} |
 | Max batched tokens | ${max_num_batched_tokens_display} |
+| Cost scope | ${cost_scope_display} |
+| Serving hourly cost | ${serving_hourly_cost_display} |
+| p95 request SLO | ${slo_p95_target_display} |
+| p99 request SLO | ${slo_p99_target_display} |
 
 ## Results
 
 | Metric | Value |
 | --- | --- |
 | Completed requests | ${completed_requests_display} |
+| Successful requests | ${successful_requests_display} |
 | Failed requests | ${failed_requests_display} |
 | Dropped client iterations | ${dropped_iterations_display} |
 | Buffering required | ${buffering_required_display} |
@@ -1343,7 +1524,9 @@ render_report_markdown() {
 | p50 inter-token latency | ${p50_inter_token_latency_display} |
 | p95 inter-token latency | ${p95_inter_token_latency_display} |
 | Requests/sec | ${requests_per_second_display} |
+| Generated tokens | ${generated_tokens_display} |
 | Generation tokens/sec | ${generation_tokens_per_second_display} |
+| Run duration | ${run_duration_display} |
 | Peak waiting requests | ${peak_waiting_requests_display} |
 | Peak running requests | ${peak_running_requests_display} |
 | Peak active requests | ${peak_active_requests_display} |
@@ -1357,6 +1540,7 @@ render_report_markdown() {
 | Container started | ${container_started_display} |
 | Model ready | ${model_ready_display} |
 | First successful completion | ${first_successful_completion_display} |
+| SLO passed | ${slo_passed_display} |
 | Estimated burst cost | ${estimated_burst_cost_display} |
 | Cost per 1K successful requests | ${cost_per_1000_display} |
 | Cost per 1M generated tokens | ${cost_per_1m_tokens_display} |
@@ -1385,6 +1569,7 @@ render_report_json() {
   load_case "${experiment_name}" "${case_id}"
   load_client_policy "${experiment_name}" "${CASE_ID}"
   load_serving_profile "${experiment_name}" "${profile_id}"
+  load_cost_profile "${experiment_name}" "${profile_id}"
 
   experiment_title_value=$(experiment_title "${experiment_name}")
   max_num_seqs_json=$(json_optional_integer "${MAX_NUM_SEQS}")
@@ -1429,7 +1614,14 @@ render_report_json() {
     "max_model_len": ${MAX_MODEL_LEN},
     "gpu_memory_utilization": ${GPU_MEMORY_UTILIZATION},
     "max_num_seqs": ${max_num_seqs_json},
-    "max_num_batched_tokens": ${max_num_batched_tokens_json}
+    "max_num_batched_tokens": ${max_num_batched_tokens_json},
+    "cost_profile": {
+      "id": $(json_optional_string "${COST_PROFILE_ID:-}"),
+      "cost_scope": $(json_optional_string "${COST_SCOPE:-}"),
+      "serving_hourly_cost_usd": $(json_optional_number "${COST_SERVING_HOURLY_COST_USD:-}"),
+      "slo_p95_request_latency_seconds": $(json_optional_number "${COST_SLO_P95_REQUEST_LATENCY_SECONDS:-}"),
+      "slo_p99_request_latency_seconds": $(json_optional_number "${COST_SLO_P99_REQUEST_LATENCY_SECONDS:-}")
+    }
   },
   "run": {
     "status": "${run_status}",
@@ -1440,6 +1632,7 @@ render_report_json() {
   "results": {
     "success": {
       "completed_requests": $(json_optional_number "${RESULT_COMPLETED_REQUESTS:-}"),
+      "successful_requests": $(json_optional_number "${RESULT_SUCCESSFUL_REQUESTS:-}"),
       "failed_requests": $(json_optional_number "${RESULT_FAILED_REQUESTS:-}"),
       "oom_events": $(json_optional_number "${RESULT_OOM_EVENTS:-}")
     },
@@ -1454,6 +1647,8 @@ render_report_json() {
       "p50_inter_token_latency_seconds": $(json_optional_number "${RESULT_P50_INTER_TOKEN_LATENCY_SECONDS:-}"),
       "p95_inter_token_latency_seconds": $(json_optional_number "${RESULT_P95_INTER_TOKEN_LATENCY_SECONDS:-}"),
       "requests_per_second": $(json_optional_number "${RESULT_REQUESTS_PER_SECOND:-}"),
+      "generated_tokens": $(json_optional_number "${RESULT_GENERATED_TOKENS:-}"),
+      "run_duration_seconds": $(json_optional_number "${RESULT_RUN_DURATION_SECONDS:-}"),
       "generation_tokens_per_second": $(json_optional_number "${RESULT_GENERATION_TOKENS_PER_SECOND:-}")
     },
     "queue": {
@@ -1478,7 +1673,14 @@ render_report_json() {
       "model_ready_seconds": $(json_optional_number "${RESULT_MODEL_READY_SECONDS:-}"),
       "first_successful_completion_seconds": $(json_optional_number "${RESULT_FIRST_SUCCESSFUL_COMPLETION_SECONDS:-}")
     },
+    "slo": {
+      "p95_request_latency_target_seconds": $(json_optional_number "${COST_SLO_P95_REQUEST_LATENCY_SECONDS:-}"),
+      "p99_request_latency_target_seconds": $(json_optional_number "${COST_SLO_P99_REQUEST_LATENCY_SECONDS:-}"),
+      "passed": $(json_optional_boolean "${RESULT_SLO_PASSED:-}")
+    },
     "cost": {
+      "cost_scope": $(json_optional_string "${COST_SCOPE:-}"),
+      "serving_hourly_cost_usd": $(json_optional_number "${COST_SERVING_HOURLY_COST_USD:-}"),
       "estimated_burst_cost_usd": $(json_optional_number "${RESULT_ESTIMATED_BURST_COST_USD:-}"),
       "cost_per_1000_successful_requests_usd": $(json_optional_number "${RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD:-}"),
       "cost_per_1m_generated_tokens_usd": $(json_optional_number "${RESULT_COST_PER_1M_GENERATED_TOKENS_USD:-}")
@@ -1523,6 +1725,7 @@ parse_k6_summary_log() {
   local value
 
   RESULT_COMPLETED_REQUESTS=""
+  RESULT_SUCCESSFUL_REQUESTS=""
   RESULT_FAILED_REQUESTS=""
   RESULT_DROPPED_ITERATIONS=""
   RESULT_BUFFERING_REQUIRED_REQUESTS=""
@@ -1531,7 +1734,9 @@ parse_k6_summary_log() {
   RESULT_P95_REQUEST_LATENCY_SECONDS=""
   RESULT_P99_REQUEST_LATENCY_SECONDS=""
   RESULT_REQUESTS_PER_SECOND=""
+  RESULT_GENERATED_TOKENS=""
   RESULT_GENERATION_TOKENS_PER_SECOND=""
+  RESULT_RUN_DURATION_SECONDS=""
 
   while IFS= read -r line; do
     case "${line}" in
@@ -1558,6 +1763,9 @@ parse_k6_summary_log() {
       failed_requests)
         RESULT_FAILED_REQUESTS=${value}
         ;;
+      generated_tokens)
+        RESULT_GENERATED_TOKENS=${value}
+        ;;
       dropped_iterations)
         RESULT_DROPPED_ITERATIONS=${value}
         ;;
@@ -1579,6 +1787,9 @@ parse_k6_summary_log() {
       generation_tokens_per_second)
         RESULT_GENERATION_TOKENS_PER_SECOND=${value}
         ;;
+      run_duration_seconds)
+        RESULT_RUN_DURATION_SECONDS=${value}
+        ;;
     esac
   done < "${log_path}"
 
@@ -1598,6 +1809,7 @@ parse_stream_summary_log() {
   local value
 
   RESULT_COMPLETED_REQUESTS=""
+  RESULT_SUCCESSFUL_REQUESTS=""
   RESULT_FAILED_REQUESTS=""
   RESULT_P50_REQUEST_LATENCY_SECONDS=""
   RESULT_P95_REQUEST_LATENCY_SECONDS=""
@@ -1607,6 +1819,7 @@ parse_stream_summary_log() {
   RESULT_P50_INTER_TOKEN_LATENCY_SECONDS=""
   RESULT_P95_INTER_TOKEN_LATENCY_SECONDS=""
   RESULT_GENERATION_TOKENS_PER_SECOND=""
+  RESULT_RUN_DURATION_SECONDS=""
 
   while IFS= read -r line; do
     case "${line}" in
@@ -1657,8 +1870,102 @@ parse_stream_summary_log() {
       generation_tokens_per_second)
         RESULT_GENERATION_TOKENS_PER_SECOND=${value}
         ;;
+      run_duration_seconds)
+        RESULT_RUN_DURATION_SECONDS=${value}
+        ;;
     esac
   done < "${log_path}"
+}
+
+derive_successful_requests() {
+  if [[ -z "${RESULT_COMPLETED_REQUESTS:-}" ]]; then
+    RESULT_SUCCESSFUL_REQUESTS=""
+    return 0
+  fi
+
+  awk \
+    -v completed="${RESULT_COMPLETED_REQUESTS}" \
+    -v failed="${RESULT_FAILED_REQUESTS:-0}" '
+      BEGIN {
+        successful = (completed + 0) - (failed + 0)
+        if (successful < 0) {
+          successful = 0
+        }
+        printf "%.0f\n", successful
+      }'
+}
+
+derive_slo_passed() {
+  local evaluated=0
+  local failed=0
+
+  RESULT_SLO_PASSED=""
+
+  if [[ -n "${COST_SLO_P95_REQUEST_LATENCY_SECONDS:-}" && -n "${RESULT_P95_REQUEST_LATENCY_SECONDS:-}" ]]; then
+    evaluated=1
+    if ! awk -v actual="${RESULT_P95_REQUEST_LATENCY_SECONDS}" -v target="${COST_SLO_P95_REQUEST_LATENCY_SECONDS}" 'BEGIN { exit !((actual + 0) <= (target + 0)) }'; then
+      failed=1
+    fi
+  fi
+
+  if [[ -n "${COST_SLO_P99_REQUEST_LATENCY_SECONDS:-}" && -n "${RESULT_P99_REQUEST_LATENCY_SECONDS:-}" ]]; then
+    evaluated=1
+    if ! awk -v actual="${RESULT_P99_REQUEST_LATENCY_SECONDS}" -v target="${COST_SLO_P99_REQUEST_LATENCY_SECONDS}" 'BEGIN { exit !((actual + 0) <= (target + 0)) }'; then
+      failed=1
+    fi
+  fi
+
+  if [[ "${evaluated}" == "0" ]]; then
+    return 0
+  fi
+
+  if [[ "${failed}" == "1" ]]; then
+    RESULT_SLO_PASSED="false"
+  else
+    RESULT_SLO_PASSED="true"
+  fi
+}
+
+derive_cost_metrics() {
+  local experiment_name=$1
+  local profile_id=$2
+  local duration_seconds
+
+  load_cost_profile "${experiment_name}" "${profile_id}"
+
+  RESULT_SUCCESSFUL_REQUESTS=$(derive_successful_requests)
+  RESULT_ESTIMATED_BURST_COST_USD=""
+  RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD=""
+  RESULT_COST_PER_1M_GENERATED_TOKENS_USD=""
+  RESULT_SLO_PASSED=""
+
+  if [[ -z "${RESULT_RUN_DURATION_SECONDS:-}" && -n "${CASE_ID:-}" ]]; then
+    RESULT_RUN_DURATION_SECONDS=$(case_planned_duration_seconds)
+  fi
+
+  duration_seconds=${RESULT_RUN_DURATION_SECONDS:-}
+  if [[ -n "${COST_SERVING_HOURLY_COST_USD:-}" && -n "${duration_seconds}" ]]; then
+    RESULT_ESTIMATED_BURST_COST_USD=$(awk \
+      -v hourly="${COST_SERVING_HOURLY_COST_USD}" \
+      -v duration="${duration_seconds}" \
+      'BEGIN { printf "%.6f\n", ((hourly + 0) * (duration + 0)) / 3600 }')
+  fi
+
+  if [[ -n "${RESULT_ESTIMATED_BURST_COST_USD}" && -n "${RESULT_SUCCESSFUL_REQUESTS}" ]]; then
+    RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD=$(divide_decimal_values \
+      "$(multiply_decimal_values "${RESULT_ESTIMATED_BURST_COST_USD}" "1000" 6)" \
+      "${RESULT_SUCCESSFUL_REQUESTS}" \
+      6)
+  fi
+
+  if [[ -n "${RESULT_ESTIMATED_BURST_COST_USD}" && -n "${RESULT_GENERATED_TOKENS:-}" ]]; then
+    RESULT_COST_PER_1M_GENERATED_TOKENS_USD=$(divide_decimal_values \
+      "$(multiply_decimal_values "${RESULT_ESTIMATED_BURST_COST_USD}" "1000000" 6)" \
+      "${RESULT_GENERATED_TOKENS}" \
+      6)
+  fi
+
+  derive_slo_passed
 }
 
 detect_vllm_oom_events() {
@@ -1729,6 +2036,7 @@ run_experiment_case() {
     parse_k6_summary_log "${k6_log_path}"
   fi
   detect_vllm_oom_events
+  derive_cost_metrics "${experiment_name}" "${PROFILE_ID}"
 
   if [[ "${job_status}" == "0" ]]; then
     RUN_STATUS="complete"
@@ -1810,6 +2118,7 @@ run_stream_case() {
     parse_stream_summary_log "${stream_log_path}"
   fi
   detect_vllm_oom_events
+  derive_cost_metrics "${experiment_name}" "${PROFILE_ID}"
 
   if [[ "${job_status}" == "0" ]]; then
     RUN_STATUS="complete"
