@@ -18,7 +18,8 @@ this repo.
 
 - Kubernetes-side manifests remain under `platform/karpenter/`
 - the current module keeps `enable_spot_termination = false`, so interruption
-  handling is not yet part of the implemented platform story
+  handling is not wired to cloud-native spot interruption notices
 
-This is a good example of the repo's current maturity: mixed capacity is
-implemented, but deeper spot resilience work is still on the roadmap.
+The scripted resilience drill is implemented separately in `./scripts/evaluate`
+by deleting a live spot-backed `NodeClaim`. That is useful lab evidence, but it
+is not the same as Karpenter spot interruption handling.

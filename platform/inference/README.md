@@ -23,7 +23,8 @@ The scripts consume these manifests in different ways:
   before any GPU pod is launched
 - `./scripts/verify` applies the deployment only to prove the cold-start path
 - `./scripts/evaluate` applies the deployment plus the selected HPA policy to
-  prove burst scale-out, or runs both policies sequentially in compare mode
+  prove burst scale-out, runs both policies sequentially in compare mode, or
+  sweeps active-pressure targets
 
 ## Scheduling Contract
 
@@ -48,5 +49,4 @@ That is the current repo truth:
 
 - it proves the custom-metrics control loop works with two signals
 - it lets `./scripts/evaluate --policy compare` compare those signals directly
-- the next question is GPU efficiency, not whether active pressure can drive the
-  HPA
+- it lets `./scripts/evaluate --policy sweep` calibrate active-pressure targets

@@ -25,7 +25,8 @@ observability as part of the main platform story rather than a manual add-on.
 - latency, derived queue wait, TTFT, throughput, and queue-related metrics
 - GPU utilization visibility through DCGM exporter
 - experiment summary metrics pushed to Pushgateway
-- Grafana experiment summaries grouped by `profile`, `policy`, and target
+- Grafana experiment summaries grouped by `profile`, `resilience`, `policy`,
+  and target
 
 ## Current Custom Metric Surface
 
@@ -34,8 +35,8 @@ Today the adapter exposes both autoscaling metrics:
 - `vllm_requests_running`
 - `vllm_requests_active`, computed from `max_over_time(running[1m]) + max_over_time(waiting[1m])`
 
-That means the repo can compare the original running-request HPA against the
-new active-pressure policy without changing the serving deployment itself.
+That means the repo can compare the running-request HPA against the
+active-pressure policy without changing the serving deployment itself.
 
 ## Current Limitation
 

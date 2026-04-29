@@ -1,190 +1,108 @@
-# GPU Inference Lab Roadmap
-
-## Objective
-
-Build a production-style GPU inference platform on AWS that teaches the right ML
-infrastructure lessons:
-
-- how public inference traffic reaches GPU-backed workloads
-- how elastic GPU capacity is provisioned and cleaned up
-- how observability feeds autoscaling and operator decisions
-- how to reason about latency, utilization, and cost together
+# Roadmap
 
 ## Current State
 
-The repo is now in a much stronger place. It proves two clear operator paths:
+The lab currently proves a dev-oriented GPU inference platform on AWS:
 
-- `./scripts/verify` cold-starts the public inference edge from zero GPU nodes
-- `./scripts/evaluate --profile zero-idle|warm-1 --policy running|active-pressure|compare|sweep`
-  drives HPA scale-out, compares autoscaling signals, calibrates
-  active-pressure targets, triggers a second GPU node, and writes latency,
-  utilization, and cost reports
+- Terraform creates the VPC, EKS control plane, and managed system node group.
+- `./scripts/up` installs the public edge, observability, Karpenter, GPU
+  runtime prerequisites, and serving capacity definitions.
+- `./scripts/verify` cold-starts a real vLLM workload from zero GPU nodes and
+  cleans back down to zero.
+- `./scripts/evaluate` drives burst traffic, compares HPA signals, sweeps
+  active-pressure targets, records synthetic resilience drills, and writes
+  Markdown/JSON reports.
+- `./scripts/experiment` validates local experiment definitions and can run one
+  focused live experiment case at a time.
 
-What is already implemented:
+Implemented platform capabilities:
 
-- Terraform-managed VPC and EKS environment in `infra/env/dev`
-- AWS Load Balancer Controller plus a public ALB-backed inference ingress
+- public ALB-backed `/v1` inference edge
 - Karpenter-managed GPU capacity with no managed GPU node group
 - separate on-demand and spot serving `NodePool`s
-- a warm-node experiment path through `gpu-warm-placeholder`
-- NVIDIA device plugin and a real vLLM deployment
+- `zero-idle` and `warm-1` evaluation profiles
+- vLLM serving with `Qwen/Qwen2.5-0.5B-Instruct`
 - Prometheus, Grafana, Prometheus Adapter, Pushgateway, DCGM exporter, and
-  dashboards in the default scripted workflow
-- Markdown and JSON experiment reports under `docs/reports/`
+  dashboards
+- running-request and active-pressure HPA policies
+- compare and sweep report generation
+- pre-run spot scarcity and synthetic spot interruption evaluation modes
 
-What is still not true:
+## Known Limits
 
-- the environment is still dev-oriented, not production-hardened
-- queue time is derived rather than emitted from a dedicated queue-wait
-  histogram
-- the active-pressure target can now be swept heuristically, but it is still
-  not derived from a true per-GPU efficiency model
-- the repo does not yet prove GPU bin-packing efficiency
-- the interruption drill is synthetic `NodeClaim` deletion, not a cloud-native
-  interruption notice
+- The environment is dev-oriented and keeps the EKS API public.
+- Queue wait is derived from waiting depth over completion rate, not a
+  dedicated queue-wait histogram.
+- Active-pressure target recommendations are heuristic.
+- GPU efficiency is measured for the current one-pod-per-GPU shape, but the
+  repo does not yet compare multiple packing shapes or node sizes.
+- Spot interruption testing deletes a live `NodeClaim`; it does not consume
+  cloud-native interruption notices.
+- Experiment result summaries are scaffolded, but curated production run
+  conclusions have not been recorded.
 
-## Implemented Milestones
+## Next Work
 
-### Milestone 0 - Repository foundation
+### Production Hardening
 
-Status: implemented.
+Goal: make the platform posture match production expectations rather than demo
+convenience.
 
-Outcome:
-
-- repo layout, shell test surface, and a consistent workflow structure
-
-### Milestone 1 - AWS networking
-
-Status: implemented.
-
-Outcome:
-
-- VPC, public and private subnets, routing, Internet Gateway, and NAT for the
-  dev environment
-
-### Milestone 2 - EKS system plane
-
-Status: implemented.
-
-Outcome:
-
-- Terraform-managed EKS control plane and managed system node group
-
-### Milestone 3 - Public inference edge
-
-Status: implemented.
-
-Outcome:
-
-- AWS Load Balancer Controller plus ALB-backed ingress for `/v1` traffic
-
-### Milestone 4 - Dynamic GPU capacity
-
-Status: implemented.
-
-Outcome:
-
-- Karpenter controller, CRDs, shared GPU `EC2NodeClass`, and serving
-  `NodePool`s
-
-### Milestone 5 - GPU runtime prerequisites
-
-Status: implemented.
-
-Outcome:
-
-- NVIDIA device plugin and GPU scheduling rules for the serving workload
-
-### Milestone 6 - Real GPU serving
-
-Status: implemented.
-
-Outcome:
-
-- vLLM deployment serving a real model
-- deployment-only cold-start proof through `./scripts/verify`
-
-### Milestone 7 - Observability-driven evaluation
-
-Status: implemented.
-
-Outcome:
-
-- Prometheus, Grafana, Prometheus Adapter, Pushgateway, DCGM exporter, and
-  dashboards in the default path
-- HPA validation from `vllm_requests_running`
-- report generation for first response, scale-out, latency, utilization, and
-  cost
-
-### Milestone 8 - Mixed-capacity serving profiles
-
-Status: implemented.
-
-Outcome:
-
-- `gpu-serving-ondemand` and `gpu-serving-spot` as the real serving pools
-- `warm-1` profile anchored on on-demand capacity
-- zero-idle versus warm-node comparison as part of the scripted workflow
-
-## Planned Next Milestones
-
-### Milestone 9 - Capacity-aware autoscaling and saturation control
-
-Status: implemented.
-
-Outcome:
-
-- a new active-pressure metric `vllm_requests_active = waiting + running`
-- a second HPA manifest for the active-pressure policy
-- `./scripts/evaluate --policy running|active-pressure|compare`
-- per-policy plus compare reports with queue, waiting pressure, GPU
-  utilization, NodeClaim count, and burst cost
-
-### Milestone 10 - GPU efficiency calibration and bin packing
-
-Status: implemented.
-
-Outcome:
-
-- `./scripts/evaluate --policy sweep --active-targets 2,4,6,8`
-- a derived p95 queue-wait estimate built from waiting depth over request
-  completion rate
-- per-target Markdown and JSON artifacts with per-GPU active-request and GPU
-  headroom readouts
-- sweep and compare reports that explain whether the current node shape looked
-  saturated, balanced, or wasteful
-- dashboard and Pushgateway labels that distinguish profile, policy, and
-  target while exposing queue-wait and per-GPU efficiency metrics
-
-Why this follows Milestone 9:
-
-- once scaling is tied to a better pressure signal, the next question is how
-  much useful work each GPU node can do
-
-### Milestone 11 - Resilience and interruption handling
-
-Status: implemented.
-
-Outcome:
-
-- `./scripts/evaluate --resilience healthy|spot-unavailable|spot-interruption`
-- a degraded-capacity experiment that withdraws the preferred spot `NodePool`
-  for the run, then records whether the burst falls back to on-demand GPU
-  capacity
-- a live interruption drill that deletes the active spot-backed burst
-  `NodeClaim`, withdraws the spot pool, and measures replacement timing plus
-  recovery back to two ready replicas
-- report and dashboard fields for resilience mode, fallback or recovery
-  outcome, first/second/recovery GPU availability zones, and interruption
-  recovery timing
-
-### Milestone 12 - Production hardening
-
-Status: planned.
-
-Completion should look like:
+Completion should include:
 
 - private EKS endpoint access
-- SSM, bastion, or VPN-based administration
-- tighter public CIDR controls
-- clearer operational and security guidance for production posture
+- SSM, bastion, or VPN-based operator access
+- narrower public CIDR controls
+- clearer guidance for secrets, credentials, and public inference exposure
+- documented destroy and recovery procedures for shared accounts
+
+### Queue And Saturation Precision
+
+Goal: improve autoscaling and report quality with more direct serving signals.
+
+Completion should include:
+
+- a dedicated queue-wait metric or histogram if vLLM/exporter support allows it
+- clearer separation between queueing delay, model prefill, decode time, and
+  downstream client timeout behavior
+- sweep recommendations based on measured saturation thresholds rather than
+  simple guardrails
+
+### GPU Efficiency And Packing
+
+Goal: compare useful work per GPU across serving and capacity shapes.
+
+Completion should include:
+
+- experiments that compare current one-pod-per-GPU behavior with alternative
+  scheduler settings, node sizes, or placement strategies
+- cost per useful request and generated token read beside latency and failure
+  rates
+- dashboard and report language that explains stranded capacity clearly
+
+### Experiment Publishing
+
+Goal: turn generated reports into curated project evidence.
+
+Completion should include:
+
+- selected checked-in JSON report data for representative runs
+- charts generated from report data
+- concise `experiments/<name>/results.md` conclusions
+- a maintained cross-experiment summary in `docs/experiments-summary.md`
+
+## Completed History
+
+The main completed milestones are:
+
+- repository foundation and shell test surface
+- AWS networking and EKS system plane
+- public inference edge
+- dynamic GPU capacity through Karpenter
+- NVIDIA device plugin and GPU scheduling rules
+- real vLLM serving and deployment-only cold-start validation
+- observability-driven evaluation
+- mixed on-demand/spot serving profiles
+- active-pressure autoscaling and compare reports
+- active-target sweep reports
+- synthetic degraded-capacity and interruption drills

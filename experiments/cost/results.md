@@ -1,6 +1,6 @@
 # Cost Per Useful Work Results
 
-No production results have been recorded yet.
+No curated production run has been recorded yet.
 
 ## Planned Comparison
 
@@ -30,4 +30,4 @@ For each case/profile pair, record:
 Summarize whether the optimized profile produced more useful work per dollar
 without violating the latency SLO. Failed requests must stay out of the useful
 request denominator, and the cost scope must remain serving-GPU-only unless a
-future slice explicitly adds more infrastructure cost.
+later change intentionally expands the model.

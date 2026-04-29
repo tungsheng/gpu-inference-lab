@@ -1,140 +1,64 @@
 # Inference
 
-## Serving Surface
+The repo serves a real GPU-backed model through vLLM and exposes an
+OpenAI-compatible `/v1` path through an AWS Application Load Balancer.
 
-The repo serves a real GPU-backed model through vLLM. The inference assets live
-under `platform/inference/`:
+## Assets
 
-- `vllm-openai.yaml`: deployment-only vLLM manifest
-- `hpa.yaml`: running-request HPA baseline
-- `hpa-active-pressure.yaml`: active-pressure HPA baseline
+Inference manifests live in `platform/inference/`:
+
+- `vllm-openai.yaml`: deployment-only vLLM workload
 - `service.yaml`: stable in-cluster `ClusterIP` service
 - `ingress.yaml`: public ALB-backed `/v1` path
+- `hpa.yaml`: running-request HPA policy
+- `hpa-active-pressure.yaml`: active-pressure HPA policy
 
-The scripts use them intentionally:
+The scripts use these files deliberately:
 
-- `./scripts/up` installs the public service and ingress but does not start the
-  vLLM deployment
+- `./scripts/up` applies only the service and ingress
 - `./scripts/verify` applies only the deployment
-- `./scripts/evaluate` applies the deployment and the selected HPA policy, or
-  both policies sequentially in compare mode, or multiple active-pressure
-  targets in sweep mode
+- `./scripts/evaluate` applies the deployment plus one selected HPA policy, or
+  runs compare/sweep workflows
 
-## Current Serving Stack
+That split keeps the public edge online while GPU serving capacity stays at
+zero until a validation or evaluation run starts.
+
+## Serving Stack
 
 - image: `vllm/vllm-openai:v0.9.0`
 - model: `Qwen/Qwen2.5-0.5B-Instruct`
 - served model name: `qwen2.5-0.5b`
-- readiness and liveness path: `/health`
+- health path: `/health`
 - container port: `8000`
+- GPU request and limit: `nvidia.com/gpu: 1`
 
-Why this is useful for the lab:
-
-- it exercises a real OpenAI-compatible inference surface
-- it uses actual GPU scheduling rather than a placeholder sleep workload
-- it is small enough to run on the single-GPU instance types allowed by the
-  serving `NodePool`s
-
-## Scheduling Contract
-
-The deployment is explicit about where it can run:
-
-- `nodeSelector: workload=gpu`
-- `tolerations: gpu=true:NoSchedule`
-- `requests.nvidia.com/gpu: 1`
-- `limits.nvidia.com/gpu: 1`
-
-That creates the exact control path the repo is meant to test:
-
-1. the pod is created and cannot run on system nodes
-2. Karpenter sees pending GPU demand and launches matching capacity
-3. the node joins the cluster
-4. the NVIDIA device plugin advertises `nvidia.com/gpu`
-5. the pod starts, loads the model, and becomes Ready
-
-## Public Inference Edge
-
-The external request path is:
-
-```text
-Client -> ALB -> Ingress (/v1) -> Service -> vLLM pod
-```
-
-The ingress is created during `./scripts/up`, so the public edge exists before
-GPU workloads are launched. That makes `./scripts/verify` a true cold-start test
-of the serving workload instead of a mixed infrastructure bootstrap.
+The workload selects `workload=gpu`, tolerates `gpu=true:NoSchedule`, and cannot
+land on the managed system node group. Pending GPU demand is what lets
+Karpenter prove dynamic serving capacity.
 
 ## Autoscaling Policies
 
-Both HPA manifests scale the same `vllm-openai` deployment, keep
-`minReplicas: 1`, and cap at `maxReplicas: 2`.
+Both HPA policies target the same `vllm-openai` deployment with `minReplicas: 1`
+and `maxReplicas: 2`.
 
-Running baseline in `platform/inference/hpa.yaml`:
+| Policy | Manifest | Metric | Default target |
+| --- | --- | --- | --- |
+| `running` | `hpa.yaml` | `vllm_requests_running` | `128` |
+| `active-pressure` | `hpa-active-pressure.yaml` | `vllm_requests_active = waiting + running` | `4` |
 
-- uses the custom pod metric `vllm_requests_running`
-- targets an average value of `128`
+Use `./scripts/evaluate --policy ...` for normal validation. If applying
+manifests manually, apply only one HPA policy at a time because both manifests
+use the same HPA name.
 
-Active-pressure baseline in `platform/inference/hpa-active-pressure.yaml`:
+## Warm Profile
 
-- uses the custom pod metric `vllm_requests_active`
-- computes pressure as `waiting + running`
-- checks in with a default average target of `4`
-- can be re-rendered at runtime through `./scripts/evaluate --active-target`
+`./scripts/evaluate --profile warm-1` applies
+`platform/workloads/validation/gpu-warm-placeholder.yaml` before starting the
+real vLLM deployment. The placeholder keeps one on-demand serving node alive
+without requesting the GPU resource, which lets the run compare lower
+first-response latency against higher idle cost.
 
-## Why `warm-1` Exists
-
-The `warm-1` profile applies `platform/workloads/validation/gpu-warm-placeholder.yaml` before
-starting the real deployment. That tiny deployment:
-
-- selects serving GPU labels
-- tolerates the GPU taint
-- pins itself to `karpenter.sh/capacity-type=on-demand`
-- keeps one serving node alive without consuming the GPU resource
-
-It lets the repo compare:
-
-- zero idle spend with higher cold-start latency
-- one warm GPU node with faster first response and higher idle cost
-
-## What The Repo Proves Today
-
-With the scripted path:
-
-```bash
-./scripts/up
-./scripts/verify
-./scripts/evaluate --profile zero-idle
-./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
-./scripts/evaluate --profile zero-idle --resilience spot-unavailable
-./scripts/evaluate --profile zero-idle --resilience spot-interruption
-./scripts/evaluate --profile warm-1 --policy compare --active-target 6
-./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
-```
-
-The repo proves:
-
-- cold-start serving from zero GPU nodes
-- public ingress routing to the real inference workload
-- HPA-driven scale-out from one to two replicas with two different policy
-  signals
-- target calibration experiments for the active-pressure policy
-- second-node provisioning through Karpenter
-- degraded-capacity fallback behavior when the preferred spot burst path is
-  withdrawn
-- live interruption recovery behavior when a spot-backed burst node is deleted
-  during the load
-- report generation for latency, derived queue wait, TTFT, waiting pressure,
-  utilization, and cost
-
-## Manual Validation
-
-Apply the serving stack yourself:
-
-```bash
-kubectl apply -f platform/inference/vllm-openai.yaml
-kubectl apply -f platform/inference/hpa.yaml
-kubectl apply -f platform/inference/hpa-active-pressure.yaml
-```
+## Manual Checks
 
 Watch scheduling and autoscaling:
 
@@ -145,7 +69,7 @@ kubectl get nodeclaims -w
 kubectl get nodes -L workload,karpenter.sh/nodepool,karpenter.sh/capacity-type -w
 ```
 
-Test the public edge:
+Test the public edge after `./scripts/up` and a Ready serving pod:
 
 ```bash
 EDGE_HOST=$(kubectl get ingress vllm-openai-ingress -n app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
@@ -154,13 +78,10 @@ curl "http://${EDGE_HOST}/v1/completions" \
   -d '{"model":"qwen2.5-0.5b","prompt":"Say hello from the public edge.","max_tokens":32,"temperature":0}'
 ```
 
-## Resilience Coverage
+## Current Limits
 
-Milestone 11 now covers two resilience drills:
-
-- `--resilience spot-unavailable` proves the platform can still scale out when
-  the preferred spot burst path disappears before the load starts
-- `--resilience spot-interruption` temporarily withdraws the on-demand serving
-  pool before the burst so the second node must land on spot, then proves the
-  platform can recover after that live spot-backed burst node is deleted during
-  the load, and it records the replacement timing plus recovery capacity type
+- scale-out is intentionally capped at two replicas for the lab
+- active-pressure target selection is still calibrated by sweep results and
+  heuristics
+- the spot interruption drill is synthetic `NodeClaim` deletion, not a
+  cloud-native interruption notice

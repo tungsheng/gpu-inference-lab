@@ -2,8 +2,8 @@
 
 ## Goal
 
-Measure how long-prompt/short-output and short-prompt/long-output requests
-shift latency between prefill and decode.
+Separate prompt-processing pressure from token-generation pressure by comparing
+long-prompt/short-output and short-prompt/long-output requests.
 
 ## Cases
 
@@ -14,7 +14,9 @@ shift latency between prefill and decode.
 
 Both cases fit the default 2048-token serving profile.
 
-## Render A Streaming Client
+## Commands
+
+Render a streaming client:
 
 ```bash
 ./scripts/experiment render-stream \
@@ -24,17 +26,9 @@ Both cases fit the default 2048-token serving profile.
   --output /tmp/prefill-heavy-stream.yaml
 ```
 
-The streaming client records client-side TTFT, inter-token latency, total
-request latency, and streamed chunk throughput.
-
-## Run One Streaming Case
-
-`run-stream` requires a configured Kubernetes context and a live cluster from
-`./scripts/up`.
+Live run after `./scripts/up`:
 
 ```bash
-./scripts/up
-
 ./scripts/experiment run-stream \
   --experiment prefill-decode \
   --case prefill-heavy \
@@ -42,28 +36,10 @@ request latency, and streamed chunk throughput.
   --samples 5
 ```
 
-Run the decode-heavy case with the same serving profile and compare p50/p95
-TTFT with p50/p95 inter-token latency.
+Run both cases with the same profile before changing serving settings.
 
-```bash
-./scripts/experiment run-stream \
-  --experiment prefill-decode \
-  --case decode-heavy \
-  --profile default \
-  --samples 5
-```
+## Readout
 
-## Metrics To Capture
-
-- p50 and p95 time to first token
-- p50 and p95 inter-token latency
-- p95 and p99 end-to-end request latency
-- streamed chunk throughput
-- GPU utilization from Prometheus/DCGM in a future collection slice
-
-## Expected Interpretation
-
-The prefill-heavy case should emphasize time to first token because vLLM must
-process more prompt context before streaming begins. The decode-heavy case
-should emphasize generation duration and inter-token cadence because more work
-happens after the first token is emitted.
+Compare p50/p95 TTFT, p50/p95 inter-token latency, total request latency, and
+streamed chunk throughput. GPU utilization rollups remain future reporting
+work for this experiment.

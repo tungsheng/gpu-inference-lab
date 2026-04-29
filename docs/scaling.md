@@ -1,126 +1,78 @@
 # Scaling
 
-## Current Compute Model
+Scaling in this repo is intentionally small and observable: one vLLM replica can
+scale to two replicas, and each replica gets its own GPU-backed pod and serving
+node.
 
-The repo now has a clear mixed-capacity serving story:
+## Compute Model
 
-| Component | Capacity type | Role | Notes |
-| --- | --- | --- | --- |
-| system managed node group | on-demand | controllers and shared services | `m7i-flex.large`, always present |
-| `gpu-serving-ondemand` | on-demand | warm baseline and fallback serving path | weight `10` |
-| `gpu-serving-spot` | spot | preferred burst serving path | weight `50` |
-| `gpu-warm-placeholder` | on-demand | keeps one serving node alive for `warm-1` | no GPU request |
+| Component | Capacity type | Role |
+| --- | --- | --- |
+| managed system node group | on-demand | controllers and shared services |
+| `gpu-serving-ondemand` | on-demand | warm baseline and fallback serving path |
+| `gpu-serving-spot` | spot | preferred fresh burst capacity |
+| `gpu-warm-placeholder` | on-demand | keeps one serving node alive for `warm-1` without consuming a GPU |
 
 Key properties:
 
 - system nodes are labeled `workload=system`
 - GPU nodes are labeled `workload=gpu`
 - GPU nodes are tainted `gpu=true:NoSchedule`
-- GPU workloads opt in with both a matching `nodeSelector` and toleration
+- GPU workloads opt in with a matching selector and toleration
 - both serving `NodePool`s share the same GPU `EC2NodeClass`
 - there is no managed GPU node group
 
-## Default Baseline
+After `./scripts/up`, the intended baseline is a ready platform with zero GPU
+nodes.
 
-After `./scripts/up`, the cluster should have:
+## What Scales
 
-- system nodes available
-- `gpu-serving-ondemand` and `gpu-serving-spot` registered and Ready
-- the NVIDIA device plugin and observability stack running
-- a public inference ingress hostname
-- zero active GPU nodes
-
-That is the intended starting point. GPU cost should appear only when a GPU
-workload is applied.
-
-## What `verify` Exercises
-
-`./scripts/verify` is the cold-start proof:
+`./scripts/verify` proves cold start:
 
 - applies the vLLM deployment only
 - waits for one GPU node
 - waits for one Ready replica
 - proves one successful public completion
-- removes the deployment and waits for zero GPU nodes again
+- removes the deployment and waits for zero GPU nodes
 
-This path answers whether the zero-idle story works at all.
+`./scripts/evaluate` proves burst scale-out:
 
-## What `evaluate` Exercises
-
-`./scripts/evaluate` is the burst-scale experiment:
-
-- applies the same vLLM deployment
-- waits for the chosen custom-metrics pipeline
-- applies the matching HPA policy
+- applies the vLLM deployment
+- applies the selected HPA policy
 - runs the checked-in k6 burst job
-- waits for desired replicas to hit `2`
-- waits for a second serving `NodeClaim`, second GPU node, and second Ready
-  replica
-- waits for scale-in and cleanup
-- writes per-policy, compare, or sweep reports with timing, utilization,
-  derived queue wait, and cost fields
-- marks reports as `partial` when final Prometheus/DCGM reads fail after the
-  control-loop and cleanup timeline has already completed
-- can also withdraw the preferred spot `NodePool` for the run through
-  `./scripts/evaluate --resilience spot-unavailable` and report the resulting
-  on-demand fallback path plus GPU node zones
-- can also withdraw the on-demand serving pool before the burst, interrupt the
-  live spot-backed burst node through `./scripts/evaluate --resilience
-  spot-interruption`, and report the replacement timing plus recovered capacity
-  type
+- waits for desired replicas to reach `2`
+- waits for a second serving `NodeClaim`, GPU node, and Ready replica
+- writes Markdown and JSON reports under `docs/reports/`
 
-This path answers whether the control loop can add capacity fast enough to
-handle bursty inference traffic.
+## HPA Signals
 
-## Current Autoscaling Signals
+| Policy | Metric | Default target | Replica range |
+| --- | --- | ---: | --- |
+| `running` | `vllm_requests_running` | `128` | `1` to `2` |
+| `active-pressure` | `vllm_requests_active = waiting + running` | `4` | `1` to `2` |
 
-Today the repo supports two HPA policies:
+`compare` runs both policies sequentially. `sweep` runs active-pressure once
+per configured target and writes a recommendation summary.
 
-| Policy | Metric | Target type | Default target | Replica range | Purpose |
-| --- | --- | --- | --- | --- | --- |
-| `running` | `vllm_requests_running` | pod average value | `128` | `1` to `2` | preserve the original admitted-work baseline |
-| `active-pressure` | `vllm_requests_active` | pod average value | `4` | `1` to `2` | scale from `waiting + running` pressure |
+## Capacity Profiles
 
-That is a meaningful milestone because it proves:
+`zero-idle` starts with no GPU nodes. It minimizes idle GPU spend and pays the
+full cold-start cost.
 
-- Prometheus is scraping real vLLM metrics
-- Prometheus Adapter is exposing both autoscaling metrics
-- the HPA can act on either metric without changing the serving deployment
-- `./scripts/evaluate --policy compare` can run both policies against the same
-  profile and emit a side-by-side summary
-- `./scripts/evaluate --policy sweep --active-targets ...` can calibrate the
-  active-pressure target across multiple runs and emit a recommendation summary
+`warm-1` keeps one on-demand serving node alive through
+`gpu-warm-placeholder`. It improves first-response latency and increases idle
+cost.
 
-## Why `warm-1` Matters
+## Resilience Modes
 
-`./scripts/evaluate --profile warm-1` applies the lightweight warm placeholder
-before the real inference deployment. That keeps one on-demand serving node
-alive so the experiment can isolate the tradeoff between:
+| Mode | Behavior |
+| --- | --- |
+| `healthy` | leaves spot and on-demand serving pools available |
+| `spot-unavailable` | removes `gpu-serving-spot` before the run so burst scale-out must fall back to on-demand |
+| `spot-interruption` | temporarily removes on-demand before burst scale-out, deletes the live spot-backed burst `NodeClaim`, restores on-demand, and measures replacement timing |
 
-- lower idle cost and slower first response
-- higher idle cost and faster first response
-
-In compare mode, the workflow restores that warm baseline between the two
-policy runs and then removes it at the very end so the environment still
-returns to zero GPU nodes after reporting.
-
-## Current Resilience Coverage
-
-Milestone 11 now includes both resilience drills:
-
-- `./scripts/evaluate --resilience spot-unavailable` deletes the preferred
-  `gpu-serving-spot` `NodePool` before the run, so the burst has to fall back
-  to `gpu-serving-ondemand`
-- `./scripts/evaluate --resilience spot-interruption` temporarily deletes
-  `gpu-serving-ondemand` after the first replica is ready so the burst node
-  must land on spot, then deletes the live spot-backed burst `NodeClaim`,
-  withdraws the spot pool, restores on-demand, and waits for the second ready
-  replica to recover on replacement capacity
-- reports and the experiment dashboard now call out resilience mode, outcome,
-  first/second/recovery GPU zones, and interruption recovery timing
-
-That moves the repo from a simple capacity demo into a real degraded-capacity
-control-loop experiment.
+The interruption mode is useful for a controlled lab drill, but it is not the
+same as consuming a cloud-native spot interruption notice.
 
 ## Version Pins
 

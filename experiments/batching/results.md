@@ -1,6 +1,6 @@
 # Batching Scheduler Tradeoffs Results
 
-No production results have been recorded yet.
+No curated production run has been recorded yet.
 
 ## Planned Comparison
 

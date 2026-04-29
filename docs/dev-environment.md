@@ -1,12 +1,13 @@
 # Dev Environment Workflow
 
-This repository has one active environment: `infra/env/dev`. The dev workflow
-is intentionally opinionated:
+The repo has one active environment: `infra/env/dev`. The workflow is:
 
 1. bring up the cluster and platform services
-2. prove the cold-start path with `./scripts/verify`
+2. prove cold start with `./scripts/verify`
 3. measure burst behavior with `./scripts/evaluate`
-4. tear the environment down cleanly
+4. tear everything down
+
+Use [operations.md](operations.md) when you only need to choose a command.
 
 ## Prerequisites
 
@@ -17,24 +18,29 @@ is intentionally opinionated:
 - AWS credentials for the target account
 - access to `us-west-2`
 
+Run local tests at any point:
+
+```bash
+./test/run.sh
+```
+
 ## Happy Path
 
 ```bash
 ./scripts/up
 ./scripts/verify
 ./scripts/evaluate --profile zero-idle
-./scripts/evaluate --profile zero-idle --resilience spot-unavailable
-./scripts/evaluate --profile zero-idle --resilience spot-interruption
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
 ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ./scripts/down
 ```
 
-Run the local shell tests at any point with:
+Optional resilience runs:
 
 ```bash
-./test/run.sh
+./scripts/evaluate --profile zero-idle --resilience spot-unavailable
+./scripts/evaluate --profile zero-idle --resilience spot-interruption
 ```
 
 ## Bring The Environment Up
@@ -43,28 +49,27 @@ Run the local shell tests at any point with:
 ./scripts/up
 ```
 
-Common variants:
+Common Terraform pass-through variants:
 
 ```bash
 ./scripts/up -auto-approve
 ./scripts/up -var-file=dev.tfvars
 ```
 
-`./scripts/up` performs the full platform bootstrap:
+`./scripts/up` performs the platform bootstrap:
 
 1. runs `terraform init` and `terraform apply` in `infra/env/dev`
-2. loads cluster outputs and updates local kubeconfig
+2. updates local kubeconfig from Terraform outputs
 3. installs the AWS Load Balancer Controller
 4. installs Prometheus, Grafana, Prometheus Adapter, Pushgateway, dashboards,
    and GPU exporters
 5. installs Karpenter CRDs and controller
 6. applies the shared GPU `EC2NodeClass` and both serving `NodePool`s
 7. applies the NVIDIA device plugin
-8. ensures the `app` namespace exists
-9. applies the public inference service and ingress
-10. waits for the ingress hostname and prints the public URL
+8. applies the public inference service and ingress
+9. waits for the ingress hostname and prints the public URL
 
-Expected state after `./scripts/up`:
+Expected state:
 
 - system nodes are present and labeled `workload=system`
 - Prometheus, Grafana, and the custom metrics API are Ready
@@ -72,55 +77,35 @@ Expected state after `./scripts/up`:
 - the public inference ingress has a hostname
 - GPU node count is still `0`
 
-## Prove The Cold-Start Path
+## Prove Cold Start
 
 ```bash
 ./scripts/verify
 ```
 
-`./scripts/verify` is the fastest proof that the platform works end to end:
+`./scripts/verify` applies only `platform/inference/vllm-openai.yaml`, waits for
+one GPU node, waits for one Ready vLLM replica, retries the public
+`/v1/completions` path until it gets `200`, deletes the deployment, and waits
+for GPU capacity to return to zero.
 
-1. applies only `platform/inference/vllm-openai.yaml`
-2. waits for the first GPU node and first Ready replica
-3. retries the public `/v1/completions` path until it gets a `200`
-4. deletes the deployment
-5. waits for GPU capacity to return to `0`
-6. prints timing for first node, Ready replica, first response, and cleanup
+Use this when you want to validate GPU provisioning, model startup, public
+ingress routing, and cleanup without running a full burst experiment.
 
-Use this path when you want to validate:
+## Run Burst Evaluations
 
-- GPU provisioning from a zero-idle baseline
-- vLLM startup and readiness
-- public ingress routing
-- cleanup back to zero GPU nodes
-
-## Run The Burst Evaluation
-
-Zero-idle baseline:
+Default running-request baseline:
 
 ```bash
 ./scripts/evaluate --profile zero-idle
 ```
 
-Degraded-capacity baseline with the preferred spot burst path withdrawn:
-
-```bash
-./scripts/evaluate --profile zero-idle --resilience spot-unavailable
-```
-
-Live interruption drill with replacement timing:
-
-```bash
-./scripts/evaluate --profile zero-idle --resilience spot-interruption
-```
-
-Capacity-aware policy on the same zero-idle baseline:
+Active-pressure policy:
 
 ```bash
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
 ```
 
-Warm baseline compare:
+Warm-node comparison:
 
 ```bash
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
@@ -132,83 +117,43 @@ Active-target sweep:
 ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ```
 
-The evaluation workflow is the deeper platform exercise:
+Resilience drills:
 
-1. confirms the public edge and custom metrics API are available
-2. applies the vLLM deployment
-3. waits for the first Ready replica and first successful public response
-4. preflights the selected custom metric and applies the matching HPA
-5. runs the checked-in k6 burst job from `platform/workloads/validation/gpu-load-test.yaml`
-6. waits for HPA desired replicas to reach `2`
-7. waits for the second serving `NodeClaim`, second GPU node, and second Ready
-   replica
-8. optionally deletes the live spot-backed burst `NodeClaim` and waits for the
-   replacement GPU node plus recovered second Ready replica
-9. waits for the burst to finish and scale back in
-10. deletes the workload and profile-specific warm capacity, or restores the
-   warm baseline between policy or target runs in compare and sweep mode
-11. collects Prometheus and DCGM metrics and writes per-policy, compare, or
-    sweep reports; this final collection is best-effort, so a late API or
-    Prometheus access failure writes a partial report instead of discarding the
-    completed run
+```bash
+./scripts/evaluate --profile zero-idle --resilience spot-unavailable
+./scripts/evaluate --profile zero-idle --resilience spot-interruption
+```
 
 Profile behavior:
 
-| Profile | Baseline | What it measures |
+| Profile | Baseline | Tradeoff |
 | --- | --- | --- |
-| `zero-idle` | zero GPU nodes before the run | lowest idle cost, highest cold-start penalty |
-| `warm-1` | one on-demand serving node held by `gpu-warm-placeholder` | lower first-response latency, higher idle spend |
+| `zero-idle` | zero GPU nodes before the run | lowest idle GPU cost, highest cold-start penalty |
+| `warm-1` | one on-demand serving node held by `gpu-warm-placeholder` | faster first response, higher idle cost |
 
 Policy behavior:
 
 | Policy | What it does |
 | --- | --- |
-| `running` | preserves the original HPA on `vllm_requests_running` |
-| `active-pressure` | uses `vllm_requests_active = waiting + running` with a configurable `--active-target` |
-| `compare` | runs `running` first, then `active-pressure`, and emits a side-by-side compare report |
-| `sweep` | runs `active-pressure` repeatedly for the comma-separated `--active-targets` list and emits a recommendation summary |
+| `running` | scales on `vllm_requests_running` |
+| `active-pressure` | scales on `vllm_requests_active = waiting + running` |
+| `compare` | runs `running`, then `active-pressure`, and writes a side-by-side summary |
+| `sweep` | runs `active-pressure` once per `--active-targets` value |
 
 Resilience behavior:
 
-| Resilience mode | What it does |
+| Mode | What it does |
 | --- | --- |
-| `healthy` | leaves the preferred spot burst path available and reports whether the second node arrived on spot or on-demand |
-| `spot-unavailable` | withdraws `gpu-serving-spot` before the run, measures whether burst scale-out falls back to on-demand, and restores the spot `NodePool` afterward |
-| `spot-interruption` | temporarily withdraws `gpu-serving-ondemand` before the burst so the scale-out node must land on spot, then restores on-demand, deletes the live spot-backed burst `NodeClaim`, and records replacement timing |
+| `healthy` | leaves spot and on-demand serving pools available |
+| `spot-unavailable` | withdraws `gpu-serving-spot` before the run and measures on-demand fallback |
+| `spot-interruption` | forces burst scale-out onto spot, deletes the live spot-backed burst `NodeClaim`, restores on-demand, and records replacement timing |
 
-Reports are written to:
-
-- single policy: `docs/reports/evaluate-<profile>-<policy>-<timestamp>.md`
-- single policy: `docs/reports/evaluate-<profile>-<policy>-<timestamp>.json`
-- compare mode: the two per-policy artifacts plus
-  `docs/reports/evaluate-<profile>-compare-<timestamp>.md` and `.json`
-- sweep mode: the per-target artifacts plus
-  `docs/reports/evaluate-<profile>-active-pressure-sweep-<timestamp>.md` and
-  `.json`
-
-Those reports capture:
-
-- selected resilience mode, resilience outcome, and the rationale behind the observed fallback or recovery behavior
-- selected policy, HPA metric name, and HPA target average value
-- metric collection status, so partial reports are explicit when final
-  Prometheus/DCGM reads were unavailable
-- timeline events for node launch, readiness, scale-out, interruption, recovery, scale-in, and cleanup
-- p95 request latency, p95 estimated queue wait, and p95 time to first token
-- peak waiting requests and peak active requests
-- peak active requests per active GPU node and average completed requests per
-  second
-- generation throughput
-- average GPU utilization, GPU headroom, and max GPU utilization
-- first, second, and recovery GPU availability zones, plus the observed second-node and recovery-node capacity types
-- peak serving `NodeClaim` count, split by capacity type
-- interruption-to-replacement and interruption-to-recovered-ready timings when the live interruption workflow is used
-- estimated serving GPU cost for the run
-- in sweep mode, a summary table plus a recommended active target from the
-  built-in heuristic
+Reports are written under `docs/reports/`. See [reports/README.md](reports/README.md)
+for the report format, partial-report behavior, and artifact ownership rules.
 
 ## Manual Checks
 
-After `./scripts/up`, inspect the platform with:
+After `./scripts/up`, inspect the platform:
 
 ```bash
 kubectl get nodes -L workload,node.kubernetes.io/instance-type -o wide
@@ -233,7 +178,7 @@ kubectl logs -n app gpu-test
 kubectl delete -f platform/workloads/validation/gpu-test.yaml
 ```
 
-## Tear The Environment Down
+## Tear Down
 
 ```bash
 ./scripts/down
@@ -245,41 +190,29 @@ Common variant:
 ./scripts/down -auto-approve
 ```
 
-Recovery variant:
+Recovery variant for cleanup-eligible orphan CNI ENIs:
 
 ```bash
 ./scripts/down --cleanup-orphan-enis -auto-approve
 ```
 
-`./scripts/down` performs the inverse lifecycle:
-
-1. runs `terraform init` in `infra/env/dev`
-2. reconnects to the cluster from Terraform outputs
-3. removes the load job, warm placeholder, HPA, ingress, service, and vLLM
-   deployment
-4. waits for the ALB to be deleted
-5. removes the legacy warm `NodePool`, both serving `NodePool`s, and the shared
-   GPU `EC2NodeClass`
-6. uninstalls the observability stack
-7. uninstalls Karpenter and the NVIDIA device plugin
-8. runs `terraform destroy`
+`./scripts/down` removes runtime resources, waits for the ALB to be deleted,
+removes active and legacy GPU capacity definitions, uninstalls observability,
+uninstalls Karpenter and the NVIDIA device plugin, and then runs
+`terraform destroy`.
 
 If the script cannot reconnect to the cluster, it stops before Terraform
-destroy and prints the exact fallback destroy command.
-
-If `terraform destroy` fails because an `available` `aws-K8S` / `aws-node`
-ENI is still attached to the VPC, `--cleanup-orphan-enis` prints the same
-diagnostics, deletes only cleanup-eligible orphan ENIs automatically, and then
-retries `terraform destroy` once.
+destroy and prints the exact fallback destroy command. If destroy fails because
+`available` `aws-K8S` or `aws-node` ENIs are still attached to the VPC,
+`--cleanup-orphan-enis` deletes only matching cleanup-eligible ENIs and retries
+destroy once.
 
 ## Dev Boundary
 
-This environment is optimized for iteration, not hardening. In particular, the
-EKS API stays public:
+This environment is optimized for iteration, not hardening:
 
 - `endpoint_public_access = true`
 - `endpoint_public_access_cidrs = ["0.0.0.0/0"]`
 
-Treat that as a dev-only choice. Production direction should include private
-cluster access, tighter allowlists, and a documented SSM, bastion, or VPN-based
-administration path.
+Production should use private cluster access, tighter allowlists, and a
+documented operator access path such as SSM, bastion, or VPN.
