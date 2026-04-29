@@ -64,9 +64,9 @@ write_stub kubectl \
 "case \"\$*\" in" \
 "  'cluster-info') exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com' ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get job gpu-load-test -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get deployment gpu-warm-placeholder -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get hpa vllm-openai -n app') exit 1 ;;" \
@@ -76,7 +76,7 @@ write_stub kubectl \
 "  'get service vllm-openai -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get deployment vllm-openai -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodepool gpu-warm-1') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodepool gpu-serving-spot') exit 1 ;;" \
@@ -112,12 +112,12 @@ TERRAFORM_LOG=$(cat "${TEST_TMPDIR}/terraform.log")
 AWS_LOG=$(cat "${TEST_TMPDIR}/aws.log")
 
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true" "down should delete the HPA during teardown"
-assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true" "down should remove a preserved warm placeholder deployment if one exists"
+assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true" "down should remove a preserved warm placeholder deployment if one exists"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml --ignore-not-found=true" "down should remove the GPU metrics exporter"
-assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true" "down should remove the warm NodePool if it exists"
+assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true" "down should remove the warm NodePool if it exists"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" "down should remove the spot serving NodePool"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true" "down should remove the on-demand serving NodePool"
-assert_not_contains "${KUBECTL_LOG}" "platform/test-app" "down should not reference the sample app"
+assert_not_contains "${KUBECTL_LOG}" "platform/examples/echo" "down should not reference the sample app"
 assert_contains "${TERRAFORM_LOG}" "destroy -auto-approve" "down should pass raw terraform arguments through to terraform destroy"
 assert_not_contains "${TERRAFORM_LOG}" "destroy --cleanup-orphan-enis -auto-approve" "down should not pass the cleanup flag through to terraform destroy"
 assert_not_contains "${AWS_LOG}" "delete-network-interface" "down should not attempt ENI cleanup when terraform destroy succeeds"

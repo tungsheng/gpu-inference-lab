@@ -1,4 +1,4 @@
 profile_id,model,served_model_name,vllm_image,max_model_len,gpu_memory_utilization,max_num_seqs,max_num_batched_tokens,cpu_request,memory_request,cpu_limit,memory_limit,model_cache_size,shm_size,description
-constrained-scheduler,Qwen/Qwen2.5-0.5B-Instruct,qwen2.5-0.5b,vllm/vllm-openai:v0.9.0,2048,0.85,1,2048,2000m,10Gi,3500m,14Gi,20Gi,1Gi,one active sequence with a minimal batched-token budget
-limited-batching,Qwen/Qwen2.5-0.5B-Instruct,qwen2.5-0.5b,vllm/vllm-openai:v0.9.0,2048,0.85,8,4096,2000m,10Gi,3500m,14Gi,20Gi,1Gi,moderate sequence and batched-token limits
-dynamic-default,Qwen/Qwen2.5-0.5B-Instruct,qwen2.5-0.5b,vllm/vllm-openai:v0.9.0,2048,0.85,,,2000m,10Gi,3500m,14Gi,20Gi,1Gi,vLLM default dynamic scheduler settings
+constrained-scheduler,,,,,,1,2048,,,,,,,one active sequence with a minimal batched-token budget
+limited-batching,,,,,,8,4096,,,,,,,moderate sequence and batched-token limits
+dynamic-default,,,,,,,,,,,,,,vLLM default dynamic scheduler settings

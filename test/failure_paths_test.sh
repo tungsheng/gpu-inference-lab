@@ -106,9 +106,9 @@ write_successful_down_kubectl_stub() {
 "case \"\$*\" in" \
 "  'cluster-info') exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com' ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get job gpu-load-test -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get deployment gpu-warm-placeholder -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get hpa vllm-openai -n app') exit 1 ;;" \
@@ -118,7 +118,7 @@ write_successful_down_kubectl_stub() {
 "  'get service vllm-openai -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get deployment vllm-openai -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodepool gpu-warm-1') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodepool gpu-serving-spot') exit 1 ;;" \
@@ -320,14 +320,14 @@ run_evaluate_scale_out_timeout_test() {
 "  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete hpa vllm-openai -n app --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true')" \
 "    rm -f \"${TEST_TMPDIR}/deployment-applied\"" \
 "    exit 0" \
 "    ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodes -l workload=gpu -o name')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
 "      printf '%s\n' 'node/gpu-serving-1'" \
@@ -364,7 +364,7 @@ run_evaluate_scale_out_timeout_test() {
   "  get\ pod\ vllm-openai-0\ -n\ app\ -o\ jsonpath=*containerStatuses*running.startedAt* ) printf '%s\n' '2026-04-10T20:01:30Z'; exit 0 ;;" \
   "  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
   "  'get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running') printf '%s\n' '{\"kind\":\"MetricValueList\",\"items\":[{\"value\":\"0\"}]}'; exit 0 ;;" \
-  "  'apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml') exit 0 ;;" \
+  "  'apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml') exit 0 ;;" \
   "  'get job gpu-load-test -n app -o jsonpath={.status.conditions[?(@.type=='\"'\"'Complete'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
   "  'get hpa vllm-openai -n app -o jsonpath={.status.desiredReplicas}') printf '%s\n' '1'; exit 0 ;;" \
   "  *) exit 0 ;;" \
@@ -410,14 +410,14 @@ run_evaluate_metric_pipeline_timeout_test() {
 "  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete hpa vllm-openai -n app --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true')" \
 "    rm -f \"${TEST_TMPDIR}/deployment-applied\"" \
 "    exit 0" \
 "    ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodes -l workload=gpu -o name')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
 "      printf '%s\n' 'node/gpu-serving-1'" \
@@ -498,14 +498,14 @@ run_evaluate_active_pressure_metric_pipeline_timeout_test() {
 "  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete hpa vllm-openai -n app --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true')" \
 "    rm -f \"${TEST_TMPDIR}/deployment-applied\"" \
 "    exit 0" \
 "    ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodes -l workload=gpu -o name')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
 "      printf '%s\n' 'node/gpu-serving-1'" \
@@ -586,15 +586,15 @@ run_evaluate_warm_profile_capacity_timeout_test() {
 "  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete hpa vllm-openai -n app --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml')" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml')" \
 "    : > \"${TEST_TMPDIR}/warm-placeholder-applied\"" \
 "    exit 0" \
 "    ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true')" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true')" \
 "    : > \"${TEST_TMPDIR}/warm-placeholder-deleted\"" \
 "    exit 0" \
 "    ;;" \
@@ -639,8 +639,8 @@ run_evaluate_warm_profile_capacity_timeout_test() {
   assert_contains "${COMMAND_OUTPUT}" "preserved for inspection: yes" "warm-profile failures should preserve the placeholder deployment for debugging"
 
   KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
-  assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml" "warm profile should apply the placeholder deployment instead of the static NodePool"
-  assert_not_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true" "warm-profile failure cleanup should leave the placeholder deployment in place"
+  assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml" "warm profile should apply the placeholder deployment instead of the static NodePool"
+  assert_not_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true" "warm-profile failure cleanup should leave the placeholder deployment in place"
 
   teardown_test_tmpdir
 }
@@ -669,11 +669,11 @@ run_evaluate_compare_second_policy_failure_test() {
 "  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true')" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true')" \
 "    rm -f \"${TEST_TMPDIR}/load-applied\" \"${TEST_TMPDIR}/load-finished\"" \
 "    exit 0" \
 "    ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete hpa vllm-openai -n app --ignore-not-found=true')" \
 "    rm -f \"${TEST_TMPDIR}/hpa-applied\"" \
 "    exit 0" \
@@ -682,7 +682,7 @@ run_evaluate_compare_second_policy_failure_test() {
 "    rm -f \"${TEST_TMPDIR}/deployment-applied\"" \
 "    exit 0" \
 "    ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodes -l workload=gpu -o name')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
 "      printf '%s\n' 'node/gpu-serving-1'" \
@@ -738,7 +738,7 @@ run_evaluate_compare_second_policy_failure_test() {
 "  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
 "  'get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running') printf '%s\n' '{\"kind\":\"MetricValueList\",\"items\":[{\"value\":\"256\"}]}'; exit 0 ;;" \
 "  'get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active') exit 1 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml')" \
+"  'apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml')" \
 "    : > \"${TEST_TMPDIR}/load-applied\"" \
 "    rm -f \"${TEST_TMPDIR}/load-finished\"" \
 "    exit 0" \
@@ -843,11 +843,11 @@ run_evaluate_sweep_second_target_failure_test() {
 "  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true')" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true')" \
 "    rm -f \"${TEST_TMPDIR}/load-applied\" \"${TEST_TMPDIR}/load-finished\"" \
 "    exit 0" \
 "    ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete hpa vllm-openai -n app --ignore-not-found=true')" \
 "    rm -f \"${TEST_TMPDIR}/hpa-applied\"" \
 "    exit 0" \
@@ -856,7 +856,7 @@ run_evaluate_sweep_second_target_failure_test() {
 "    rm -f \"${TEST_TMPDIR}/deployment-applied\"" \
 "    exit 0" \
 "    ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodes -l workload=gpu -o name')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
 "      printf '%s\n' 'node/gpu-serving-1'" \
@@ -923,7 +923,7 @@ run_evaluate_sweep_second_target_failure_test() {
 "    fi" \
 "    exit 1" \
 "    ;;" \
-"  'apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml')" \
+"  'apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml')" \
 "    : > \"${TEST_TMPDIR}/load-applied\"" \
 "    rm -f \"${TEST_TMPDIR}/load-finished\"" \
 "    exit 0" \
@@ -1027,15 +1027,15 @@ run_evaluate_compare_warm_profile_capacity_timeout_test() {
 "  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete hpa vllm-openai -n app --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml')" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml')" \
 "    : > \"${TEST_TMPDIR}/warm-placeholder-applied\"" \
 "    exit 0" \
 "    ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true')" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true')" \
 "    : > \"${TEST_TMPDIR}/warm-placeholder-deleted\"" \
 "    exit 0" \
 "    ;;" \
@@ -1080,8 +1080,8 @@ run_evaluate_compare_warm_profile_capacity_timeout_test() {
   assert_contains "${COMMAND_OUTPUT}" "preserved for inspection: yes" "compare warm-profile failures should preserve the placeholder deployment for debugging"
 
   KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
-  assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml" "compare warm-profile failures should still apply the placeholder deployment"
-  assert_not_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true" "compare warm-profile failures should leave the placeholder deployment in place"
+  assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml" "compare warm-profile failures should still apply the placeholder deployment"
+  assert_not_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true" "compare warm-profile failures should leave the placeholder deployment in place"
 
   teardown_test_tmpdir
 }
@@ -1105,7 +1105,7 @@ run_down_alb_timeout_test() {
 "case \"\$*\" in" \
 "  'cluster-info') exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com' ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get job gpu-load-test -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get hpa vllm-openai -n app') exit 1 ;;" \

@@ -4,6 +4,7 @@ metadata:
   name: echo-ingress
   namespace: app
   annotations:
+    # Example-only ingress. The default scripts do not apply this manifest.
     alb.ingress.kubernetes.io/group.name: public-edge
     alb.ingress.kubernetes.io/group.order: "20"
     alb.ingress.kubernetes.io/scheme: internet-facing

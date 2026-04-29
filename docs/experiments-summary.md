@@ -4,6 +4,12 @@ This document is the curated rollup for experiment outcomes. Raw per-run
 artifacts still belong under `docs/reports/`; experiment narratives and graphs
 belong under `experiments/<name>/`.
 
+Shared vLLM serving defaults live in `experiments/_profiles/`. Individual
+experiments should only override the fields that matter to the question they
+are asking. Run `./scripts/experiment validate` after catalog edits to check
+the CSV contracts, shared defaults, serving profile overrides, and renderer
+templates.
+
 ## Current Experiment Catalog
 
 | Experiment | Status | Primary question | Location |

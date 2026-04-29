@@ -31,12 +31,15 @@ jobs:
 
       - name: Bash syntax
         run: |
-          chmod +x scripts/up scripts/verify scripts/down scripts/evaluate test/*.sh
-          bash -n scripts/_common.sh scripts/up scripts/verify scripts/down scripts/evaluate test/*.sh test/helpers/*.sh
+          chmod +x scripts/up scripts/verify scripts/down scripts/evaluate scripts/experiment test/*.sh
+          bash -n scripts/_common.sh scripts/lib/*.sh scripts/up scripts/verify scripts/down scripts/evaluate scripts/experiment test/*.sh test/helpers/*.sh
 
       - name: Shellcheck
         run: |
-          shellcheck scripts/_common.sh scripts/up scripts/verify scripts/down scripts/evaluate test/*.sh test/helpers/*.sh
+          shellcheck scripts/_common.sh scripts/lib/*.sh scripts/up scripts/verify scripts/down scripts/evaluate scripts/experiment test/*.sh test/helpers/*.sh
+
+      - name: Experiment catalog validation
+        run: ./scripts/experiment validate
 
       - name: Shell tests
         run: ./test/run.sh

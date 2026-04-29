@@ -118,4 +118,4 @@ assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/observability/d
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" "up should install the on-demand serving NodePool"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml" "up should install the spot serving NodePool"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/inference/ingress.yaml" "up should apply the inference ingress"
-assert_not_contains "${KUBECTL_LOG}" "platform/test-app" "up should not reference the sample app"
+assert_not_contains "${KUBECTL_LOG}" "platform/examples/echo" "up should not reference the sample app"

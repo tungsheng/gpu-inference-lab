@@ -1,4 +1,4 @@
-# platform/tests
+# platform/workloads/validation
 
 This directory contains the manual and scripted validation manifests for the
 platform.
@@ -7,6 +7,8 @@ platform.
 
 - `gpu-test.yaml`: manual GPU smoke test that validates scheduling and
   `nvidia-smi`
+- `cpu-scale-test.yaml`: manual CPU workload for checking non-GPU scaling
+  behavior
 - `gpu-load-test.yaml`: k6 burst job used by `./scripts/evaluate`
 - `gpu-warm-placeholder.yaml`: tiny deployment that keeps one on-demand serving
   node alive for the `warm-1` profile without requesting a GPU

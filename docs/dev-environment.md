@@ -138,7 +138,7 @@ The evaluation workflow is the deeper platform exercise:
 2. applies the vLLM deployment
 3. waits for the first Ready replica and first successful public response
 4. preflights the selected custom metric and applies the matching HPA
-5. runs the checked-in k6 burst job from `platform/tests/gpu-load-test.yaml`
+5. runs the checked-in k6 burst job from `platform/workloads/validation/gpu-load-test.yaml`
 6. waits for HPA desired replicas to reach `2`
 7. waits for the second serving `NodeClaim`, second GPU node, and second Ready
    replica
@@ -228,9 +228,9 @@ kubectl port-forward -n monitoring deployment/kube-prometheus-stack-grafana 3000
 Run the manual GPU smoke manifest:
 
 ```bash
-kubectl apply -f platform/tests/gpu-test.yaml
+kubectl apply -f platform/workloads/validation/gpu-test.yaml
 kubectl logs -n app gpu-test
-kubectl delete -f platform/tests/gpu-test.yaml
+kubectl delete -f platform/workloads/validation/gpu-test.yaml
 ```
 
 ## Tear The Environment Down

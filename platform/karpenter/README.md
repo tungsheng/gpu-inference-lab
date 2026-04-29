@@ -7,7 +7,6 @@ capacity:
 - `nodeclass-gpu-serving.yaml`
 - `nodepool-gpu-serving-ondemand.yaml`
 - `nodepool-gpu-serving-spot.yaml`
-- `nodepool-gpu-warm.yaml` for legacy cleanup compatibility
 
 ## Current Capacity Story
 
@@ -43,8 +42,9 @@ AMI automatically.
 
 The active `warm-1` workflow does **not** rely on `nodepool-gpu-warm.yaml`.
 Instead, `./scripts/evaluate --profile warm-1` uses
-`platform/tests/gpu-warm-placeholder.yaml` to keep one on-demand serving node
+`platform/workloads/validation/gpu-warm-placeholder.yaml` to keep one on-demand serving node
 alive through the same serving path as the real workload.
 
-The legacy warm `NodePool` manifest remains here so `./scripts/down` can clean
-up older experiments safely.
+The legacy warm `NodePool` manifest lives under `platform/legacy/karpenter/`
+so `./scripts/down` can clean up older experiments safely without presenting it
+as an active capacity definition.

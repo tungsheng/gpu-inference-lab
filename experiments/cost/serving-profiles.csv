@@ -1,3 +1,3 @@
 profile_id,model,served_model_name,vllm_image,max_model_len,gpu_memory_utilization,max_num_seqs,max_num_batched_tokens,cpu_request,memory_request,cpu_limit,memory_limit,model_cache_size,shm_size,description
-naive-single,Qwen/Qwen2.5-0.5B-Instruct,qwen2.5-0.5b,vllm/vllm-openai:v0.9.0,2048,0.85,1,2048,2000m,10Gi,3500m,14Gi,20Gi,1Gi,one active sequence reference profile for low useful work per GPU
-optimized-batched,Qwen/Qwen2.5-0.5B-Instruct,qwen2.5-0.5b,vllm/vllm-openai:v0.9.0,2048,0.85,32,8192,2000m,10Gi,3500m,14Gi,20Gi,1Gi,higher sequence and batched-token limits for better useful work per GPU
+naive-single,,,,,,1,2048,,,,,,,one active sequence reference profile for low useful work per GPU
+optimized-batched,,,,,,32,8192,,,,,,,higher sequence and batched-token limits for better useful work per GPU

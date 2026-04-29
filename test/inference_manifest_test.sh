@@ -12,11 +12,11 @@ ACTIVE_PRESSURE_HPA_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/inference/hpa-
 ADAPTER_VALUES_CONTENT=$(cat "${REPO_ROOT}/platform/observability/prometheus-adapter-values.yaml")
 DASHBOARD_CONTENT=$(cat "${REPO_ROOT}/platform/observability/dashboards/experiment-dashboard.yaml")
 SERVING_DASHBOARD_CONTENT=$(cat "${REPO_ROOT}/platform/observability/dashboards/serving-dashboard.yaml")
-LOAD_TEST_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/tests/gpu-load-test.yaml")
-WARM_PLACEHOLDER_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml")
+LOAD_TEST_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml")
+WARM_PLACEHOLDER_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml")
 ONDEMAND_NODEPOOL_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml")
 SPOT_NODEPOOL_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml")
-SCRIPT_CONTENT=$(cat "${REPO_ROOT}/scripts/_common.sh" "${REPO_ROOT}/scripts/up" "${REPO_ROOT}/scripts/verify" "${REPO_ROOT}/scripts/down" "${REPO_ROOT}/scripts/evaluate")
+SCRIPT_CONTENT=$(cat "${REPO_ROOT}/scripts/_common.sh" "${REPO_ROOT}/scripts/lib/platform.sh" "${REPO_ROOT}/scripts/up" "${REPO_ROOT}/scripts/verify" "${REPO_ROOT}/scripts/down" "${REPO_ROOT}/scripts/evaluate")
 
 assert_contains "${DEPLOYMENT_MANIFEST_CONTENT}" 'kind: Deployment' "the default inference manifest should remain the deployment entrypoint"
 assert_not_contains "${DEPLOYMENT_MANIFEST_CONTENT}" 'kind: HorizontalPodAutoscaler' "the default inference manifest should no longer include the HPA"
@@ -37,8 +37,8 @@ assert_contains "${DASHBOARD_CONTENT}" 'gpu_serving_measure_peak_active_requests
 assert_contains "${DASHBOARD_CONTENT}" 'gpu_serving_measure_interruption_to_recovery_ready_seconds' "the experiment dashboard should surface the interruption recovery-ready summary metric"
 assert_contains "${SERVING_DASHBOARD_CONTENT}" 'P95 Estimated Queue Wait' "the serving dashboard should include the derived queue-wait panel"
 assert_contains "${SCRIPT_CONTENT}" 'platform/observability' "the platform lifecycle should now reference observability manifests"
-assert_contains "${SCRIPT_CONTENT}" 'platform/tests/gpu-load-test.yaml' "the evaluation flow should reference the load test manifest"
-assert_contains "${SCRIPT_CONTENT}" 'platform/tests/gpu-warm-placeholder.yaml' "the evaluation flow should reference the warm placeholder workload"
+assert_contains "${SCRIPT_CONTENT}" 'platform/workloads/validation/gpu-load-test.yaml' "the evaluation flow should reference the load test manifest"
+assert_contains "${SCRIPT_CONTENT}" 'platform/workloads/validation/gpu-warm-placeholder.yaml' "the evaluation flow should reference the warm placeholder workload"
 assert_contains "${SCRIPT_CONTENT}" 'platform/karpenter/nodepool-gpu-serving-ondemand.yaml' "the platform lifecycle should install the on-demand serving NodePool"
 assert_contains "${SCRIPT_CONTENT}" 'platform/karpenter/nodepool-gpu-serving-spot.yaml' "the platform lifecycle should install the spot serving NodePool"
 assert_contains "${SCRIPT_CONTENT}" 'platform/inference/hpa-active-pressure.yaml' "the evaluation flow should know about the active-pressure HPA manifest"
@@ -46,10 +46,11 @@ assert_contains "${SCRIPT_CONTENT}" '--policy running|active-pressure|compare|sw
 assert_contains "${SCRIPT_CONTENT}" '--resilience healthy|spot-unavailable|spot-interruption' "the evaluation CLI should expose the resilience selector"
 assert_contains "${SCRIPT_CONTENT}" '--active-target' "the evaluation CLI should expose the active-pressure target override"
 assert_contains "${SCRIPT_CONTENT}" '--active-targets' "the evaluation CLI should expose the sweep target list override"
+# shellcheck disable=SC2016
 assert_contains "${SCRIPT_CONTENT}" '/metrics/job/gpu-serving-measure/profile/${EVALUATION_PROFILE}/resilience/${EVALUATION_RESILIENCE}/policy/${CURRENT_POLICY}/target/${CURRENT_HPA_TARGET_AVERAGE_VALUE}' "the evaluation flow should push summary metrics with resilience, policy, and target labels"
 assert_contains "${SCRIPT_CONTENT}" 'gpu_serving_measure_interruption_to_recovery_ready_seconds' "the evaluation flow should push interruption recovery-ready summary metrics"
 assert_contains "${SCRIPT_CONTENT}" 'p95_estimated_queue_wait_seconds' "the evaluation flow should report the derived queue-wait metric"
-assert_not_contains "${SCRIPT_CONTENT}" 'platform/test-app' "the baseline scripts should not reference the sample app"
+assert_not_contains "${SCRIPT_CONTENT}" 'platform/examples/echo' "the baseline scripts should not reference the sample app"
 assert_not_contains "${LOAD_TEST_MANIFEST_CONTENT}" 'CPU-based HPA scale-out' "the load test should no longer describe the old CPU-based scale-out path"
 assert_contains "${LOAD_TEST_MANIFEST_CONTENT}" 'executor: "ramping-arrival-rate"' "the load test should use an arrival-rate executor so latency does not suppress the generated backlog"
 assert_contains "${WARM_PLACEHOLDER_MANIFEST_CONTENT}" 'nodeSelector:' "the warm placeholder should target GPU-labelled nodes"

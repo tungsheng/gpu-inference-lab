@@ -6,21 +6,15 @@ owner: local
 question: How much stable concurrency is lost as prompt context grows and KV-cache memory pressure increases?
 
 serving_profile:
-  model: Qwen/Qwen2.5-0.5B-Instruct
-  served_model_name: qwen2.5-0.5b
-  vllm_image: vllm/vllm-openai:v0.9.0
-  baseline_max_model_len: 2048
-  required_max_model_len_for_full_sweep: 8192
-  gpu_memory_utilization: 0.85
+  defaults: ../_profiles/serving-defaults.csv
+  profiles_file: serving-profiles.csv
   notes:
     - The 8192-token case requires a long-context serving profile before it can run.
-    - Slice 2 will add serving-profile rendering for this requirement.
 
 workload:
   generator: k6
   endpoint: /v1/completions
   cases_file: cases.csv
-  serving_profiles_file: serving-profiles.csv
   prompt_strategy: approximate-token-target
   output_strategy: max_tokens
 

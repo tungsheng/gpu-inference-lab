@@ -1,12 +1,19 @@
 # Reports
 
-`./scripts/evaluate` writes experiment artifacts into this directory.
+`./scripts/evaluate` and `./scripts/experiment run` write generated artifacts
+into this directory by default. Generated report files are intentionally ignored
+by Git; keep curated conclusions in `docs/experiments-summary.md` or
+`experiments/<name>/results.md`.
 
 Each evaluation run can produce:
 
 - a Markdown summary report and JSON document for a single policy run
 - or, in compare mode, two per-policy artifacts plus a compare summary pair
 - or, in sweep mode, one per-target artifact pair plus a sweep summary pair
+
+`./scripts/evaluate` JSON artifacts use `schema_version:
+evaluate-report/v1`. `./scripts/experiment` artifacts use
+`experiment-report/v1`.
 
 ## Profiles
 
@@ -72,9 +79,9 @@ cleaned up, `./scripts/evaluate` still writes the report with
 preserved from Kubernetes observations, while unavailable Prometheus-derived
 metrics are written as `n/a` in Markdown and `null` in JSON.
 
-The checked-in report files in this directory are historical run artifacts, not
-the source of truth for the repo's current behavior. The scripts and manifests
-remain the source of truth.
+The checked-in source of truth is the report contract plus curated summaries,
+not every local run output. Force-add a specific generated report only when it
+is intentionally part of the project narrative.
 
 ## Important Limitation
 

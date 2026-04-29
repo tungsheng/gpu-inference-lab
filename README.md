@@ -76,6 +76,7 @@ These commands do not require AWS access or a live Kubernetes cluster:
 
 ```bash
 ./scripts/experiment list
+./scripts/experiment validate
 ./scripts/experiment show kv-cache
 ./scripts/experiment render-load \
   --experiment kv-cache \
@@ -113,9 +114,9 @@ These commands do not require AWS access or a live Kubernetes cluster:
 ./test/run.sh
 ```
 
-Use this path to inspect the experiment catalog, render reproducible workload
-manifests, scaffold report artifacts, and validate the repo's shell surface
-locally.
+Use this path to inspect and validate the experiment catalog, render
+reproducible workload manifests, scaffold report artifacts, and validate the
+repo's shell surface locally.
 
 ### Live AWS/EKS Usage
 
@@ -214,10 +215,11 @@ Tear everything down:
   on-demand serving `NodePool` before the burst so the second node must land on
   spot, then restores on-demand, deletes the live spot-backed burst
   `NodeClaim`, forces on-demand recovery, and reports replacement timing.
-- `./scripts/experiment` lists planned experiments, shows experiment cases,
-  renders local Kubernetes manifests plus Markdown/JSON report scaffolds, and
-  can run one live load or streaming case/profile at a time against a
-  configured cluster. This is the front door for KV-cache, prefill/decode,
+- `./scripts/experiment` lists and validates planned experiments, shows
+  experiment cases, renders local Kubernetes manifests plus Markdown/JSON
+  report scaffolds, and can run one live load or streaming case/profile at a
+  time against a configured cluster. This is the front door for KV-cache,
+  prefill/decode,
   batching scheduler tradeoffs, request-pattern utilization, autoscaling
   queueing behavior, cost per useful work, and future failure-injection and
   multi-model experiments.
@@ -283,34 +285,22 @@ VPN-based administration and tighter public CIDR controls.
 - `platform/karpenter/`: GPU `EC2NodeClass` and `NodePool` manifests
 - `platform/observability/`: Prometheus, Grafana, adapter, exporter, and
   dashboard assets
-- `platform/tests/`: manual GPU smoke test, load generator, and warm placeholder
+- `platform/examples/`: optional sample workloads that are not part of the
+  default lifecycle
+- `platform/workloads/validation/`: manual GPU smoke test, load generator, and warm placeholder
 - `platform/system/`: cluster-level runtime prerequisites such as the NVIDIA
   device plugin
 - `experiments/`: repeatable experiment definitions, workload cases, serving
   profiles, result narratives, and graph placeholders
-- `scripts/`: lifecycle commands and shared shell helpers
+- `experiments/_profiles/`: shared experiment defaults such as the baseline
+  vLLM serving profile
+- `scripts/`: lifecycle commands
+- `scripts/lib/`: shared shell helpers used by the lifecycle commands
 - `docs/`: repo-level architecture, workflow, scaling, networking, and roadmap
   documentation
 
 ## Documentation
 
-Start here:
-
-- [Dev environment workflow](docs/dev-environment.md)
-- [Operations](docs/operations.md)
-- [Experiment platform plan](docs/experiment-platform-plan.md)
-- [Experiments summary](docs/experiments-summary.md)
-
-Platform deep dives:
-
-- [Architecture](docs/architecture.md)
-- [Inference](docs/inference.md)
-- [Scaling](docs/scaling.md)
-- [Cost optimization](docs/cost-optimization.md)
-- [Networking](docs/networking.md)
-
-Background and next steps:
-
-- [Dynamic GPU serving](docs/dynamic-gpu-serving.md)
-- [GPU bin packing](docs/gpu-binpacking.md)
-- [Roadmap](docs/roadmap.md)
+Start with the [documentation index](docs/index.md). The shortest operator
+guide is [Operations](docs/operations.md), and the full setup walkthrough is
+[Dev environment workflow](docs/dev-environment.md).

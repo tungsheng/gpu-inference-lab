@@ -5,6 +5,11 @@
 *.tfstate.*
 crash.log
 crash.*.log
+artifacts/
+docs/reports/evaluate-*.json
+docs/reports/evaluate-*.md
+docs/reports/experiment-*.json
+docs/reports/experiment-*.md
 override.tf
 override.tf.json
 *_override.tf

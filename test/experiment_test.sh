@@ -24,6 +24,13 @@ run_experiment_list_test() {
   assert_contains "${COMMAND_OUTPUT}" "Cost Per Useful Work" "experiment list should include the cost title"
 }
 
+run_experiment_validate_test() {
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" validate
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/experiment validate should succeed for the checked-in catalog"
+  assert_contains "${COMMAND_OUTPUT}" "Validated 6 experiment(s)." "validate should report the number of checked-in experiments"
+}
+
 run_experiment_show_test() {
   run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" show kv-cache
 
@@ -794,6 +801,7 @@ run_stream_experiment_runner_test() {
 }
 
 run_experiment_list_test
+run_experiment_validate_test
 run_experiment_show_test
 run_prefill_decode_show_test
 run_batching_show_test

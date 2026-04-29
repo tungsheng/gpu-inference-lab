@@ -35,7 +35,7 @@ repo can now answer operational questions:
 - `platform/karpenter/`: shared GPU node class and serving `NodePool`s
 - `platform/observability/`: Prometheus, Grafana, adapter, dashboards,
   Pushgateway, and GPU exporters
-- `platform/tests/`: load generator, warm placeholder, and manual GPU smoke
+- `platform/workloads/validation/`: load generator, warm placeholder, and manual GPU smoke
   manifest
 - `scripts/verify`: cold-start validation path
 - `scripts/evaluate`: burst evaluation and report generation path

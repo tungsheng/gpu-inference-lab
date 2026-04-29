@@ -32,11 +32,11 @@ write_evaluate_kubectl_stub() {
 "  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml --ignore-not-found=true')" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true')" \
 "    rm -f \"${TEST_TMPDIR}/load-applied\" \"${TEST_TMPDIR}/load-finished\"" \
 "    exit 0" \
 "    ;;" \
-"  'delete -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml --ignore-not-found=true')" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true')" \
 "    rm -f \"${TEST_TMPDIR}/warm-placeholder-applied\"" \
 "    exit 0" \
 "    ;;" \
@@ -48,7 +48,7 @@ write_evaluate_kubectl_stub() {
 "    rm -f \"${TEST_TMPDIR}/deployment-applied\"" \
 "    exit 0" \
 "    ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true')" \
 "    : > \"${TEST_TMPDIR}/spot-nodepool-disabled\"" \
 "    exit 0" \
@@ -83,7 +83,7 @@ write_evaluate_kubectl_stub() {
 "    printf '%s\n' 'gpu-serving-ondemand'" \
 "    exit 0" \
 "    ;;" \
-"  'apply -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml')" \
+"  'apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml')" \
 "    : > \"${TEST_TMPDIR}/warm-placeholder-applied\"" \
 "    exit 0" \
 "    ;;" \
@@ -231,7 +231,7 @@ write_evaluate_kubectl_stub() {
 "  'rollout status deployment/gpu-warm-placeholder -n app --timeout=1200s') exit 0 ;;" \
 "  'get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running') printf '%s\n' '{\"kind\":\"MetricValueList\",\"items\":[{\"value\":\"256\"}]}'; exit 0 ;;" \
 "  'get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active') printf '%s\n' '{\"kind\":\"MetricValueList\",\"items\":[{\"value\":\"320\"}]}'; exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml')" \
+"  'apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml')" \
 "    : > \"${TEST_TMPDIR}/load-applied\"" \
 "    rm -f \"${TEST_TMPDIR}/load-finished\"" \
 "    exit 0" \
@@ -346,6 +346,7 @@ run_running_policy_test() {
   assert_contains "${REPORT_CONTENT}" "Capacity assessment: balanced" "the Markdown report should summarize the capacity assessment"
   assert_contains "${REPORT_CONTENT}" "Peak waiting requests" "the Markdown report should include peak waiting requests"
   assert_contains "${REPORT_CONTENT}" "Peak active requests" "the Markdown report should include peak active requests"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"schema_version\": \"evaluate-report/v1\"" "the JSON report should include the evaluation schema version"
   assert_contains "${JSON_REPORT_CONTENT}" "\"policy\": \"running\"" "the JSON report should include the running policy"
   assert_contains "${JSON_REPORT_CONTENT}" "\"hpa_metric_name\": \"vllm_requests_running\"" "the JSON report should include the running metric name"
   assert_contains "${JSON_REPORT_CONTENT}" "\"hpa_target_average_value\": \"128\"" "the JSON report should include the running target"
@@ -493,6 +494,7 @@ run_compare_policy_test() {
   assert_contains "${COMPARE_REPORT_CONTENT}" "| running | vllm_requests_running | 128 |" "the compare report should include the running policy settings"
   assert_contains "${COMPARE_REPORT_CONTENT}" "| active-pressure | vllm_requests_active | 6 |" "the compare report should include the active-pressure settings"
   assert_contains "${COMPARE_REPORT_CONTENT}" "| Capacity assessment | balanced | saturated |" "the compare report should compare the efficiency assessment"
+  assert_contains "${COMPARE_JSON_CONTENT}" "\"schema_version\": \"evaluate-report/v1\"" "the compare JSON report should include the evaluation schema version"
   assert_contains "${COMPARE_JSON_CONTENT}" "\"running\":" "the compare JSON report should include the running section"
   assert_contains "${COMPARE_JSON_CONTENT}" "\"active_pressure\":" "the compare JSON report should include the active-pressure section"
   assert_contains "${COMPARE_JSON_CONTENT}" "\"p95_estimated_queue_wait_seconds\": 0.420" "the compare JSON report should include the derived queue-wait estimate"
@@ -503,7 +505,7 @@ run_compare_policy_test() {
   assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/warm-1/resilience/healthy/policy/running/target/128" "compare mode should push running-policy summary metrics with profile, resilience, policy, and target labels"
   assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/warm-1/resilience/healthy/policy/active-pressure/target/6" "compare mode should push active-pressure summary metrics with profile, resilience, policy, and target labels"
 
-  WARM_PLACEHOLDER_APPLY_COUNT=$(printf '%s\n' "${KUBECTL_LOG}" | awk -v needle="apply -f ${REPO_ROOT}/platform/tests/gpu-warm-placeholder.yaml" 'index($0, needle) { count++ } END { print count + 0 }')
+  WARM_PLACEHOLDER_APPLY_COUNT=$(printf '%s\n' "${KUBECTL_LOG}" | awk -v needle="apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml" 'index($0, needle) { count++ } END { print count + 0 }')
   assert_eq "2" "${WARM_PLACEHOLDER_APPLY_COUNT}" "compare mode should restore the warm baseline for both policy runs"
 
   teardown_test_tmpdir
@@ -551,6 +553,7 @@ run_sweep_policy_test() {
   assert_contains "${SWEEP_REPORT_CONTENT}" "| 8 | saturated |" "the sweep report should include the last evaluated target"
   assert_contains "${SWEEP_REPORT_CONTENT}" "Recommended active target: 8" "the sweep report should include the recommended target"
   assert_contains "${SWEEP_REPORT_CONTENT}" "## Target Interpretation" "the sweep report should explain why each target looked efficient or wasteful"
+  assert_contains "${SWEEP_JSON_CONTENT}" "\"schema_version\": \"evaluate-report/v1\"" "the sweep JSON report should include the evaluation schema version"
   assert_contains "${SWEEP_JSON_CONTENT}" "\"mode\": \"sweep\"" "the sweep JSON report should mark the sweep mode"
   assert_contains "${SWEEP_JSON_CONTENT}" "\"active_target\": 8" "the sweep JSON report should include the recommended target"
   assert_contains "${SWEEP_JSON_CONTENT}" "\"active_target\": 2" "the sweep JSON report should include the first target result"
@@ -668,7 +671,7 @@ run_spot_interruption_resilience_test() {
   assert_contains "${KUBECTL_LOG}" "delete nodeclaim gpu-serving-2 --ignore-not-found=true" "the interruption workflow should delete the live burst NodeClaim"
   assert_occurs_before "${KUBECTL_LOG}" \
     "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true" \
-    "apply -f ${REPO_ROOT}/platform/tests/gpu-load-test.yaml" \
+    "apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml" \
     "the interruption workflow should remove on-demand burst capacity before the load starts"
   assert_occurs_before "${KUBECTL_LOG}" \
     "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" \

@@ -83,7 +83,7 @@ Active-pressure baseline in `platform/inference/hpa-active-pressure.yaml`:
 
 ## Why `warm-1` Exists
 
-The `warm-1` profile applies `platform/tests/gpu-warm-placeholder.yaml` before
+The `warm-1` profile applies `platform/workloads/validation/gpu-warm-placeholder.yaml` before
 starting the real deployment. That tiny deployment:
 
 - selects serving GPU labels

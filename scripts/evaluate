@@ -5,6 +5,8 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/_common.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/evaluate-reports.sh"
 
 TOTAL_STAGES=11
 EVALUATION_PROFILE="zero-idle"
@@ -1009,7 +1011,7 @@ start_metric_seed_requests() {
     return 1
   fi
 
-  payload='{"model":"qwen2.5-0.5b","prompt":"Write a long, detailed numbered outline about autoscaling GPU inference services. Keep going until you reach the token limit.","max_tokens":1024,"temperature":0}'
+  payload="{\"model\":\"${GPU_INFERENCE_SERVED_MODEL_NAME}\",\"prompt\":\"Write a long, detailed numbered outline about autoscaling GPU inference services. Keep going until you reach the token limit.\",\"max_tokens\":1024,\"temperature\":0}"
   METRIC_SEED_REQUEST_PIDS=()
 
   for (( request_index=0; request_index<request_count; request_index++ )); do
@@ -2199,7 +2201,8 @@ write_reports() {
   cat > "${REPORT_PATH}" <<EOF
 # Load-Aware GPU Serving Report
 
-- Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+- Schema version: ${EVALUATE_REPORT_SCHEMA_VERSION}
+- Generated at: $(evaluate_report_generated_at)
 - Profile: ${EVALUATION_PROFILE}
 - Policy: ${CURRENT_POLICY}
 - Resilience mode: ${EVALUATION_RESILIENCE}
@@ -2310,7 +2313,8 @@ EOF
 
   cat > "${JSON_REPORT_PATH}" <<EOF
 {
-  "generated_at": $(json_escape "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"),
+  "schema_version": $(json_escape "${EVALUATE_REPORT_SCHEMA_VERSION}"),
+  "generated_at": $(json_escape "$(evaluate_report_generated_at)"),
   "profile": $(json_escape "${EVALUATION_PROFILE}"),
   "policy": $(json_escape "${CURRENT_POLICY}"),
   "resilience_mode": $(json_escape "${EVALUATION_RESILIENCE}"),
@@ -2793,7 +2797,8 @@ write_compare_reports() {
   cat > "${COMPARE_REPORT_PATH}" <<EOF
 # Capacity-Aware Autoscaling Compare Report
 
-- Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+- Schema version: ${EVALUATE_REPORT_SCHEMA_VERSION}
+- Generated at: $(evaluate_report_generated_at)
 - Profile: ${EVALUATION_PROFILE}
 - Resilience mode: ${EVALUATION_RESILIENCE}
 - Running report: $(get_policy_snapshot_value running REPORT_PATH)
@@ -2842,7 +2847,8 @@ EOF
 
   cat > "${COMPARE_JSON_REPORT_PATH}" <<EOF
 {
-  "generated_at": $(json_escape "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"),
+  "schema_version": $(json_escape "${EVALUATE_REPORT_SCHEMA_VERSION}"),
+  "generated_at": $(json_escape "$(evaluate_report_generated_at)"),
   "profile": $(json_escape "${EVALUATION_PROFILE}"),
   "resilience_mode": $(json_escape "${EVALUATION_RESILIENCE}"),
   "running": {
@@ -2922,7 +2928,8 @@ write_sweep_reports() {
   cat > "${SWEEP_REPORT_PATH}" <<EOF
 # Active-Pressure Target Sweep Report
 
-- Generated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+- Schema version: ${EVALUATE_REPORT_SCHEMA_VERSION}
+- Generated at: $(evaluate_report_generated_at)
 - Profile: ${EVALUATION_PROFILE}
 - Policy: active-pressure
 - Resilience mode: ${EVALUATION_RESILIENCE}
@@ -2983,7 +2990,8 @@ EOF
 
   {
     printf '{\n'
-    printf '  "generated_at": %s,\n' "$(json_escape "$(date -u +"%Y-%m-%dT%H:%M:%SZ")")"
+    printf '  "schema_version": %s,\n' "$(json_escape "${EVALUATE_REPORT_SCHEMA_VERSION}")"
+    printf '  "generated_at": %s,\n' "$(json_escape "$(evaluate_report_generated_at)")"
     printf '  "profile": %s,\n' "$(json_escape "${EVALUATION_PROFILE}")"
     printf '  "resilience_mode": %s,\n' "$(json_escape "${EVALUATION_RESILIENCE}")"
     printf '  "policy": "active-pressure",\n'

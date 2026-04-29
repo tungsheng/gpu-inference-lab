@@ -11,13 +11,10 @@ owner: local
 question: What systems tradeoff does this experiment make visible?
 
 serving_profile:
-  model: Qwen/Qwen2.5-0.5B-Instruct
-  served_model_name: qwen2.5-0.5b
-  vllm_image: vllm/vllm-openai:v0.9.0
-  max_model_len: 2048
-  gpu_memory_utilization: 0.85
+  defaults: ../_profiles/serving-defaults.csv
+  profiles_file: serving-profiles.csv
   notes:
-    - Override these values only when the experiment requires it.
+    - Put only experiment-specific serving overrides in serving-profiles.csv.
 
 workload:
   generator: k6
@@ -26,7 +23,6 @@ workload:
   request_shapes_file: request-shapes.csv
   client_policies_file: client-policies.csv
   cost_profiles_file: cost-profiles.csv
-  serving_profiles_file: serving-profiles.csv
   prompt_strategy: approximate-token-target
 
 metrics:
