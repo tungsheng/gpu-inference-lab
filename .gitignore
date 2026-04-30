@@ -1,16 +1,32 @@
+# OS and editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Terraform local state and overrides
 .terraform/
-*.tfvars
-*.tfvars.json
 *.tfstate
 *.tfstate.*
+*.tfvars
+*.tfvars.json
+*.tfplan
+*.tfplan.*
 crash.log
 crash.*.log
-artifacts/
-docs/reports/evaluate-*.json
-docs/reports/evaluate-*.md
-docs/reports/experiment-*.json
-docs/reports/experiment-*.md
 override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# Generated lab artifacts
+artifacts/
+docs/reports/*
+!docs/reports/README.md
