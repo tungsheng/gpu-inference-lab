@@ -102,6 +102,8 @@ Measured validation and experiment runs require Terraform, AWS CLI, `kubectl`,
 
 Use `./scripts/down --cleanup-orphan-enis` only when `terraform destroy` fails
 because cleanup-eligible `aws-K8S` or `aws-node` ENIs remain in the VPC.
+Use `./scripts/down --terraform-only` only after Kubernetes cleanup has already
+finished or the cluster API is no longer reachable.
 
 ## Documentation
 

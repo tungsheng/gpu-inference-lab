@@ -22,6 +22,7 @@ you need the full setup and teardown walkthrough.
 | `./scripts/evaluate --profile zero-idle --resilience spot-interruption` | you want a synthetic interruption drill | a live spot-backed burst node is deleted and replacement timing is reported |
 | `./scripts/down` | you want a normal teardown | runtime resources, controllers, observability, capacity definitions, and Terraform infrastructure are removed |
 | `./scripts/down --cleanup-orphan-enis` | destroy failed because cleanup-eligible CNI ENIs remain | matching `available` `aws-K8S` or `aws-node` ENIs are deleted, then destroy is retried once |
+| `./scripts/down --terraform-only` | the cluster API is already gone or cluster-scoped cleanup already completed | Kubernetes, Helm, and AWS cleanup are skipped; Terraform init/destroy still run |
 
 ## Expected States
 
@@ -30,7 +31,7 @@ After `./scripts/up`:
 - ingress hostname exists
 - Prometheus Adapter is Available
 - Karpenter is Ready
-- GPU node count is `0`
+- total GPU node count is `0`
 
 After `./scripts/verify`:
 

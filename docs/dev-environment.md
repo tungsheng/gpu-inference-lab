@@ -198,16 +198,25 @@ Recovery variant for cleanup-eligible orphan CNI ENIs:
 ./scripts/down --cleanup-orphan-enis -auto-approve
 ```
 
+Terraform-only fallback when the Kubernetes control plane is already gone or
+unreachable:
+
+```bash
+./scripts/down --terraform-only -auto-approve
+```
+
 `./scripts/down` removes runtime resources, waits for the ALB to be deleted,
-removes active and legacy GPU capacity definitions, uninstalls observability,
-uninstalls Karpenter and the NVIDIA device plugin, and then runs
-`terraform destroy`.
+removes active and legacy GPU capacity definitions, waits for serving
+`NodeClaim`s and GPU nodes to drain, uninstalls observability, uninstalls
+Karpenter and the NVIDIA device plugin, and then runs `terraform destroy`.
 
 If the script cannot reconnect to the cluster, it stops before Terraform
 destroy and prints the exact fallback destroy command. If destroy fails because
 `available` `aws-K8S` or `aws-node` ENIs are still attached to the VPC,
 `--cleanup-orphan-enis` deletes only matching cleanup-eligible ENIs and retries
-destroy once.
+destroy once. Use `--terraform-only` only after cluster-scoped cleanup has
+already completed or the cluster API is no longer available; it skips all
+Kubernetes, Helm, and AWS cleanup commands and runs only Terraform init/destroy.
 
 ## Dev Boundary
 

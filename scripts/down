@@ -5,26 +5,34 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/_common.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/lib/destroy-recovery.sh"
 
 TOTAL_STAGES=8
 CLEANUP_ORPHAN_ENIS=0
 ORPHAN_ENI_DELETE_COUNT=0
+TERRAFORM_ONLY=0
 DESTROY_ARGS=()
 
 usage() {
   cat <<EOF
 Usage:
-  ./scripts/down [--cleanup-orphan-enis] [terraform destroy args]
+  ./scripts/down [--cleanup-orphan-enis] [--terraform-only|--skip-kubernetes-cleanup] [terraform destroy args]
 
 Examples:
   ./scripts/down
   ./scripts/down -auto-approve
   ./scripts/down --cleanup-orphan-enis -auto-approve
+  ./scripts/down --terraform-only -auto-approve
 EOF
 }
 
 check_down_prereqs() {
-  require_commands aws helm kubectl terraform
+  require_commands terraform
+
+  if [[ "${TERRAFORM_ONLY}" != "1" ]]; then
+    require_commands aws helm kubectl
+  fi
 }
 
 run_terraform_init() {
@@ -47,6 +55,9 @@ parse_args() {
       --cleanup-orphan-enis)
         CLEANUP_ORPHAN_ENIS=1
         ;;
+      --terraform-only|--skip-kubernetes-cleanup)
+        TERRAFORM_ONLY=1
+        ;;
       --)
         shift
         DESTROY_ARGS+=("$@")
@@ -66,10 +77,21 @@ prepare_cluster_connection() {
 
 teardown_runtime_surface() {
   local ingress_hostname
+  local -a ingress_alb_hostnames=()
 
   ingress_hostname=$(kubectl get ingress "${GPU_INFERENCE_INGRESS_NAME}" \
     -n "${APP_NAMESPACE}" \
     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+
+  if [[ -n "${ingress_hostname}" ]]; then
+    ingress_alb_hostnames+=("${ingress_hostname}")
+  else
+    while IFS= read -r ingress_hostname; do
+      if [[ -n "${ingress_hostname}" ]]; then
+        ingress_alb_hostnames+=("${ingress_hostname}")
+      fi
+    done < <(discover_inference_alb_hostnames)
+  fi
 
   kubectl delete -f "${GPU_LOAD_TEST_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion job "${GPU_LOAD_TEST_JOB_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
@@ -79,24 +101,49 @@ teardown_runtime_surface() {
   wait_for_resource_deletion hpa "${GPU_INFERENCE_HPA_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   kubectl delete -f "${GPU_INFERENCE_INGRESS_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion ingress "${GPU_INFERENCE_INGRESS_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
-  wait_for_alb_deletion "${ingress_hostname}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  if ((${#ingress_alb_hostnames[@]} > 0)); then
+    wait_for_alb_deletions "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" "${ingress_alb_hostnames[@]}" || return 1
+  else
+    wait_for_alb_deletions "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  fi
   kubectl delete -f "${GPU_INFERENCE_SERVICE_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion service "${GPU_INFERENCE_SERVICE_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   kubectl delete -f "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion deployment "${GPU_INFERENCE_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}"
 }
 
+wait_for_gpu_capacity_drained() {
+  if crd_exists nodeclaims.karpenter.sh; then
+    wait_for_nodeclaims_at_most 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  else
+    printf 'Karpenter NodeClaim CRD is not installed; skipping NodeClaim drain wait.\n'
+  fi
+
+  wait_for_all_gpu_nodes_at_most 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}"
+}
+
 delete_gpu_capacity() {
-  kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
-  wait_for_resource_deletion nodepool "${KARPENTER_WARM_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
-  kubectl delete -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
-  wait_for_resource_deletion nodepool "${KARPENTER_SPOT_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
-  kubectl delete -f "${KARPENTER_ONDEMAND_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
-  wait_for_resource_deletion nodepool "${KARPENTER_ONDEMAND_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
-  kubectl delete "nodepool/${KARPENTER_LEGACY_NODEPOOL_NAME}" --ignore-not-found=true || return 1
-  wait_for_resource_deletion nodepool "${KARPENTER_LEGACY_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
-  kubectl delete -f "${KARPENTER_NODECLASS_MANIFEST}" --ignore-not-found=true || return 1
-  wait_for_resource_deletion ec2nodeclass "${KARPENTER_NODECLASS_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}"
+  if crd_exists nodepools.karpenter.sh; then
+    kubectl delete -f "${KARPENTER_WARM_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
+    wait_for_resource_deletion nodepool "${KARPENTER_WARM_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+    kubectl delete -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
+    wait_for_resource_deletion nodepool "${KARPENTER_SPOT_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+    kubectl delete -f "${KARPENTER_ONDEMAND_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
+    wait_for_resource_deletion nodepool "${KARPENTER_ONDEMAND_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+    kubectl delete "nodepool/${KARPENTER_LEGACY_NODEPOOL_NAME}" --ignore-not-found=true || return 1
+    wait_for_resource_deletion nodepool "${KARPENTER_LEGACY_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  else
+    printf 'Karpenter NodePool CRD is not installed; skipping NodePool deletion.\n'
+  fi
+
+  if crd_exists ec2nodeclasses.karpenter.k8s.aws; then
+    kubectl delete -f "${KARPENTER_NODECLASS_MANIFEST}" --ignore-not-found=true || return 1
+    wait_for_resource_deletion ec2nodeclass "${KARPENTER_NODECLASS_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}"
+  else
+    printf 'Karpenter EC2NodeClass CRD is not installed; skipping EC2NodeClass deletion.\n'
+  fi
+
+  wait_for_gpu_capacity_drained
 }
 
 uninstall_karpenter_and_gpu_plugin() {
@@ -115,170 +162,12 @@ run_terraform_destroy() {
   terraform -chdir="${TF_DIR}" destroy "$@"
 }
 
-load_destroy_network_context() {
-  if [[ -n "${AWS_REGION}" && -n "${VPC_ID}" ]]; then
-    return 0
-  fi
+skip_stage() {
+  local number=$1
+  local label=$2
 
-  try_load_cluster_context
-}
-
-describe_available_vpc_enis() {
-  if ! load_destroy_network_context; then
-    return 1
-  fi
-
-  # shellcheck disable=SC2016
-  aws ec2 describe-network-interfaces \
-    --region "${AWS_REGION}" \
-    --filters \
-      "Name=vpc-id,Values=${VPC_ID}" \
-      "Name=status,Values=available" \
-    --query 'NetworkInterfaces[].[NetworkInterfaceId,Description,SubnetId,join(`,`,Groups[].GroupId),RequesterId]' \
-    --output text
-}
-
-is_cleanup_eligible_orphan_eni() {
-  local description=${1:-}
-  local requester_id=${2:-}
-
-  [[ "${description}" == "None" ]] && description=""
-  [[ "${requester_id}" == "None" ]] && requester_id=""
-
-  [[ "${description}" == aws-K8S-* || "${requester_id}" == *aws-node* ]]
-}
-
-print_destroy_dependency_diagnostics() {
-  local eni_rows
-  local eni_id
-  local description
-  local subnet_id
-  local group_ids
-  local requester_id
-  local cleanup_eligible
-
-  set +e
-  eni_rows=$(describe_available_vpc_enis 2>/dev/null)
-  set -e
-
-  if ! load_destroy_network_context; then
-    return 0
-  fi
-
-  printf 'Destroy diagnostics:\n'
-  printf '  AWS region: %s\n' "${AWS_REGION}"
-  printf '  VPC: %s\n' "${VPC_ID}"
-
-  if [[ -z "${eni_rows}" || "${eni_rows}" == "None" ]]; then
-    printf '  No available ENIs remain in the VPC.\n'
-    return 0
-  fi
-
-  printf '  Available ENIs still present in the VPC:\n'
-  while IFS=$'\t' read -r eni_id description subnet_id group_ids requester_id; do
-    if [[ -z "${eni_id}" || "${eni_id}" == "None" ]]; then
-      continue
-    fi
-
-    cleanup_eligible="no"
-    if is_cleanup_eligible_orphan_eni "${description:-}" "${requester_id:-}"; then
-      cleanup_eligible="yes"
-    fi
-
-    printf '    %s subnet=%s groups=%s requester=%s description=%s\n' \
-      "${eni_id}" \
-      "${subnet_id:-unknown}" \
-      "${group_ids:-unknown}" \
-      "${requester_id:-unknown}" \
-      "${description:-unknown}"
-    printf '    cleanup eligible: %s\n' "${cleanup_eligible}"
-    if [[ "${cleanup_eligible}" == "yes" ]]; then
-      printf '    delete candidate: aws ec2 delete-network-interface --region %s --network-interface-id %s\n' \
-        "${AWS_REGION}" \
-        "${eni_id}"
-    fi
-  done <<< "${eni_rows}"
-}
-
-cleanup_orphan_enis() {
-  local eni_rows
-  local eni_id
-  local description
-  local subnet_id
-  local group_ids
-  local requester_id
-  local list_status=0
-  local delete_status=0
-  local delete_failures=0
-
-  ORPHAN_ENI_DELETE_COUNT=0
-
-  if ! load_destroy_network_context; then
-    printf 'Orphan ENI cleanup:\n'
-    printf '  skipped because Terraform outputs could not be loaded.\n'
-    return 1
-  fi
-
-  set +e
-  eni_rows=$(describe_available_vpc_enis 2>/dev/null)
-  list_status=$?
-  set -e
-
-  printf 'Orphan ENI cleanup:\n'
-
-  if [[ "${list_status}" != "0" ]]; then
-    printf '  skipped because available ENIs could not be listed.\n'
-    return 1
-  fi
-
-  if [[ -z "${eni_rows}" || "${eni_rows}" == "None" ]]; then
-    printf '  no available ENIs remain in the VPC.\n'
-    return 0
-  fi
-
-  while IFS=$'\t' read -r eni_id description subnet_id group_ids requester_id; do
-    if [[ -z "${eni_id}" || "${eni_id}" == "None" ]]; then
-      continue
-    fi
-
-    if ! is_cleanup_eligible_orphan_eni "${description:-}" "${requester_id:-}"; then
-      continue
-    fi
-
-    printf '  deleting %s subnet=%s groups=%s requester=%s description=%s\n' \
-      "${eni_id}" \
-      "${subnet_id:-unknown}" \
-      "${group_ids:-unknown}" \
-      "${requester_id:-unknown}" \
-      "${description:-unknown}"
-
-    set +e
-    aws ec2 delete-network-interface \
-      --region "${AWS_REGION}" \
-      --network-interface-id "${eni_id}" >/dev/null 2>&1
-    delete_status=$?
-    set -e
-
-    if [[ "${delete_status}" == "0" ]]; then
-      ORPHAN_ENI_DELETE_COUNT=$((ORPHAN_ENI_DELETE_COUNT + 1))
-      continue
-    fi
-
-    delete_failures=$((delete_failures + 1))
-    printf '  failed to delete %s automatically.\n' "${eni_id}"
-  done <<< "${eni_rows}"
-
-  if (( ORPHAN_ENI_DELETE_COUNT == 0 )); then
-    printf '  no cleanup-eligible orphan aws-K8S ENIs were deleted.\n'
-  else
-    printf '  deleted %s cleanup-eligible orphan aws-K8S ENI(s).\n' "${ORPHAN_ENI_DELETE_COUNT}"
-  fi
-
-  if (( delete_failures > 0 )); then
-    return 1
-  fi
-
-  return 0
+  print_stage_banner "${number}" "${TOTAL_STAGES}" "${label}"
+  print_stage_result "SKIP" "${number}" "${TOTAL_STAGES}" "${label}"
 }
 
 main() {
@@ -287,10 +176,16 @@ main() {
 
   parse_args "$@"
 
-  set_failure_hints \
-    "command -v terraform aws kubectl helm" \
-    "terraform -chdir=${TF_DIR} version" \
-    "kubectl version --client"
+  if [[ "${TERRAFORM_ONLY}" == "1" ]]; then
+    set_failure_hints \
+      "command -v terraform" \
+      "terraform -chdir=${TF_DIR} version"
+  else
+    set_failure_hints \
+      "command -v terraform aws kubectl helm" \
+      "terraform -chdir=${TF_DIR} version" \
+      "kubectl version --client"
+  fi
   run_stage 1 "${TOTAL_STAGES}" "checking prerequisites" check_down_prereqs
 
   set_failure_hints \
@@ -299,47 +194,62 @@ main() {
     "terraform -chdir=${TF_DIR} validate"
   run_stage 2 "${TOTAL_STAGES}" "terraform init" run_terraform_init
 
-  print_stage_banner 3 "${TOTAL_STAGES}" "connect cluster context"
-  if ! prepare_cluster_connection; then
+  if [[ "${TERRAFORM_ONLY}" == "1" ]]; then
+    skip_stage 3 "connect cluster context"
+    skip_stage 4 "remove inference and load artifacts"
+    skip_stage 5 "delete gpu capacity definitions"
+    skip_stage 6 "remove observability stack"
+    skip_stage 7 "uninstall karpenter and nvidia device plugin"
+  else
+    print_stage_banner 3 "${TOTAL_STAGES}" "connect cluster context"
+    if ! prepare_cluster_connection; then
+      set_failure_hints \
+        "$(resolve_destroy_command "${DESTROY_ARGS[@]}")" \
+        "terraform -chdir=${TF_DIR} output" \
+        "aws eks update-kubeconfig --name gpu-inference --region us-west-2"
+      print_stage_result "FAIL" 3 "${TOTAL_STAGES}" "connect cluster context"
+      print_failure_hints
+      exit 1
+    fi
+    print_stage_result "OK" 3 "${TOTAL_STAGES}" "connect cluster context"
+
     set_failure_hints \
-      "$(resolve_destroy_command "${DESTROY_ARGS[@]}")" \
-      "terraform -chdir=${TF_DIR} output" \
-      "aws eks update-kubeconfig --name gpu-inference --region us-west-2"
-    print_stage_result "FAIL" 3 "${TOTAL_STAGES}" "connect cluster context"
-    print_failure_hints
-    exit 1
+      "kubectl get ingress,service,deployment,hpa,job -n ${APP_NAMESPACE}" \
+      "kubectl get events -n ${APP_NAMESPACE} --sort-by=.lastTimestamp | tail -n 40" \
+      "aws elbv2 describe-load-balancers --region ${AWS_REGION}"
+    run_stage 4 "${TOTAL_STAGES}" "remove inference and load artifacts" teardown_runtime_surface
+
+    set_failure_hints \
+      "kubectl get nodepool,nodeclaim" \
+      "kubectl get ec2nodeclass ${KARPENTER_NODECLASS_NAME} -o yaml" \
+      "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
+    run_stage 5 "${TOTAL_STAGES}" "delete gpu capacity definitions" delete_gpu_capacity
+
+    set_failure_hints \
+      "helm list -n ${MONITORING_NAMESPACE}" \
+      "kubectl get apiservice ${PROMETHEUS_ADAPTER_APISERVICE_NAME}" \
+      "kubectl get all -n ${MONITORING_NAMESPACE}"
+    run_stage 6 "${TOTAL_STAGES}" "remove observability stack" uninstall_observability_stack
+
+    set_failure_hints \
+      "helm list -n ${KARPENTER_NAMESPACE}" \
+      "kubectl get namespaces" \
+      "kubectl get daemonset -n kube-system nvidia-device-plugin-daemonset -o yaml"
+    run_stage 7 "${TOTAL_STAGES}" "uninstall karpenter and nvidia device plugin" uninstall_karpenter_and_gpu_plugin
   fi
-  print_stage_result "OK" 3 "${TOTAL_STAGES}" "connect cluster context"
 
-  set_failure_hints \
-    "kubectl get ingress,service,deployment,hpa,job -n ${APP_NAMESPACE}" \
-    "kubectl get events -n ${APP_NAMESPACE} --sort-by=.lastTimestamp | tail -n 40" \
-    "aws elbv2 describe-load-balancers --region ${AWS_REGION}"
-  run_stage 4 "${TOTAL_STAGES}" "remove inference and load artifacts" teardown_runtime_surface
-
-  set_failure_hints \
-    "kubectl get nodepool,nodeclaim" \
-    "kubectl get ec2nodeclass ${KARPENTER_NODECLASS_NAME} -o yaml" \
-    "kubectl get nodes -L workload,node.kubernetes.io/instance-type"
-  run_stage 5 "${TOTAL_STAGES}" "delete gpu capacity definitions" delete_gpu_capacity
-
-  set_failure_hints \
-    "helm list -n ${MONITORING_NAMESPACE}" \
-    "kubectl get apiservice ${PROMETHEUS_ADAPTER_APISERVICE_NAME}" \
-    "kubectl get all -n ${MONITORING_NAMESPACE}"
-  run_stage 6 "${TOTAL_STAGES}" "remove observability stack" uninstall_observability_stack
-
-  set_failure_hints \
-    "helm list -n ${KARPENTER_NAMESPACE}" \
-    "kubectl get namespaces" \
-    "kubectl get daemonset -n kube-system nvidia-device-plugin-daemonset -o yaml"
-  run_stage 7 "${TOTAL_STAGES}" "uninstall karpenter and nvidia device plugin" uninstall_karpenter_and_gpu_plugin
-
-  set_failure_hints \
-    "terraform -chdir=${TF_DIR} state list" \
-    "terraform -chdir=${TF_DIR} plan -destroy" \
-    "terraform -chdir=${TF_DIR} output" \
-    "aws ec2 describe-network-interfaces --region ${AWS_REGION} --filters Name=vpc-id,Values=${VPC_ID} Name=status,Values=available"
+  if [[ "${TERRAFORM_ONLY}" == "1" ]]; then
+    set_failure_hints \
+      "terraform -chdir=${TF_DIR} state list" \
+      "terraform -chdir=${TF_DIR} plan -destroy" \
+      "terraform -chdir=${TF_DIR} output"
+  else
+    set_failure_hints \
+      "terraform -chdir=${TF_DIR} state list" \
+      "terraform -chdir=${TF_DIR} plan -destroy" \
+      "terraform -chdir=${TF_DIR} output" \
+      "aws ec2 describe-network-interfaces --region ${AWS_REGION} --filters Name=vpc-id,Values=${VPC_ID} Name=status,Values=available"
+  fi
 
   print_stage_banner 8 "${TOTAL_STAGES}" "terraform destroy"
   set +e
@@ -347,7 +257,7 @@ main() {
   status=$?
   set -e
 
-  if [[ "${status}" != "0" && "${CLEANUP_ORPHAN_ENIS}" == "1" ]]; then
+  if [[ "${status}" != "0" && "${CLEANUP_ORPHAN_ENIS}" == "1" && "${TERRAFORM_ONLY}" != "1" ]]; then
     printf 'terraform destroy failed; checking for cleanup-eligible orphan aws-K8S ENIs.\n'
     print_destroy_dependency_diagnostics
     diagnostics_printed=1

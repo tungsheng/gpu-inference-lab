@@ -99,6 +99,7 @@ apply_inference_edge() {
   kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}" || return 1
   kubectl apply -f "${GPU_INFERENCE_INGRESS_MANIFEST}" || return 1
   INGRESS_HOSTNAME=$(wait_for_ingress_hostname "${INGRESS_HOSTNAME_TIMEOUT_SECONDS}") || return 1
+  wait_for_all_gpu_nodes_at_most 0 "${UP_ZERO_GPU_TIMEOUT_SECONDS}"
 }
 
 main() {

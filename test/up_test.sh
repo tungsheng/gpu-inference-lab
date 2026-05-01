@@ -97,6 +97,7 @@ write_stub kubectl \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com' ;;" \
+"  'get nodes -l workload=gpu -o name') exit 0 ;;" \
 "  *) printf 'unexpected kubectl command: %s\n' \"\$*\" >&2; exit 1 ;;" \
 "esac"
 
@@ -118,4 +119,5 @@ assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/observability/d
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" "up should install the on-demand serving NodePool"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml" "up should install the spot serving NodePool"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/inference/ingress.yaml" "up should apply the inference ingress"
+assert_contains "${KUBECTL_LOG}" "get nodes -l workload=gpu -o name" "up should verify the zero-GPU baseline before reporting ready"
 assert_not_contains "${KUBECTL_LOG}" "platform/examples/echo" "up should not reference the sample app"

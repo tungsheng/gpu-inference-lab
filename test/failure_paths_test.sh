@@ -118,6 +118,7 @@ write_successful_down_kubectl_stub() {
 "  'get service vllm-openai -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get deployment vllm-openai -n app') exit 1 ;;" \
+"  'get crd nodepools.karpenter.sh') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodepool gpu-warm-1') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -126,15 +127,23 @@ write_successful_down_kubectl_stub() {
 "  'get nodepool gpu-serving-ondemand') exit 1 ;;" \
 "  'delete nodepool/gpu-serving --ignore-not-found=true') exit 0 ;;" \
 "  'get nodepool gpu-serving') exit 1 ;;" \
+"  'get crd ec2nodeclasses.karpenter.k8s.aws') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/nodeclass-gpu-serving.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get ec2nodeclass gpu-serving') exit 1 ;;" \
+"  'get crd nodeclaims.karpenter.sh') exit 0 ;;" \
+"  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name') exit 0 ;;" \
+"  'get nodes -l workload=gpu -o name') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/observability/dashboards/experiment-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/observability/dashboards/capacity-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/observability/dashboards/serving-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/observability/pushgateway.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/observability/karpenter-podmonitor.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/observability/vllm-podmonitor.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete daemonset dcgm-exporter -n monitoring --ignore-not-found=true') exit 0 ;;" \
+"  'delete service dcgm-exporter -n monitoring --ignore-not-found=true') exit 0 ;;" \
+"  'get crd servicemonitors.monitoring.coreos.com') exit 0 ;;" \
+"  'delete servicemonitor dcgm-exporter -n monitoring --ignore-not-found=true') exit 0 ;;" \
+"  'get crd podmonitors.monitoring.coreos.com') exit 0 ;;" \
+"  'delete podmonitor karpenter-metrics -n monitoring --ignore-not-found=true') exit 0 ;;" \
+"  'delete podmonitor vllm-metrics -n monitoring --ignore-not-found=true') exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/serviceaccount.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml --ignore-not-found=true') exit 0 ;;" \

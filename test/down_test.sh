@@ -76,6 +76,7 @@ write_stub kubectl \
 "  'get service vllm-openai -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get deployment vllm-openai -n app') exit 1 ;;" \
+"  'get crd nodepools.karpenter.sh') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get nodepool gpu-warm-1') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -84,15 +85,23 @@ write_stub kubectl \
 "  'get nodepool gpu-serving-ondemand') exit 1 ;;" \
 "  'delete nodepool/gpu-serving --ignore-not-found=true') exit 0 ;;" \
 "  'get nodepool gpu-serving') exit 1 ;;" \
+"  'get crd ec2nodeclasses.karpenter.k8s.aws') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/nodeclass-gpu-serving.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get ec2nodeclass gpu-serving') exit 1 ;;" \
+"  'get crd nodeclaims.karpenter.sh') exit 0 ;;" \
+"  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name') exit 0 ;;" \
+"  'get nodes -l workload=gpu -o name') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/observability/dashboards/experiment-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/observability/dashboards/capacity-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/observability/dashboards/serving-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/observability/pushgateway.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/observability/karpenter-podmonitor.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/observability/vllm-podmonitor.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete daemonset dcgm-exporter -n monitoring --ignore-not-found=true') exit 0 ;;" \
+"  'delete service dcgm-exporter -n monitoring --ignore-not-found=true') exit 0 ;;" \
+"  'get crd servicemonitors.monitoring.coreos.com') exit 0 ;;" \
+"  'delete servicemonitor dcgm-exporter -n monitoring --ignore-not-found=true') exit 0 ;;" \
+"  'get crd podmonitors.monitoring.coreos.com') exit 0 ;;" \
+"  'delete podmonitor karpenter-metrics -n monitoring --ignore-not-found=true') exit 0 ;;" \
+"  'delete podmonitor vllm-metrics -n monitoring --ignore-not-found=true') exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/karpenter/serviceaccount.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -113,10 +122,16 @@ AWS_LOG=$(cat "${TEST_TMPDIR}/aws.log")
 
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true" "down should delete the HPA during teardown"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true" "down should remove a preserved warm placeholder deployment if one exists"
-assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml --ignore-not-found=true" "down should remove the GPU metrics exporter"
+assert_contains "${KUBECTL_LOG}" "delete daemonset dcgm-exporter -n monitoring --ignore-not-found=true" "down should remove the GPU metrics exporter daemonset"
+assert_contains "${KUBECTL_LOG}" "get crd nodepools.karpenter.sh" "down should check the NodePool CRD before deleting NodePools"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true" "down should remove the warm NodePool if it exists"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" "down should remove the spot serving NodePool"
 assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true" "down should remove the on-demand serving NodePool"
+assert_contains "${KUBECTL_LOG}" "get crd ec2nodeclasses.karpenter.k8s.aws" "down should check the EC2NodeClass CRD before deleting the node class"
+assert_contains "${KUBECTL_LOG}" "get crd nodeclaims.karpenter.sh" "down should check the NodeClaim CRD before waiting for capacity drain"
+assert_contains "${KUBECTL_LOG}" "get nodes -l workload=gpu -o name" "down should wait for GPU nodes to drain before uninstalling Karpenter"
+assert_contains "${KUBECTL_LOG}" "get crd servicemonitors.monitoring.coreos.com" "down should check the ServiceMonitor CRD before deleting ServiceMonitors"
+assert_contains "${KUBECTL_LOG}" "get crd podmonitors.monitoring.coreos.com" "down should check the PodMonitor CRD before deleting PodMonitors"
 assert_not_contains "${KUBECTL_LOG}" "platform/examples/echo" "down should not reference the sample app"
 assert_contains "${TERRAFORM_LOG}" "destroy -auto-approve" "down should pass raw terraform arguments through to terraform destroy"
 assert_not_contains "${TERRAFORM_LOG}" "destroy --cleanup-orphan-enis -auto-approve" "down should not pass the cleanup flag through to terraform destroy"

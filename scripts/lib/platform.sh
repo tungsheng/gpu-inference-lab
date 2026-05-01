@@ -47,9 +47,14 @@ PROMETHEUS_ADAPTER_APISERVICE_NAME="v1beta1.custom.metrics.k8s.io"
 PUSHGATEWAY_DEPLOYMENT_NAME="pushgateway"
 PUSHGATEWAY_SERVICE_NAME="pushgateway"
 DCGM_EXPORTER_DAEMONSET_NAME="dcgm-exporter"
+DCGM_EXPORTER_SERVICE_NAME="dcgm-exporter"
+DCGM_EXPORTER_SERVICEMONITOR_NAME="dcgm-exporter"
+VLLM_PODMONITOR_NAME="vllm-metrics"
+KARPENTER_PODMONITOR_NAME="karpenter-metrics"
 
 CONTROLLER_TIMEOUT_SECONDS="${CONTROLLER_TIMEOUT_SECONDS:-600}"
 INGRESS_HOSTNAME_TIMEOUT_SECONDS="${INGRESS_HOSTNAME_TIMEOUT_SECONDS:-600}"
+UP_ZERO_GPU_TIMEOUT_SECONDS="${UP_ZERO_GPU_TIMEOUT_SECONDS:-300}"
 VERIFY_READY_TIMEOUT_SECONDS="${VERIFY_READY_TIMEOUT_SECONDS:-1200}"
 VERIFY_RESPONSE_TIMEOUT_SECONDS="${VERIFY_RESPONSE_TIMEOUT_SECONDS:-1200}"
 VERIFY_CLEANUP_TIMEOUT_SECONDS="${VERIFY_CLEANUP_TIMEOUT_SECONDS:-900}"
@@ -88,6 +93,7 @@ GPU_INFERENCE_DEPLOYMENT_NAME="vllm-openai"
 GPU_INFERENCE_SERVICE_NAME="vllm-openai"
 GPU_INFERENCE_HPA_NAME="vllm-openai"
 GPU_INFERENCE_INGRESS_NAME="vllm-openai-ingress"
+GPU_INFERENCE_ALB_GROUP_NAME="public-edge"
 GPU_INFERENCE_EDGE_PATH="/v1/completions"
 GPU_INFERENCE_SERVED_MODEL_NAME="qwen2.5-0.5b"
 GPU_LOAD_TEST_JOB_NAME="gpu-load-test"
@@ -169,24 +175,6 @@ require_commands() {
   fi
 }
 
-retry() {
-  local attempts=$1
-  local delay_seconds=$2
-  shift 2
-
-  local attempt=1
-
-  until "$@"; do
-    if (( attempt >= attempts )); then
-      return 1
-    fi
-
-    printf 'retry %d/%d in %ss: %s\n' "${attempt}" "${attempts}" "${delay_seconds}" "$*" >&2
-    attempt=$((attempt + 1))
-    sleep "${delay_seconds}"
-  done
-}
-
 terraform_output_raw() {
   terraform -chdir="${TF_DIR}" output -raw "$1"
 }
@@ -253,6 +241,10 @@ resource_exists() {
 
 namespace_exists() {
   kubectl get namespace "$1" >/dev/null 2>&1
+}
+
+crd_exists() {
+  kubectl get crd "$1" >/dev/null 2>&1
 }
 
 wait_for_resource_existence() {
@@ -629,6 +621,27 @@ wait_for_nodeclaims_at_least() {
   done
 }
 
+wait_for_nodeclaims_at_most() {
+  local expected=$1
+  local timeout_seconds=$2
+  local start_time
+
+  start_time=$(date +%s)
+
+  while true; do
+    if (( $(nodeclaim_count) <= expected )); then
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for at most %s NodeClaim(s)\n' "${expected}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
 wait_for_job_completion() {
   local namespace=$1
   local job_name=$2
@@ -696,35 +709,88 @@ wait_for_apiservice_available() {
   done
 }
 
-wait_for_alb_deletion() {
+alb_dns_name_exists() {
   local dns_name=$1
-  local timeout_seconds=$2
-  local start_time
+  local alb_count
 
-  if [[ -z "${dns_name}" ]]; then
+  alb_count=$(aws elbv2 describe-load-balancers \
+    --region "${AWS_REGION}" \
+    --query "length(LoadBalancers[?DNSName=='${dns_name}'])" \
+    --output text)
+
+  [[ "${alb_count}" != "0" ]]
+}
+
+wait_for_alb_deletions() {
+  local timeout_seconds=$1
+  shift
+  local -a dns_names=("$@")
+  local start_time
+  local dns_name
+  local remaining_count
+
+  if ((${#dns_names[@]} == 0)); then
+    printf 'No ALB hostname was discovered; skipping explicit ALB deletion wait.\n'
     return 0
   fi
 
   start_time=$(date +%s)
 
   while true; do
-    local alb_count
-    alb_count=$(aws elbv2 describe-load-balancers \
-      --region "${AWS_REGION}" \
-      --query "length(LoadBalancers[?DNSName=='${dns_name}'])" \
-      --output text)
+    remaining_count=0
+    for dns_name in "${dns_names[@]}"; do
+      if alb_dns_name_exists "${dns_name}"; then
+        remaining_count=$((remaining_count + 1))
+      fi
+    done
 
-    if [[ "${alb_count}" == "0" ]]; then
+    if (( remaining_count == 0 )); then
       return 0
     fi
 
     if (( $(date +%s) - start_time >= timeout_seconds )); then
-      printf 'Timed out waiting for ALB deletion: %s\n' "${dns_name}" >&2
+      printf 'Timed out waiting for ALB deletion: %s\n' "${dns_names[*]}" >&2
       return 1
     fi
 
     sleep "${POLL_INTERVAL_SECONDS}"
   done
+}
+
+discover_inference_alb_hostnames() {
+  local load_balancer_rows
+  local load_balancer_arn
+  local dns_name
+  local tag_match
+
+  set +e
+  # shellcheck disable=SC2016
+  load_balancer_rows=$(aws elbv2 describe-load-balancers \
+    --region "${AWS_REGION}" \
+    --query 'LoadBalancers[?Type==`application`].[LoadBalancerArn,DNSName]' \
+    --output text 2>/dev/null)
+  local list_status=$?
+  set -e
+
+  if [[ "${list_status}" != "0" || -z "${load_balancer_rows}" || "${load_balancer_rows}" == "None" ]]; then
+    return 0
+  fi
+
+  while IFS=$'\t' read -r load_balancer_arn dns_name; do
+    if [[ -z "${load_balancer_arn}" || "${load_balancer_arn}" == "None" || -z "${dns_name}" || "${dns_name}" == "None" ]]; then
+      continue
+    fi
+
+    tag_match=$(aws elbv2 describe-tags \
+      --region "${AWS_REGION}" \
+      --resource-arns "${load_balancer_arn}" \
+      --query "TagDescriptions[0].Tags[?Key=='ingress.k8s.aws/stack' && Value=='${GPU_INFERENCE_ALB_GROUP_NAME}'].Value | [0]" \
+      --output text 2>/dev/null || true)
+
+    if [[ "${tag_match}" == "${GPU_INFERENCE_ALB_GROUP_NAME}" ]]; then
+      printf '%s\n' "${dns_name}"
+    fi
+  done <<< "${load_balancer_rows}"
 }
 
 apply_aws_load_balancer_controller_crds() {
@@ -757,10 +823,23 @@ delete_observability_manifests() {
   kubectl delete -f "${OBSERVABILITY_EXPERIMENT_DASHBOARD_MANIFEST}" --ignore-not-found=true || return 1
   kubectl delete -f "${OBSERVABILITY_CAPACITY_DASHBOARD_MANIFEST}" --ignore-not-found=true || return 1
   kubectl delete -f "${OBSERVABILITY_SERVING_DASHBOARD_MANIFEST}" --ignore-not-found=true || return 1
-  kubectl delete -f "${OBSERVABILITY_DCGM_EXPORTER_MANIFEST}" --ignore-not-found=true || return 1
   kubectl delete -f "${OBSERVABILITY_PUSHGATEWAY_MANIFEST}" --ignore-not-found=true || return 1
-  kubectl delete -f "${OBSERVABILITY_KARPENTER_PODMONITOR_MANIFEST}" --ignore-not-found=true || return 1
-  kubectl delete -f "${OBSERVABILITY_VLLM_PODMONITOR_MANIFEST}" --ignore-not-found=true || return 1
+
+  kubectl delete daemonset "${DCGM_EXPORTER_DAEMONSET_NAME}" -n "${MONITORING_NAMESPACE}" --ignore-not-found=true || return 1
+  kubectl delete service "${DCGM_EXPORTER_SERVICE_NAME}" -n "${MONITORING_NAMESPACE}" --ignore-not-found=true || return 1
+
+  if crd_exists servicemonitors.monitoring.coreos.com; then
+    kubectl delete servicemonitor "${DCGM_EXPORTER_SERVICEMONITOR_NAME}" -n "${MONITORING_NAMESPACE}" --ignore-not-found=true || return 1
+  else
+    printf 'Prometheus ServiceMonitor CRD is not installed; skipping ServiceMonitor deletion.\n'
+  fi
+
+  if crd_exists podmonitors.monitoring.coreos.com; then
+    kubectl delete podmonitor "${KARPENTER_PODMONITOR_NAME}" -n "${MONITORING_NAMESPACE}" --ignore-not-found=true || return 1
+    kubectl delete podmonitor "${VLLM_PODMONITOR_NAME}" -n "${MONITORING_NAMESPACE}" --ignore-not-found=true || return 1
+  else
+    printf 'Prometheus PodMonitor CRD is not installed; skipping PodMonitor deletion.\n'
+  fi
 }
 
 install_observability_stack() {
