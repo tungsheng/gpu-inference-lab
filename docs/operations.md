@@ -17,6 +17,7 @@ you need the full setup and teardown walkthrough.
 | `./scripts/evaluate --profile zero-idle` | you want the default burst baseline | running-request HPA scales from a true zero-GPU baseline |
 | `./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4` | you want the active-pressure policy directly | HPA scales on `waiting + running` pressure |
 | `./scripts/evaluate --profile warm-1 --policy compare --active-target 6` | you want the clearest operator comparison | running and active-pressure policies run sequentially against one warm on-demand serving node |
+| `./scripts/evaluate --profile warm-1 --policy compare --compare-order active-pressure,running --active-target 6` | you want to check whether compare ordering affected the result | active-pressure and running policies run in the reverse order against the same warm profile |
 | `./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8` | you want to calibrate active-pressure targets | one report pair per target plus a sweep summary |
 | `./scripts/evaluate --profile zero-idle --resilience spot-unavailable` | you want pre-run degraded-capacity evidence | spot burst capacity is withdrawn and on-demand fallback is measured |
 | `./scripts/evaluate --profile zero-idle --resilience spot-interruption` | you want a synthetic interruption drill | a live spot-backed burst node is deleted and replacement timing is reported |
@@ -73,6 +74,8 @@ kubectl port-forward -n monitoring deployment/kube-prometheus-stack-grafana 3000
 - queue wait is derived from waiting depth over request completion rate, not a
   dedicated queue-wait histogram
 - active-pressure sweep recommendations are heuristic
+- current local reports support platform-validation claims, not GPU-utilization,
+  KV-cache, batching, or target-optimization conclusions
 - final Prometheus/DCGM reads are best-effort after workload cleanup
 - spot interruption is synthetic `NodeClaim` deletion, not a cloud-native
   interruption notice

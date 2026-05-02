@@ -34,6 +34,7 @@ Run local tests at any point:
 ./scripts/evaluate --profile zero-idle
 ./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
+./scripts/evaluate --profile warm-1 --policy compare --compare-order active-pressure,running --active-target 6
 ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ./scripts/down
 ```
@@ -111,6 +112,7 @@ Warm-node comparison:
 
 ```bash
 ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
+./scripts/evaluate --profile warm-1 --policy compare --compare-order active-pressure,running --active-target 6
 ```
 
 Active-target sweep:
@@ -139,7 +141,7 @@ Policy behavior:
 | --- | --- |
 | `running` | scales on `vllm_requests_running` |
 | `active-pressure` | scales on `vllm_requests_active = waiting + running` |
-| `compare` | runs `running`, then `active-pressure`, and writes a side-by-side summary |
+| `compare` | runs both policies and writes a side-by-side summary; default order is `running,active-pressure`, and `--compare-order active-pressure,running` reverses it |
 | `sweep` | runs `active-pressure` once per `--active-targets` value |
 
 Resilience behavior:
@@ -152,6 +154,9 @@ Resilience behavior:
 
 Reports are written under `docs/reports/`. See [reports/README.md](reports/README.md)
 for the report format, partial-report behavior, and artifact ownership rules.
+Generated reports are evidence inputs, not final conclusions. Curate only
+claims that are directly supported by representative reports with the required
+non-null fields.
 
 ## Manual Checks
 

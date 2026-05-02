@@ -51,8 +51,12 @@ nodes.
 | `running` | `vllm_requests_running` | `128` | `1` to `2` |
 | `active-pressure` | `vllm_requests_active = waiting + running` | `4` | `1` to `2` |
 
-`compare` runs both policies sequentially. `sweep` runs active-pressure once
-per configured target and writes a recommendation summary.
+`compare` runs both policies sequentially. By default it runs
+`running,active-pressure`; use `--compare-order active-pressure,running` to
+repeat the same comparison in the opposite order before treating a timing
+difference as stable evidence. `sweep` runs active-pressure once per configured
+target and writes a recommendation summary, but incomplete sweeps should not be
+treated as target optimization.
 
 ## Capacity Profiles
 

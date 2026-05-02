@@ -14,6 +14,10 @@ EVALUATION_POLICY="running"
 EVALUATION_RESILIENCE="healthy"
 ACTIVE_PRESSURE_TARGET=4
 ACTIVE_TARGETS_INPUT=""
+COMPARE_ORDER_INPUT="running,active-pressure"
+COMPARE_ORDER_PROVIDED=0
+COMPARE_FIRST_POLICY="running"
+COMPARE_SECOND_POLICY="active-pressure"
 EVALUATION_TIMESTAMP=""
 USER_REPORT_PATH=""
 USER_JSON_REPORT_PATH=""
@@ -128,7 +132,7 @@ SWEEP_RECOMMENDATION_REASON=""
 usage() {
   cat <<EOF
 Usage:
-  ./scripts/evaluate [--profile zero-idle|warm-1] [--policy running|active-pressure|compare|sweep] [--resilience healthy|spot-unavailable|spot-interruption] [--active-target requests] [--active-targets csv] [--report path] [--json-report path]
+  ./scripts/evaluate [--profile zero-idle|warm-1] [--policy running|active-pressure|compare|sweep] [--compare-order running,active-pressure|active-pressure,running] [--resilience healthy|spot-unavailable|spot-interruption] [--active-target requests] [--active-targets csv] [--report path] [--json-report path]
 
 Examples:
   ./scripts/evaluate --profile zero-idle
@@ -137,6 +141,7 @@ Examples:
   ./scripts/evaluate --profile zero-idle --resilience spot-unavailable
   ./scripts/evaluate --profile zero-idle --resilience spot-interruption
   ./scripts/evaluate --profile warm-1 --policy compare --active-target 6
+  ./scripts/evaluate --profile warm-1 --policy compare --compare-order active-pressure,running --active-target 6
   ./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
   ./scripts/evaluate --profile zero-idle --report docs/reports/latest.md
 EOF
@@ -176,6 +181,11 @@ parse_args() {
         ;;
       --active-targets)
         ACTIVE_TARGETS_INPUT=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --compare-order)
+        COMPARE_ORDER_INPUT=$(require_option_value "$1" "${2-}")
+        COMPARE_ORDER_PROVIDED=1
         shift 2
         ;;
       --report)
@@ -227,6 +237,27 @@ parse_args() {
       exit 1
       ;;
   esac
+
+  case "${COMPARE_ORDER_INPUT}" in
+    running,active-pressure)
+      COMPARE_FIRST_POLICY="running"
+      COMPARE_SECOND_POLICY="active-pressure"
+      ;;
+    active-pressure,running)
+      COMPARE_FIRST_POLICY="active-pressure"
+      COMPARE_SECOND_POLICY="running"
+      ;;
+    *)
+      printf 'Unsupported compare order: %s\n' "${COMPARE_ORDER_INPUT}" >&2
+      printf 'Supported compare orders: running,active-pressure; active-pressure,running\n' >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "${COMPARE_ORDER_PROVIDED}" == "1" && "${EVALUATION_POLICY}" != "compare" ]]; then
+    printf -- '--compare-order is only supported with --policy compare\n' >&2
+    exit 1
+  fi
 
   if [[ ! "${ACTIVE_PRESSURE_TARGET}" =~ ^[1-9][0-9]*$ ]]; then
     printf 'Unsupported active target: %s\n' "${ACTIVE_PRESSURE_TARGET}" >&2
@@ -2801,6 +2832,7 @@ write_compare_reports() {
 - Generated at: $(evaluate_report_generated_at)
 - Profile: ${EVALUATION_PROFILE}
 - Resilience mode: ${EVALUATION_RESILIENCE}
+- Compare order: ${COMPARE_ORDER_INPUT}
 - Running report: $(get_policy_snapshot_value running REPORT_PATH)
 - Active-pressure report: $(get_policy_snapshot_value active-pressure REPORT_PATH)
 
@@ -2851,6 +2883,7 @@ EOF
   "generated_at": $(json_escape "$(evaluate_report_generated_at)"),
   "profile": $(json_escape "${EVALUATION_PROFILE}"),
   "resilience_mode": $(json_escape "${EVALUATION_RESILIENCE}"),
+  "compare_order": $(json_escape "${COMPARE_ORDER_INPUT}"),
   "running": {
     "report_path": $(json_escape "$(get_policy_snapshot_value running REPORT_PATH)"),
     "json_report_path": $(json_escape "$(get_policy_snapshot_value running JSON_REPORT_PATH)"),
@@ -3187,6 +3220,7 @@ print_compare_summary() {
   printf '\nCompared:\n'
   printf '  Profile: %s\n' "${EVALUATION_PROFILE}"
   printf '  Resilience mode: %s\n' "${EVALUATION_RESILIENCE}"
+  printf '  Compare order: %s\n' "${COMPARE_ORDER_INPUT}"
   printf '  Running report: %s\n' "$(get_policy_snapshot_value running REPORT_PATH)"
   printf '  Active-pressure report: %s\n' "$(get_policy_snapshot_value active-pressure REPORT_PATH)"
   printf '  Compare report: %s\n' "${COMPARE_REPORT_PATH}"
@@ -3224,11 +3258,11 @@ main() {
       preserve_baseline=1
     fi
 
-    run_single_policy_evaluation running running running "${preserve_baseline}"
-    capture_compare_policy_result running
+    run_single_policy_evaluation "${COMPARE_FIRST_POLICY}" "${COMPARE_FIRST_POLICY}" "${COMPARE_FIRST_POLICY}" "${preserve_baseline}"
+    capture_compare_policy_result "${COMPARE_FIRST_POLICY}"
 
-    run_single_policy_evaluation active-pressure active-pressure active-pressure 0
-    capture_compare_policy_result active-pressure
+    run_single_policy_evaluation "${COMPARE_SECOND_POLICY}" "${COMPARE_SECOND_POLICY}" "${COMPARE_SECOND_POLICY}" 0
+    capture_compare_policy_result "${COMPARE_SECOND_POLICY}"
 
     write_compare_reports
     restore_resilience_mode

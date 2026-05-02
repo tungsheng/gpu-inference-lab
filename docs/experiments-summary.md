@@ -36,8 +36,26 @@ Each completed experiment should summarize:
 - cost per useful request or generated token when cost is relevant
 - the practical systems conclusion
 
+## Evidence Gate
+
+Current ignored local reports are useful platform-validation evidence. They can
+support conservative claims such as:
+
+- zero-idle serving reported `$0/hr` idle serving-GPU cost and cleaned GPU nodes
+  back to zero
+- one warm-baseline compare run showed active-pressure reached the second Ready
+  replica faster than running-request scaling, `564s` versus `989s`
+- the k6/evaluate workflows report latency, TTFT, queue estimates, scale-out
+  timing, and serving cost
+
+Do not use the current reports to claim measured GPU utilization, KV cache as
+the primary constraint, batching throughput/p99 tradeoffs, or an optimized
+active-pressure target. Those conclusions require representative checked-in
+JSON reports with non-null DCGM fields and complete experiment matrices.
+
 ## Current Gap
 
-The catalog and runners exist, but curated live-cluster results have not been
-recorded yet. Until representative runs are selected and checked in, treat
-`experiments/<name>/results.md` files as result templates rather than evidence.
+The catalog and runners exist, but representative curated live-cluster result
+matrices have not been recorded yet. Until representative runs are selected and
+checked in, treat `experiments/<name>/results.md` files as result templates
+rather than final systems evidence.

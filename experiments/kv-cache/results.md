@@ -1,6 +1,12 @@
 # KV Cache Vs Concurrency Results
 
-Status: no curated live-cluster run recorded yet.
+Status: no curated representative live-cluster matrix recorded yet.
+
+One ignored local default-profile smoke run completed the `512/100` case with
+3659 successful requests, zero failed requests, p95 latency near 0.946s, and
+about 5.08 requests/sec. Treat that as runner/platform evidence only, not as
+part of the final KV-cache comparison. The curated comparison should rerun all
+cases against `long-context` so profile differences do not explain the result.
 
 ## Run Matrix
 
@@ -24,4 +30,6 @@ Planned graphs:
 
 ## Conclusion
 
-Pending measured results.
+Pending representative measured results. Do not claim KV-cache memory pressure
+as the primary constraint until the full matrix has non-null GPU memory and
+utilization signals.

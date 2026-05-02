@@ -21,7 +21,7 @@ Tokenizer-backed prompt construction is still future work.
 | Profile | Use it for |
 | --- | --- |
 | `default` | cases that fit the checked-in 2048-token vLLM profile |
-| `long-context` | the 8192-token prompt case |
+| `long-context` | all cases in the comparable KV-cache result matrix |
 
 ## Commands
 
@@ -40,10 +40,12 @@ Measured live-cluster run after `./scripts/up`:
 ./scripts/experiment run \
   --experiment kv-cache \
   --case prompt-512-output-100 \
-  --profile default
+  --profile long-context
 ```
 
-Use `long-context` when prompt plus output exceeds the default model length:
+Use `default` only for smoke checks that fit the checked-in 2048-token profile.
+Use `long-context` when building the KV-cache comparison, including the
+8192-token prompt case:
 
 ```bash
 ./scripts/experiment run \
@@ -57,4 +59,6 @@ Use `long-context` when prompt plus output exceeds the default model length:
 Compare request failures, p95/p99 latency, generated tokens/sec, GPU memory,
 and GPU utilization. The result should explain where longer context shifts the
 latency/throughput envelope and whether failures look like serving saturation
-or memory pressure.
+or memory pressure. Do not claim KV-cache pressure as the primary constraint
+until all three cases have representative reports with GPU memory/utilization
+signals.

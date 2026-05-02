@@ -1,6 +1,9 @@
 # Batching Scheduler Tradeoffs Results
 
 No curated live-cluster run has been recorded yet.
+Do not claim batching improves throughput or increases p99 latency until each
+profile/case pair has representative reports with latency, throughput, queue,
+and GPU/DCGM fields populated.
 
 ## Planned Comparison
 

@@ -260,12 +260,13 @@ run_render_long_context_serving_profile_test() {
   SERVING_MANIFEST=$(cat "${TEST_TMPDIR}/vllm-long-context.yaml")
 
   assert_contains "${SERVING_MANIFEST}" '- --max-model-len' "long-context manifest should include the max model length argument"
-  assert_contains "${SERVING_MANIFEST}" '- "8192"' "long-context manifest should raise max model length to 8192"
+  assert_contains "${SERVING_MANIFEST}" '- "9216"' "long-context manifest should raise max model length to 9216"
   assert_contains "${SERVING_MANIFEST}" '- --gpu-memory-utilization' "long-context manifest should include GPU memory utilization"
   assert_contains "${SERVING_MANIFEST}" '- "0.90"' "long-context manifest should raise GPU memory utilization"
   assert_contains "${SERVING_MANIFEST}" '- --max-num-seqs' "long-context manifest should include an explicit max sequence limit"
   assert_contains "${SERVING_MANIFEST}" '- "32"' "long-context manifest should include the max sequence value"
   assert_contains "${SERVING_MANIFEST}" '- --max-num-batched-tokens' "long-context manifest should include a batched-token limit"
+  assert_contains "${SERVING_MANIFEST}" '- "9216"' "long-context manifest should include the batched-token value"
 
   teardown_test_tmpdir
 }
@@ -337,21 +338,40 @@ run_render_report_test() {
   assert_contains "${REPORT_CONTENT}" "Schema version: experiment-report/v1" "Markdown report should include the schema version"
   assert_contains "${REPORT_CONTENT}" "Requires live cluster: true" "Markdown report should state that measured results require a live cluster"
   assert_contains "${REPORT_CONTENT}" "| Prompt token target | 8192 |" "Markdown report should include workload metadata"
-  assert_contains "${REPORT_CONTENT}" "| Max model length | 8192 |" "Markdown report should include serving metadata"
+  assert_contains "${REPORT_CONTENT}" "| Max model length | 9216 |" "Markdown report should include serving metadata"
   assert_contains "${REPORT_CONTENT}" "| p99 request latency | n/a |" "Markdown report should render unavailable metrics as n/a"
   assert_contains "${REPORT_CONTENT}" "| GPU memory used | n/a |" "Markdown report should render unavailable GPU memory metrics as n/a"
-  assert_contains "${REPORT_CONTENT}" "Result fields remain \`n/a\` until a live cluster run collects k6" "Markdown report should keep the n/a note literal"
+  assert_contains "${REPORT_CONTENT}" "Unavailable fields remain \`n/a\` when the runner did not collect that signal" "Markdown report should explain unavailable metrics conservatively"
   assert_contains "${JSON_REPORT_CONTENT}" "\"schema_version\": \"experiment-report/v1\"" "JSON report should include the schema version"
   assert_contains "${JSON_REPORT_CONTENT}" "\"status\": \"pending\"" "JSON report should mark the scaffold as pending"
   assert_contains "${JSON_REPORT_CONTENT}" "\"requires_live_cluster\": true" "JSON report should state that measured results require a live cluster"
   assert_contains "${JSON_REPORT_CONTENT}" "\"prompt_token_target\": 8192" "JSON report should include workload metadata"
-  assert_contains "${JSON_REPORT_CONTENT}" "\"max_model_len\": 8192" "JSON report should include serving metadata"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"max_model_len\": 9216" "JSON report should include serving metadata"
   assert_contains "${JSON_REPORT_CONTENT}" "\"max_num_seqs\": 32" "JSON report should include scheduler metadata"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"max_num_batched_tokens\": 9216" "JSON report should include batched-token metadata"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p99_request_latency_seconds\": null" "JSON report should render unavailable latency as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p50_ttft_seconds\": null" "JSON report should render unavailable TTFT as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p95_inter_token_latency_seconds\": null" "JSON report should render unavailable inter-token latency as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"gpu_memory_used_bytes\": null" "JSON report should render unavailable GPU memory as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"cost_per_1000_successful_requests_usd\": null" "JSON report should render unavailable cost as null"
+
+  teardown_test_tmpdir
+}
+
+run_render_report_incompatible_profile_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-report \
+    --experiment kv-cache \
+    --case prompt-8192-output-300 \
+    --profile default \
+    --report "${TEST_TMPDIR}/bad-report.md" \
+    --json-report "${TEST_TMPDIR}/bad-report.json"
+
+  assert_status 1 "${COMMAND_STATUS}" "render-report should reject incompatible context/profile combinations"
+  assert_contains "${COMMAND_OUTPUT}" "max_model_len 2048 is smaller than case prompt-8192-output-300 prompt+output budget 8492" "render-report should explain incompatible max model length"
+  assert_file_not_exists "${TEST_TMPDIR}/bad-report.md" "incompatible render-report should not write Markdown"
+  assert_file_not_exists "${TEST_TMPDIR}/bad-report.json" "incompatible render-report should not write JSON"
 
   teardown_test_tmpdir
 }
@@ -513,6 +533,11 @@ write_experiment_run_kubectl_stub() {
 "set -euo pipefail" \
 "printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/kubectl.log\"" \
 "cmd=\"\$*\"" \
+"if [[ \"\$1\" == 'port-forward' ]]; then" \
+"  printf '%s\n' 'Forwarding from 127.0.0.1:39090 -> 9090'" \
+"  sleep 30" \
+"  exit 0" \
+"fi" \
 "case \"\$cmd\" in" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
 "  apply\\ -f\\ /tmp/gpu-lab-experiment-serving.*)" \
@@ -548,9 +573,39 @@ write_experiment_run_kubectl_stub() {
 "esac"
 }
 
+write_experiment_run_curl_stub() {
+  write_stub curl \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/curl.log\"" \
+"cmd=\"\$*\"" \
+"if [[ \"\$cmd\" == *'/api/v1/query'* ]]; then" \
+"  value=''" \
+"  if [[ \"\$cmd\" == *'num_requests_running'* && \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
+"    value='11'" \
+"  elif [[ \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
+"    value='2'" \
+"  elif [[ \"\$cmd\" == *'num_requests_running'* ]]; then" \
+"    value='9'" \
+"  elif [[ \"\$cmd\" == *'avg_over_time((avg(DCGM_FI_DEV_GPU_UTIL))'* ]]; then" \
+"    value='63.5'" \
+"  elif [[ \"\$cmd\" == *'max_over_time((max(DCGM_FI_DEV_GPU_UTIL))'* ]]; then" \
+"    value='88.2'" \
+"  elif [[ \"\$cmd\" == *'DCGM_FI_DEV_FB_USED'* ]]; then" \
+"    value='4294967296'" \
+"  elif [[ \"\$cmd\" == *'DCGM_FI_DEV_FB_FREE'* ]]; then" \
+"    value='8589934592'" \
+"  fi" \
+"  printf '{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{},\"value\":[1712781000,\"%s\"]}]}}' \"\$value\"" \
+"  exit 0" \
+"fi" \
+"printf '200'"
+}
+
 run_live_experiment_runner_test() {
   setup_test_tmpdir
   write_experiment_run_kubectl_stub
+  write_experiment_run_curl_stub
 
   run_and_capture env \
     PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -595,6 +650,13 @@ run_live_experiment_runner_test() {
   assert_contains "${RUN_JSON_CONTENT}" "\"generated_tokens\": 4096" "experiment run should write generated tokens to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"generation_tokens_per_second\": 704" "experiment run should write generation token throughput to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"run_duration_seconds\": 120" "experiment run should write run duration to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"peak_waiting_requests\": 2" "experiment run should collect waiting-request pressure when Prometheus is available"
+  assert_contains "${RUN_JSON_CONTENT}" "\"peak_running_requests\": 9" "experiment run should collect running-request pressure when Prometheus is available"
+  assert_contains "${RUN_JSON_CONTENT}" "\"peak_active_requests\": 11" "experiment run should collect active-request pressure when Prometheus is available"
+  assert_contains "${RUN_JSON_CONTENT}" "\"average_gpu_utilization_percent\": 63.5" "experiment run should collect average GPU utilization when DCGM is available"
+  assert_contains "${RUN_JSON_CONTENT}" "\"max_gpu_utilization_percent\": 88.2" "experiment run should collect max GPU utilization when DCGM is available"
+  assert_contains "${RUN_JSON_CONTENT}" "\"gpu_memory_used_bytes\": 4294967296" "experiment run should collect GPU memory used when DCGM is available"
+  assert_contains "${RUN_JSON_CONTENT}" "\"gpu_memory_free_bytes\": 8589934592" "experiment run should collect GPU memory free when DCGM is available"
   assert_contains "${RUN_JSON_CONTENT}" "\"cost_per_1000_successful_requests_usd\": null" "experiment run should leave cost null without a cost profile"
   assert_occurs_before "${KUBECTL_LOG}" \
     "apply -f ${REPO_ROOT}/platform/inference/service.yaml" \
@@ -818,6 +880,7 @@ run_render_long_context_serving_profile_test
 run_render_batching_serving_profile_test
 run_render_unknown_serving_profile_test
 run_render_report_test
+run_render_report_incompatible_profile_test
 run_render_batching_report_test
 run_render_request_pattern_report_test
 run_render_autoscaling_report_test

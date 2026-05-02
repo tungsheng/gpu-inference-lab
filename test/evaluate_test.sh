@@ -475,6 +475,7 @@ run_compare_policy_test() {
   assert_contains "${COMMAND_OUTPUT}" "OK 1/11 running: checking prerequisites" "compare mode should prefix the running-policy stages"
   assert_contains "${COMMAND_OUTPUT}" "OK 1/11 active-pressure: checking prerequisites" "compare mode should run the active-pressure stages after running"
   assert_contains "${COMMAND_OUTPUT}" "Compared:" "compare mode should print a compare summary"
+  assert_contains "${COMMAND_OUTPUT}" "Compare order: running,active-pressure" "compare mode should print the default compare order"
   assert_contains "${COMMAND_OUTPUT}" "Compare report: ${TEST_TMPDIR}/compare-compare.md" "compare mode should print the compare Markdown report path"
 
   assert_file_exists "${TEST_TMPDIR}/compare-running.md" "compare mode should write the running-policy Markdown report"
@@ -493,6 +494,7 @@ run_compare_policy_test() {
   assert_contains "${COMPARE_REPORT_CONTENT}" "| p95 estimated queue wait |" "the compare report should include the derived queue-wait row"
   assert_contains "${COMPARE_REPORT_CONTENT}" "| running | vllm_requests_running | 128 |" "the compare report should include the running policy settings"
   assert_contains "${COMPARE_REPORT_CONTENT}" "| active-pressure | vllm_requests_active | 6 |" "the compare report should include the active-pressure settings"
+  assert_contains "${COMPARE_REPORT_CONTENT}" "Compare order: running,active-pressure" "the compare report should record the default compare order"
   assert_contains "${COMPARE_REPORT_CONTENT}" "| Capacity assessment | balanced | saturated |" "the compare report should compare the efficiency assessment"
   assert_contains "${COMPARE_JSON_CONTENT}" "\"schema_version\": \"evaluate-report/v1\"" "the compare JSON report should include the evaluation schema version"
   assert_contains "${COMPARE_JSON_CONTENT}" "\"running\":" "the compare JSON report should include the running section"
@@ -507,6 +509,43 @@ run_compare_policy_test() {
 
   WARM_PLACEHOLDER_APPLY_COUNT=$(printf '%s\n' "${KUBECTL_LOG}" | awk -v needle="apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml" 'index($0, needle) { count++ } END { print count + 0 }')
   assert_eq "2" "${WARM_PLACEHOLDER_APPLY_COUNT}" "compare mode should restore the warm baseline for both policy runs"
+
+  teardown_test_tmpdir
+}
+
+run_compare_policy_reverse_order_test() {
+  setup_test_tmpdir
+  write_evaluate_kubectl_stub
+  write_evaluate_curl_stub
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
+    TMPDIR=/tmp \
+    /bin/bash "${REPO_ROOT}/scripts/evaluate" \
+    --profile warm-1 \
+    --policy compare \
+    --compare-order active-pressure,running \
+    --active-target 6 \
+    --report "${TEST_TMPDIR}/compare.md" \
+    --json-report "${TEST_TMPDIR}/compare.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/evaluate should support reversing compare policy order"
+  assert_contains "${COMMAND_OUTPUT}" "Compare order: active-pressure,running" "compare mode should print the overridden compare order"
+  assert_occurs_before "${COMMAND_OUTPUT}" \
+    "OK 1/11 active-pressure: checking prerequisites" \
+    "OK 1/11 running: checking prerequisites" \
+    "reverse compare order should execute active-pressure before running"
+
+  COMPARE_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/compare-compare.md")
+  COMPARE_JSON_CONTENT=$(cat "${TEST_TMPDIR}/compare-compare.json")
+  KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
+
+  assert_contains "${COMPARE_REPORT_CONTENT}" "Compare order: active-pressure,running" "the compare report should record the overridden order"
+  assert_contains "${COMPARE_JSON_CONTENT}" "\"compare_order\": \"active-pressure,running\"" "the compare JSON report should record the overridden order"
+  assert_occurs_before "${KUBECTL_LOG}" \
+    "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active" \
+    "get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running" \
+    "reverse compare order should preflight the active metric before the running metric"
 
   teardown_test_tmpdir
 }
@@ -691,6 +730,7 @@ run_running_policy_test
 run_metrics_collection_failure_partial_report_test
 run_active_pressure_policy_test
 run_compare_policy_test
+run_compare_policy_reverse_order_test
 run_sweep_policy_test
 run_spot_unavailable_resilience_test
 run_spot_interruption_resilience_test
