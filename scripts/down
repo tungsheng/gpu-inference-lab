@@ -9,20 +9,22 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "${SCRIPT_DIR}/lib/destroy-recovery.sh"
 
 TOTAL_STAGES=8
-CLEANUP_ORPHAN_ENIS=0
+CLEANUP_ORPHAN_NETWORK_DEPENDENCIES=0
 ORPHAN_ENI_DELETE_COUNT=0
+ORPHAN_SECURITY_GROUP_DELETE_COUNT=0
 TERRAFORM_ONLY=0
 DESTROY_ARGS=()
 
 usage() {
   cat <<EOF
 Usage:
-  ./scripts/down [--cleanup-orphan-enis] [--terraform-only|--skip-kubernetes-cleanup] [terraform destroy args]
+  ./scripts/down [--cleanup-orphan-enis|--cleanup-orphan-network-dependencies] [--terraform-only|--skip-kubernetes-cleanup] [terraform destroy args]
 
 Examples:
   ./scripts/down
   ./scripts/down -auto-approve
   ./scripts/down --cleanup-orphan-enis -auto-approve
+  ./scripts/down --cleanup-orphan-network-dependencies -auto-approve
   ./scripts/down --terraform-only -auto-approve
 EOF
 }
@@ -52,8 +54,8 @@ parse_args() {
         usage
         exit 0
         ;;
-      --cleanup-orphan-enis)
-        CLEANUP_ORPHAN_ENIS=1
+      --cleanup-orphan-enis|--cleanup-orphan-network-dependencies)
+        CLEANUP_ORPHAN_NETWORK_DEPENDENCIES=1
         ;;
       --terraform-only|--skip-kubernetes-cleanup)
         TERRAFORM_ONLY=1
@@ -173,6 +175,7 @@ skip_stage() {
 main() {
   local status
   local diagnostics_printed=0
+  local cleanup_status=0
 
   parse_args "$@"
 
@@ -248,7 +251,8 @@ main() {
       "terraform -chdir=${TF_DIR} state list" \
       "terraform -chdir=${TF_DIR} plan -destroy" \
       "terraform -chdir=${TF_DIR} output" \
-      "aws ec2 describe-network-interfaces --region ${AWS_REGION} --filters Name=vpc-id,Values=${VPC_ID} Name=status,Values=available"
+      "aws ec2 describe-network-interfaces --region ${AWS_REGION} --filters Name=vpc-id,Values=${VPC_ID} Name=status,Values=available" \
+      "aws ec2 describe-security-groups --region ${AWS_REGION} --filters Name=vpc-id,Values=${VPC_ID}"
   fi
 
   print_stage_banner 8 "${TOTAL_STAGES}" "terraform destroy"
@@ -257,17 +261,23 @@ main() {
   status=$?
   set -e
 
-  if [[ "${status}" != "0" && "${CLEANUP_ORPHAN_ENIS}" == "1" && "${TERRAFORM_ONLY}" != "1" ]]; then
-    printf 'terraform destroy failed; checking for cleanup-eligible orphan aws-K8S ENIs.\n'
+  if [[ "${status}" != "0" && "${CLEANUP_ORPHAN_NETWORK_DEPENDENCIES}" == "1" && "${TERRAFORM_ONLY}" != "1" ]]; then
+    printf 'terraform destroy failed; checking for cleanup-eligible orphan network dependencies.\n'
     print_destroy_dependency_diagnostics
     diagnostics_printed=1
 
-    if cleanup_orphan_enis && (( ORPHAN_ENI_DELETE_COUNT > 0 )); then
-      printf 'Retrying terraform destroy after orphan ENI cleanup...\n'
+    cleanup_status=0
+    cleanup_orphan_enis || cleanup_status=1
+    cleanup_orphan_security_groups || cleanup_status=1
+
+    if (( ORPHAN_ENI_DELETE_COUNT > 0 || ORPHAN_SECURITY_GROUP_DELETE_COUNT > 0 )); then
+      printf 'Retrying terraform destroy after orphan network dependency cleanup...\n'
       set +e
       run_terraform_destroy "${DESTROY_ARGS[@]}"
       status=$?
       set -e
+    elif (( cleanup_status > 0 )); then
+      printf 'No cleanup-eligible orphan network dependencies were removed; not retrying terraform destroy.\n'
     fi
   fi
 

@@ -63,7 +63,7 @@ write_stub kubectl \
 "  'annotate serviceaccount -n kube-system aws-load-balancer-controller eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/alb-controller --overwrite') exit 0 ;;" \
 "  apply\ -f\ /tmp/*|apply\ -f\ */tmp.*) exit 0 ;;" \
 "  'rollout status deployment/aws-load-balancer-controller -n kube-system --timeout=10m') exit 0 ;;" \
-"  'get endpoints aws-load-balancer-webhook-service -n kube-system -o jsonpath={.subsets[*].addresses[*].ip}') printf '%s\n' '10.0.0.1' ;;" \
+"  'get endpointslice -n kube-system -l kubernetes.io/service-name=aws-load-balancer-webhook-service -o jsonpath={.items[*].endpoints[*].addresses[*]}') printf '%s\n' '10.0.0.1' ;;" \
 "  'rollout status deployment/kube-prometheus-stack-operator -n monitoring --timeout=10m') exit 0 ;;" \
 "  'rollout status deployment/kube-prometheus-stack-grafana -n monitoring --timeout=10m') exit 0 ;;" \
 "  'rollout status statefulset/prometheus-kube-prometheus-stack-prometheus -n monitoring --timeout=10m') exit 0 ;;" \

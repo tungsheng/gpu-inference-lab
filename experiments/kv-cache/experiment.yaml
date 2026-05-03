@@ -22,6 +22,11 @@ metrics:
   required:
     - max_stable_concurrency
     - request_failures
+    - dropped_iterations
+    - interrupted_iterations
+    - offered_iterations
+    - unserved_iterations
+    - delivery_ratio
     - oom_events
     - p95_request_latency_seconds
     - p99_request_latency_seconds

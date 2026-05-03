@@ -175,7 +175,7 @@ run_up_ingress_timeout_test() {
 "  'annotate serviceaccount -n kube-system aws-load-balancer-controller eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/alb-controller --overwrite') exit 0 ;;" \
 "  apply\ -f\ /tmp/*|apply\ -f\ */tmp.*) exit 0 ;;" \
 "  'rollout status deployment/aws-load-balancer-controller -n kube-system --timeout=10m') exit 0 ;;" \
-"  'get endpoints aws-load-balancer-webhook-service -n kube-system -o jsonpath={.subsets[*].addresses[*].ip}') printf '%s\n' '10.0.0.1' ;;" \
+"  'get endpointslice -n kube-system -l kubernetes.io/service-name=aws-load-balancer-webhook-service -o jsonpath={.items[*].endpoints[*].addresses[*]}') printf '%s\n' '10.0.0.1' ;;" \
 "  'rollout status deployment/kube-prometheus-stack-operator -n monitoring --timeout=10m') exit 0 ;;" \
 "  'rollout status deployment/kube-prometheus-stack-grafana -n monitoring --timeout=10m') exit 0 ;;" \
 "  'rollout status statefulset/prometheus-kube-prometheus-stack-prometheus -n monitoring --timeout=10m') exit 0 ;;" \
@@ -1200,6 +1200,10 @@ run_down_destroy_dependency_diagnostics_test() {
 "    printf '%s\t%s\t%s\t%s\t%s\n' 'eni-03c6a627c2ce46d98' 'aws-K8S-i-0f9e65492af4c27fb' 'subnet-03085888abd0f7244' 'sg-0f9c872d13021f5ef' 'AROATBRKPOLXETKDLLAAM:eks-gpu-infere-aws-node-c-c810c7b3-5f72-4719-b476-c634ee062d4e'" \
 "    exit 0" \
 "    ;;" \
+"  'ec2 describe-security-groups')" \
+"    printf '%s\t%s\t%s\t%s\t%s\t%s\n' 'sg-0529cabea643ce150' 'gpu-inference-node-20260502063109959500000005' 'EKS node shared security group' 'owned' 'gpu-inference' 'gpu-inference-node'" \
+"    exit 0" \
+"    ;;" \
 "  *) exit 1 ;;" \
 "esac"
 
@@ -1211,9 +1215,69 @@ run_down_destroy_dependency_diagnostics_test() {
   assert_contains "${COMMAND_OUTPUT}" "VPC: vpc-12345" "down diagnostics should include the VPC id"
   assert_contains "${COMMAND_OUTPUT}" "eni-03c6a627c2ce46d98 subnet=subnet-03085888abd0f7244 groups=sg-0f9c872d13021f5ef" "down diagnostics should include the orphaned ENI details"
   assert_contains "${COMMAND_OUTPUT}" "delete candidate: aws ec2 delete-network-interface --region us-west-2 --network-interface-id eni-03c6a627c2ce46d98" "down diagnostics should print the manual ENI cleanup command"
+  assert_contains "${COMMAND_OUTPUT}" "Non-default security groups still present in the VPC:" "down diagnostics should include leftover non-default security groups"
+  assert_contains "${COMMAND_OUTPUT}" "sg-0529cabea643ce150 name=gpu-inference-node-20260502063109959500000005 description=EKS node shared security group" "down diagnostics should include the orphaned EKS node security group"
+  assert_contains "${COMMAND_OUTPUT}" "delete candidate: aws ec2 delete-security-group --region us-west-2 --group-id sg-0529cabea643ce150" "down diagnostics should print the manual security-group cleanup command"
 
   AWS_LOG=$(cat "${TEST_TMPDIR}/aws.log")
   assert_contains "${AWS_LOG}" "ec2 describe-network-interfaces --region us-west-2 --filters Name=vpc-id,Values=vpc-12345 Name=status,Values=available" "down should query available ENIs in the VPC when destroy fails"
+  assert_contains "${AWS_LOG}" "ec2 describe-security-groups --region us-west-2 --filters Name=vpc-id,Values=vpc-12345" "down should query non-default security groups in the VPC when destroy fails"
+  teardown_test_tmpdir
+}
+
+run_destroy_diagnostics_without_alb_role_output_test() {
+  setup_test_tmpdir
+
+  write_stub terraform \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/terraform.log\"" \
+"case \"\$2\" in" \
+"  output)" \
+"    case \"\$4\" in" \
+"      cluster_name) printf '%s\n' 'gpu-inference' ;;" \
+"      aws_region) printf '%s\n' 'us-west-2' ;;" \
+"      vpc_id) printf '%s\n' 'vpc-12345' ;;" \
+"      aws_load_balancer_controller_role_arn) exit 1 ;;" \
+"      *) exit 1 ;;" \
+"    esac" \
+"    ;;" \
+"  *) exit 1 ;;" \
+"esac"
+
+  write_stub aws \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/aws.log\"" \
+"case \"\$1 \$2\" in" \
+"  'ec2 describe-network-interfaces')" \
+"    printf '%s\t%s\t%s\t%s\t%s\n' 'eni-03c6a627c2ce46d98' 'aws-K8S-i-0f9e65492af4c27fb' 'subnet-03085888abd0f7244' 'sg-0f9c872d13021f5ef' 'AROATBRKPOLXETKDLLAAM:eks-gpu-infere-aws-node-c-c810c7b3-5f72-4719-b476-c634ee062d4e'" \
+"    exit 0" \
+"    ;;" \
+"  'ec2 describe-security-groups')" \
+"    printf '%s\t%s\t%s\t%s\t%s\t%s\n' 'sg-0529cabea643ce150' 'gpu-inference-node-20260502063109959500000005' 'EKS node shared security group' 'owned' 'gpu-inference' 'gpu-inference-node'" \
+"    exit 0" \
+"    ;;" \
+"  *) exit 1 ;;" \
+"esac"
+
+  run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash -c \
+    "set -euo pipefail
+    . \"\$1\"
+    . \"\$2\"
+    print_destroy_dependency_diagnostics" \
+    _ \
+    "${REPO_ROOT}/scripts/_common.sh" \
+    "${REPO_ROOT}/scripts/lib/destroy-recovery.sh"
+
+  assert_status 0 "${COMMAND_STATUS}" "destroy diagnostics should tolerate a missing ALB role output"
+  assert_contains "${COMMAND_OUTPUT}" "Destroy diagnostics:" "destroy diagnostics should still print when only network outputs are available"
+  assert_contains "${COMMAND_OUTPUT}" "VPC: vpc-12345" "destroy diagnostics should include the VPC id without full cluster context"
+  assert_contains "${COMMAND_OUTPUT}" "eni-03c6a627c2ce46d98 subnet=subnet-03085888abd0f7244 groups=sg-0f9c872d13021f5ef" "destroy diagnostics should still include orphan ENI details"
+  assert_contains "${COMMAND_OUTPUT}" "sg-0529cabea643ce150 name=gpu-inference-node-20260502063109959500000005 description=EKS node shared security group" "destroy diagnostics should still include orphan security group details"
+
+  TERRAFORM_LOG=$(cat "${TEST_TMPDIR}/terraform.log")
+  assert_not_contains "${TERRAFORM_LOG}" "aws_load_balancer_controller_role_arn" "destroy diagnostics should not require unrelated ALB role output"
   teardown_test_tmpdir
 }
 
@@ -1265,6 +1329,7 @@ run_down_orphan_eni_cleanup_retry_test() {
 "    printf '%s\t%s\t%s\t%s\t%s\n' 'eni-09999999999999999' 'manual-debug-eni' 'subnet-09999999999999999' 'sg-0123456789abcdef0' 'None'" \
 "    exit 0" \
 "    ;;" \
+"  'ec2 describe-security-groups') exit 0 ;;" \
 "  'ec2 delete-network-interface')" \
 "    printf '%s\n' \"\$6\" >> \"${TEST_TMPDIR}/deleted-enis.log\"" \
 "    exit 0" \
@@ -1275,11 +1340,11 @@ run_down_orphan_eni_cleanup_retry_test() {
   run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash "${REPO_ROOT}/scripts/down" --cleanup-orphan-enis -auto-approve
 
   assert_status 0 "${COMMAND_STATUS}" "down should recover from orphan aws-K8S ENIs when cleanup is enabled"
-  assert_contains "${COMMAND_OUTPUT}" "terraform destroy failed; checking for cleanup-eligible orphan aws-K8S ENIs." "down should explain the cleanup retry path"
+  assert_contains "${COMMAND_OUTPUT}" "terraform destroy failed; checking for cleanup-eligible orphan network dependencies." "down should explain the cleanup retry path"
   assert_contains "${COMMAND_OUTPUT}" "cleanup eligible: yes" "down diagnostics should mark the orphan aws-K8S ENI as cleanup eligible"
   assert_contains "${COMMAND_OUTPUT}" "cleanup eligible: no" "down diagnostics should leave unrelated ENIs out of automatic cleanup"
   assert_contains "${COMMAND_OUTPUT}" "deleted 1 cleanup-eligible orphan aws-K8S ENI(s)." "down should report the automatic ENI cleanup count"
-  assert_contains "${COMMAND_OUTPUT}" "Retrying terraform destroy after orphan ENI cleanup..." "down should retry terraform destroy after deleting orphan ENIs"
+  assert_contains "${COMMAND_OUTPUT}" "Retrying terraform destroy after orphan network dependency cleanup..." "down should retry terraform destroy after deleting orphan ENIs"
   assert_contains "${COMMAND_OUTPUT}" "OK 8/8 terraform destroy" "down should finish successfully after cleanup and retry"
 
   TERRAFORM_LOG=$(cat "${TEST_TMPDIR}/terraform.log")
@@ -1292,6 +1357,89 @@ run_down_orphan_eni_cleanup_retry_test() {
   assert_contains "${AWS_LOG}" "ec2 delete-network-interface --region us-west-2 --network-interface-id eni-03c6a627c2ce46d98" "down should delete the cleanup-eligible aws-K8S ENI"
   assert_not_contains "${AWS_LOG}" "ec2 delete-network-interface --region us-west-2 --network-interface-id eni-09999999999999999" "down should not delete unrelated available ENIs automatically"
   assert_contains "${DELETED_ENIS}" "eni-03c6a627c2ce46d98" "down should record the cleanup-eligible ENI deletion"
+  teardown_test_tmpdir
+}
+
+run_down_orphan_security_group_cleanup_retry_test() {
+  setup_test_tmpdir
+  write_common_down_stubs
+  write_successful_down_kubectl_stub
+
+  write_stub terraform \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/terraform.log\"" \
+"if [[ \"\$2\" == 'destroy' ]]; then" \
+"  attempts_file='${TEST_TMPDIR}/destroy-attempts'" \
+"  attempts=0" \
+"  if [[ -f \"\${attempts_file}\" ]]; then" \
+"    attempts=\$(cat \"\${attempts_file}\")" \
+"  fi" \
+"  attempts=\$((attempts + 1))" \
+"  printf '%s\n' \"\${attempts}\" > \"\${attempts_file}\"" \
+"  if [[ \"\${attempts}\" == '1' ]]; then" \
+"    exit 1" \
+"  fi" \
+"  exit 0" \
+"fi" \
+"case \"\$2\" in" \
+"  init) exit 0 ;;" \
+"  output)" \
+"    case \"\$4\" in" \
+"      cluster_name) printf '%s\n' 'gpu-inference' ;;" \
+"      aws_region) printf '%s\n' 'us-west-2' ;;" \
+"      vpc_id) printf '%s\n' 'vpc-12345' ;;" \
+"      aws_load_balancer_controller_role_arn) printf '%s\n' 'arn:aws:iam::123456789012:role/alb-controller' ;;" \
+"      *) exit 1 ;;" \
+"    esac" \
+"    ;;" \
+"  *) exit 1 ;;" \
+"esac"
+
+  write_stub aws \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/aws.log\"" \
+"case \"\$1 \$2\" in" \
+"  'eks update-kubeconfig') exit 0 ;;" \
+"  'elbv2 describe-load-balancers') printf '%s\n' '0' ;;" \
+"  'ec2 describe-network-interfaces')" \
+"    if [[ \"\$*\" == *'Name=group-id,Values=sg-0529cabea643ce150'* ]]; then" \
+"      printf '%s\n' '0'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'ec2 describe-security-groups')" \
+"    printf '%s\t%s\t%s\t%s\t%s\t%s\n' 'sg-0529cabea643ce150' 'gpu-inference-node-20260502063109959500000005' 'EKS node shared security group' 'owned' 'gpu-inference' 'gpu-inference-node'" \
+"    printf '%s\t%s\t%s\t%s\t%s\t%s\n' 'sg-09999999999999999' 'manual-debug-sg' 'manual debug security group' 'None' 'None' 'manual-debug-sg'" \
+"    exit 0" \
+"    ;;" \
+"  'ec2 delete-security-group')" \
+"    printf '%s\n' \"\$6\" >> \"${TEST_TMPDIR}/deleted-security-groups.log\"" \
+"    exit 0" \
+"    ;;" \
+"  *) exit 1 ;;" \
+"esac"
+
+  run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash "${REPO_ROOT}/scripts/down" --cleanup-orphan-network-dependencies -auto-approve
+
+  assert_status 0 "${COMMAND_STATUS}" "down should recover from orphan EKS node security groups when cleanup is enabled"
+  assert_contains "${COMMAND_OUTPUT}" "terraform destroy failed; checking for cleanup-eligible orphan network dependencies." "down should explain the broader cleanup retry path"
+  assert_contains "${COMMAND_OUTPUT}" "sg-0529cabea643ce150 name=gpu-inference-node-20260502063109959500000005 description=EKS node shared security group" "down diagnostics should include the orphaned node security group"
+  assert_contains "${COMMAND_OUTPUT}" "deleted 1 cleanup-eligible orphan EKS node security group(s)." "down should report the automatic security group cleanup count"
+  assert_contains "${COMMAND_OUTPUT}" "Retrying terraform destroy after orphan network dependency cleanup..." "down should retry terraform destroy after deleting orphan security groups"
+  assert_contains "${COMMAND_OUTPUT}" "OK 8/8 terraform destroy" "down should finish successfully after security group cleanup and retry"
+
+  TERRAFORM_LOG=$(cat "${TEST_TMPDIR}/terraform.log")
+  AWS_LOG=$(cat "${TEST_TMPDIR}/aws.log")
+  DELETED_SECURITY_GROUPS=$(cat "${TEST_TMPDIR}/deleted-security-groups.log")
+  DESTROY_COUNT=$(printf '%s\n' "${TERRAFORM_LOG}" | awk 'index($0, "destroy -auto-approve") { count++ } END { print count + 0 }')
+
+  assert_eq "2" "${DESTROY_COUNT}" "down should invoke terraform destroy twice around orphan security group cleanup"
+  assert_not_contains "${TERRAFORM_LOG}" "destroy --cleanup-orphan-network-dependencies -auto-approve" "down should not pass the cleanup flag through to terraform destroy during retry"
+  assert_contains "${AWS_LOG}" "ec2 delete-security-group --region us-west-2 --group-id sg-0529cabea643ce150" "down should delete the cleanup-eligible orphan EKS node security group"
+  assert_not_contains "${AWS_LOG}" "ec2 delete-security-group --region us-west-2 --group-id sg-09999999999999999" "down should not delete unrelated security groups automatically"
+  assert_contains "${DELETED_SECURITY_GROUPS}" "sg-0529cabea643ce150" "down should record the cleanup-eligible security group deletion"
   teardown_test_tmpdir
 }
 
@@ -1310,4 +1458,6 @@ run_evaluate_sweep_second_target_failure_test
 run_down_alb_timeout_test
 run_down_cluster_unreachable_test
 run_down_destroy_dependency_diagnostics_test
+run_destroy_diagnostics_without_alb_role_output_test
 run_down_orphan_eni_cleanup_retry_test
+run_down_orphan_security_group_cleanup_retry_test

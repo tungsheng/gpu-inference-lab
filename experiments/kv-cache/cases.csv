@@ -1,4 +1,24 @@
 case_id,prompt_token_target,max_tokens,start_rate,target_rate,ramp_up_duration,steady_duration,ramp_down_duration,pre_allocated_vus,max_vus,timeout_seconds,description
 prompt-512-output-100,512,100,1,6,2m,8m,2m,96,256,180,short prompt baseline
 prompt-2048-output-200,2048,200,1,4,2m,8m,2m,96,256,240,medium prompt pressure
+prompt-8192-output-300-rate-010,8192,300,0,0.10,2m,8m,2m,64,128,300,long prompt low-rate stability probe
+prompt-8192-output-300-rate-015,8192,300,0,0.15,2m,8m,2m,64,128,300,long prompt low-rate stability probe
+prompt-8192-output-300-rate-020,8192,300,0,0.20,2m,8m,2m,64,192,300,long prompt low-rate stability probe
+prompt-8192-output-300-rate-025,8192,300,0,0.25,2m,8m,2m,64,192,300,long prompt low-rate stability probe
+prompt-8192-output-300-rate-050,8192,300,0,0.50,2m,8m,2m,96,256,300,long prompt pressure step before the saturation case
+prompt-8192-output-300-rate-075,8192,300,0,0.75,2m,8m,2m,128,256,300,long prompt pressure step toward saturation
+prompt-8192-output-300-rate-100,8192,300,0,1.00,2m,8m,2m,128,320,300,long prompt pressure step toward saturation
+prompt-8192-output-300-rate-105,8192,300,0,1.05,2m,8m,2m,144,320,300,long prompt knee probe between stable and saturated rates
+prompt-8192-output-300-rate-110,8192,300,0,1.10,2m,8m,2m,144,320,300,long prompt knee probe between stable and saturated rates
+prompt-8192-output-300-rate-110-r2,8192,300,0,1.10,2m,8m,2m,144,320,300,long prompt knee repeat for variance tracking
+prompt-8192-output-300-rate-110-r3,8192,300,0,1.10,2m,8m,2m,144,320,300,long prompt knee repeat for variance tracking
+prompt-8192-output-300-rate-115,8192,300,0,1.15,2m,8m,2m,144,352,300,long prompt knee probe between stable and saturated rates
+prompt-8192-output-300-rate-115-r2,8192,300,0,1.15,2m,8m,2m,144,352,300,long prompt knee repeat for variance tracking
+prompt-8192-output-300-rate-115-r3,8192,300,0,1.15,2m,8m,2m,144,352,300,long prompt knee repeat for variance tracking
+prompt-8192-output-300-rate-120,8192,300,0,1.20,2m,8m,2m,160,384,300,long prompt knee probe between stable and saturated rates
+prompt-8192-output-300-rate-120-r2,8192,300,0,1.20,2m,8m,2m,160,384,300,long prompt knee repeat for variance tracking
+prompt-8192-output-300-rate-120-r3,8192,300,0,1.20,2m,8m,2m,160,384,300,long prompt knee repeat for variance tracking
+prompt-8192-output-300-rate-125,8192,300,0,1.25,2m,8m,2m,160,384,300,long prompt pressure step toward saturation
+prompt-8192-output-300-rate-125-admission-032,8192,300,0,1.25,2m,8m,2m,32,32,300,long prompt admission-control probe capped at the serving sequence limit
+prompt-8192-output-300-rate-150,8192,300,0,1.50,2m,8m,2m,192,384,300,long prompt pressure step toward saturation
 prompt-8192-output-300,8192,300,1,2,2m,8m,2m,128,384,300,long prompt kv-cache pressure

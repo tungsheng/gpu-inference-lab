@@ -1,0 +1,2 @@
+case_id,policy_id,mode,executor,buffer_capacity_requests,max_queue_wait_seconds,description
+prompt-8192-output-300-rate-125-admission-032,admission-control,admission-control,ramping-arrival-rate,0,15,cap k6 maxVUs at the serving sequence limit so overload becomes explicit dropped demand instead of unbounded tail latency

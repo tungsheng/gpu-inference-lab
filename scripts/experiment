@@ -15,6 +15,7 @@ STREAM_CLIENT_TEMPLATE="${TEMPLATES_DIR}/experiment-stream-client.py.tpl"
 EXPERIMENT_PROMETHEUS_LOCAL_PORT=""
 EXPERIMENT_PROMETHEUS_PORT_FORWARD_PID=""
 EXPERIMENT_PROMETHEUS_PORT_FORWARD_LOG=""
+EXPERIMENT_DCGM_METRICS_TIMEOUT_SECONDS="${EXPERIMENT_DCGM_METRICS_TIMEOUT_SECONDS:-300}"
 
 usage() {
   cat <<EOF
@@ -26,6 +27,7 @@ Usage:
   ./scripts/experiment render-stream --experiment name --case case-id [--samples count] [--output path]
   ./scripts/experiment render-serving --experiment name --profile profile-id [--output path]
   ./scripts/experiment render-report --experiment name --case case-id --profile profile-id [--report path] [--json-report path]
+  ./scripts/experiment summarize-reports --experiment name [--reports-dir path]
   ./scripts/experiment run --experiment name --case case-id --profile profile-id [--report path] [--json-report path] [--preserve-serving] [--preserve-load]
   ./scripts/experiment run-stream --experiment name --case case-id --profile profile-id [--samples count] [--report path] [--json-report path] [--preserve-serving] [--preserve-load]
 
@@ -37,6 +39,7 @@ Examples:
   ./scripts/experiment render-stream --experiment prefill-decode --case prefill-heavy --output /tmp/prefill-stream.yaml
   ./scripts/experiment render-serving --experiment kv-cache --profile long-context --output /tmp/vllm-long-context.yaml
   ./scripts/experiment render-report --experiment kv-cache --case prompt-512-output-100 --profile default
+  ./scripts/experiment summarize-reports --experiment kv-cache
   ./scripts/experiment run --experiment kv-cache --case prompt-512-output-100 --profile default
   ./scripts/experiment run-stream --experiment prefill-decode --case prefill-heavy --profile default
 EOF
@@ -350,6 +353,17 @@ display_optional_metric() {
   fi
 }
 
+display_optional_bytes_gib() {
+  local value=${1:-}
+
+  if [[ -z "${value}" ]]; then
+    printf 'n/a'
+    return 0
+  fi
+
+  awk -v value="${value}" 'BEGIN { printf "%.2f GiB\n", (value + 0) / 1073741824 }'
+}
+
 duration_to_seconds() {
   local value=$1
   local amount
@@ -423,7 +437,43 @@ divide_decimal_values() {
 
       format = "%." precision "f\n"
       printf format, (numerator + 0) / (denominator + 0)
-    }' 2>/dev/null || printf '%s\n' ""
+	    }' 2>/dev/null || printf '%s\n' ""
+}
+
+sum_optional_integer_values() {
+  local left_value=${1:-}
+  local right_value=${2:-}
+
+  if [[ -z "${left_value}" && -z "${right_value}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  awk -v left="${left_value:-0}" -v right="${right_value:-0}" 'BEGIN {
+    printf "%.0f\n", (left + 0) + (right + 0)
+  }'
+}
+
+max_optional_integer_values() {
+  local left_value=${1:-}
+  local right_value=${2:-}
+
+  if [[ -z "${left_value}" && -z "${right_value}" ]]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  awk -v left="${left_value:-}" -v right="${right_value:-}" 'BEGIN {
+    if (left == "") {
+      printf "%.0f\n", right + 0
+    } else if (right == "") {
+      printf "%.0f\n", left + 0
+    } else if ((left + 0) >= (right + 0)) {
+      printf "%.0f\n", left + 0
+    } else {
+      printf "%.0f\n", right + 0
+    }
+  }'
 }
 
 utc_timestamp() {
@@ -606,6 +656,10 @@ load_client_policy() {
   local policies_path
   local row_case_id
   local row_policy_id
+  local row_client_mode
+  local row_client_executor
+  local row_buffer_capacity
+  local row_max_queue_wait_seconds
 
   policies_path=$(experiment_client_policies_path "${experiment_name}")
 
@@ -618,13 +672,17 @@ load_client_policy() {
     return 0
   fi
 
-  while IFS=',' read -r row_case_id row_policy_id CLIENT_MODE CLIENT_EXECUTOR CLIENT_BUFFER_CAPACITY_REQUESTS CLIENT_MAX_QUEUE_WAIT_SECONDS _client_policy_description; do
+  while IFS=',' read -r row_case_id row_policy_id row_client_mode row_client_executor row_buffer_capacity row_max_queue_wait_seconds _client_policy_description; do
     if [[ -z "${row_case_id}" || "${row_case_id}" == "case_id" || "${row_case_id}" == \#* ]]; then
       continue
     fi
 
     if [[ "${row_case_id}" == "${requested_case_id}" ]]; then
       CLIENT_POLICY_ID=${row_policy_id}
+      CLIENT_MODE=${row_client_mode}
+      CLIENT_EXECUTOR=${row_client_executor}
+      CLIENT_BUFFER_CAPACITY_REQUESTS=${row_buffer_capacity}
+      CLIENT_MAX_QUEUE_WAIT_SECONDS=${row_max_queue_wait_seconds}
       require_name "${CLIENT_POLICY_ID}" "client policy id"
       require_name "${CLIENT_MODE}" "client policy mode"
       case "${CLIENT_EXECUTOR}" in
@@ -1059,19 +1117,53 @@ validate_experiment_catalog() {
   printf 'Validated %s experiment(s).\n' "${validated_count}"
 }
 
+render_arrival_rate_scenario_values() {
+  local start_rate=$1
+  local target_rate=$2
+
+  awk -v start_rate="${start_rate}" -v target_rate="${target_rate}" '
+    function abs(value) {
+      return value < 0 ? -value : value
+    }
+
+    BEGIN {
+      for (unit = 1; unit <= 600; unit++) {
+        start = start_rate * unit
+        target = target_rate * unit
+        rendered_start = int(start + 0.5)
+        rendered_target = int(target + 0.5)
+
+        if (abs(start - rendered_start) < 0.000001 && abs(target - rendered_target) < 0.000001) {
+          printf "%s %s %s\n", rendered_start, rendered_target, unit
+          exit 0
+        }
+      }
+
+      exit 1
+    }
+  ' || die "Could not render k6 arrival-rate scenario for start_rate=${start_rate} target_rate=${target_rate}"
+}
+
 render_k6_scenario() {
+  local rendered_start_rate
+  local rendered_target_rate
+  local rendered_time_unit_seconds
+
   case "${CLIENT_EXECUTOR}" in
     ramping-arrival-rate)
+      read -r rendered_start_rate rendered_target_rate rendered_time_unit_seconds < <(
+        render_arrival_rate_scenario_values "${START_RATE}" "${TARGET_RATE}"
+      )
       cat <<EOF
         inference_burst: {
           executor: "ramping-arrival-rate",
-          startRate: ${START_RATE},
-          timeUnit: "1s",
+          startRate: ${rendered_start_rate},
+          timeUnit: "${rendered_time_unit_seconds}s",
           preAllocatedVUs: ${PRE_ALLOCATED_VUS},
           maxVUs: ${MAX_VUS},
           stages: [
-            { duration: "${RAMP_UP_DURATION}", target: ${TARGET_RATE} },
-            { duration: "${STEADY_DURATION}", target: ${TARGET_RATE} },
+            { duration: "${RAMP_UP_DURATION}", target: ${rendered_target_rate} },
+            { duration: "${STEADY_DURATION}", target: ${rendered_target_rate} },
             { duration: "${RAMP_DOWN_DURATION}", target: 0 },
           ],
         },
@@ -1422,7 +1514,11 @@ render_report_markdown() {
   local run_source="${RUN_SOURCE:-scripts/experiment render-report}"
   local request_shapes_display_value
   local load_unit="req/s"
+  local offered_iterations_display
+  local unserved_iterations_display
+  local delivery_ratio_display
   local dropped_iterations_display
+  local interrupted_iterations_display
   local buffering_required_display
   local failure_attribution_display
   local completed_requests_display
@@ -1484,7 +1580,11 @@ render_report_markdown() {
   successful_requests_display=$(display_optional_metric "${RESULT_SUCCESSFUL_REQUESTS:-}")
   failed_requests_display=$(display_optional_metric "${RESULT_FAILED_REQUESTS:-}")
   oom_events_display=$(display_optional_metric "${RESULT_OOM_EVENTS:-}")
+  offered_iterations_display=$(display_optional_metric "${RESULT_OFFERED_ITERATIONS:-}")
+  unserved_iterations_display=$(display_optional_metric "${RESULT_UNSERVED_ITERATIONS:-}")
+  delivery_ratio_display=$(display_optional_metric "${RESULT_DELIVERY_RATIO:-}")
   dropped_iterations_display=$(display_optional_metric "${RESULT_DROPPED_ITERATIONS:-}")
+  interrupted_iterations_display=$(display_optional_metric "${RESULT_INTERRUPTED_ITERATIONS:-}")
   buffering_required_display=$(display_optional_metric "${RESULT_BUFFERING_REQUIRED_REQUESTS:-}")
   failure_attribution_display=$(display_optional_metric "${RESULT_FAILURE_ATTRIBUTION:-}")
   p50_latency_display=$(display_optional_metric "${RESULT_P50_REQUEST_LATENCY_SECONDS:-}")
@@ -1503,8 +1603,8 @@ render_report_markdown() {
   peak_active_requests_display=$(display_optional_metric "${RESULT_PEAK_ACTIVE_REQUESTS:-}")
   average_gpu_utilization_display=$(display_optional_metric "${RESULT_AVERAGE_GPU_UTILIZATION_PERCENT:-}")
   max_gpu_utilization_display=$(display_optional_metric "${RESULT_MAX_GPU_UTILIZATION_PERCENT:-}")
-  gpu_memory_used_display=$(display_optional_metric "${RESULT_GPU_MEMORY_USED_BYTES:-}")
-  gpu_memory_free_display=$(display_optional_metric "${RESULT_GPU_MEMORY_FREE_BYTES:-}")
+  gpu_memory_used_display=$(display_optional_bytes_gib "${RESULT_GPU_MEMORY_USED_BYTES:-}")
+  gpu_memory_free_display=$(display_optional_bytes_gib "${RESULT_GPU_MEMORY_FREE_BYTES:-}")
   first_nodeclaim_display=$(display_optional_metric "${RESULT_FIRST_NODECLAIM_SECONDS:-}")
   first_gpu_node_display=$(display_optional_metric "${RESULT_FIRST_GPU_NODE_SECONDS:-}")
   pod_scheduled_display=$(display_optional_metric "${RESULT_POD_SCHEDULED_SECONDS:-}")
@@ -1576,7 +1676,11 @@ render_report_markdown() {
 | Completed requests | ${completed_requests_display} |
 | Successful requests | ${successful_requests_display} |
 | Failed requests | ${failed_requests_display} |
+| Offered client iterations | ${offered_iterations_display} |
+| Unserved client iterations | ${unserved_iterations_display} |
+| Delivery ratio | ${delivery_ratio_display} |
 | Dropped client iterations | ${dropped_iterations_display} |
+| Interrupted client iterations | ${interrupted_iterations_display} |
 | Buffering required | ${buffering_required_display} |
 | Failure attribution | ${failure_attribution_display} |
 | OOM events | ${oom_events_display} |
@@ -1719,7 +1823,11 @@ render_report_json() {
       "peak_waiting_requests": $(json_optional_number "${RESULT_PEAK_WAITING_REQUESTS:-}"),
       "peak_running_requests": $(json_optional_number "${RESULT_PEAK_RUNNING_REQUESTS:-}"),
       "peak_active_requests": $(json_optional_number "${RESULT_PEAK_ACTIVE_REQUESTS:-}"),
+      "offered_iterations": $(json_optional_number "${RESULT_OFFERED_ITERATIONS:-}"),
+      "unserved_iterations": $(json_optional_number "${RESULT_UNSERVED_ITERATIONS:-}"),
+      "delivery_ratio": $(json_optional_number "${RESULT_DELIVERY_RATIO:-}"),
       "dropped_iterations": $(json_optional_number "${RESULT_DROPPED_ITERATIONS:-}"),
+      "interrupted_iterations": $(json_optional_number "${RESULT_INTERRUPTED_ITERATIONS:-}"),
       "buffering_required_requests": $(json_optional_number "${RESULT_BUFFERING_REQUIRED_REQUESTS:-}"),
       "failure_attribution": $(json_optional_string "${RESULT_FAILURE_ATTRIBUTION:-}")
     },
@@ -1811,7 +1919,12 @@ start_experiment_prometheus_port_forward() {
   local local_port=""
 
   if [[ -n "${EXPERIMENT_PROMETHEUS_LOCAL_PORT}" ]]; then
-    return 0
+    if [[ -n "${EXPERIMENT_PROMETHEUS_PORT_FORWARD_PID}" ]] &&
+      kill -0 "${EXPERIMENT_PROMETHEUS_PORT_FORWARD_PID}" 2>/dev/null; then
+      return 0
+    fi
+
+    stop_experiment_prometheus_port_forward
   fi
 
   EXPERIMENT_PROMETHEUS_PORT_FORWARD_LOG=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-experiment-prometheus.XXXXXX")
@@ -1843,11 +1956,25 @@ start_experiment_prometheus_port_forward() {
 
 experiment_prometheus_query_scalar() {
   local query=$1
+  local query_time=${2:-}
   local response
   local scalar_value
+  local curl_args
 
-  response=$(curl -fsS --get "http://127.0.0.1:${EXPERIMENT_PROMETHEUS_LOCAL_PORT}/api/v1/query" \
-    --data-urlencode "query=${query}" 2>/dev/null || true)
+  start_experiment_prometheus_port_forward || return 1
+
+  curl_args=(
+    -fsS
+    --get
+    "http://127.0.0.1:${EXPERIMENT_PROMETHEUS_LOCAL_PORT}/api/v1/query"
+    --data-urlencode
+    "query=${query}"
+  )
+  if [[ -n "${query_time}" ]]; then
+    curl_args+=(--data-urlencode "time=${query_time}")
+  fi
+
+  response=$(curl "${curl_args[@]}" 2>/dev/null || true)
   if [[ -z "${response}" ]]; then
     printf '%s\n' ""
     return 0
@@ -1862,17 +1989,91 @@ experiment_prometheus_query_scalar() {
   printf '%s\n' "${scalar_value}"
 }
 
+experiment_scalar_is_positive() {
+  local value=${1:-}
+
+  [[ -n "${value}" ]] || return 1
+  awk -v value="${value}" 'BEGIN { exit !((value + 0) > 0) }'
+}
+
+print_experiment_dcgm_diagnostics() {
+  printf 'DCGM diagnostics:\n' >&2
+  kubectl get daemonset "${DCGM_EXPORTER_DAEMONSET_NAME}" -n "${MONITORING_NAMESPACE}" -o wide >&2 || true
+  kubectl get pods -n "${MONITORING_NAMESPACE}" -l app.kubernetes.io/name=dcgm-exporter -o wide >&2 || true
+  kubectl get endpointslice \
+    -n "${MONITORING_NAMESPACE}" \
+    -l "kubernetes.io/service-name=${DCGM_EXPORTER_SERVICE_NAME}" \
+    -o yaml >&2 || true
+  kubectl get nodes -l workload=gpu -o wide >&2 || true
+}
+
+wait_for_experiment_dcgm_metrics() {
+  local timeout_seconds=${EXPERIMENT_DCGM_METRICS_TIMEOUT_SECONDS}
+  local start_time
+  local elapsed_seconds
+  local endpoint_addresses=""
+  local gpu_util_count=""
+  local fb_used_count=""
+  local fb_free_count=""
+
+  require_non_negative_integer "${timeout_seconds}" "experiment DCGM metrics timeout seconds"
+
+  if ! command -v curl >/dev/null 2>&1; then
+    printf 'curl is required to verify DCGM metrics before running the experiment.\n' >&2
+    return 1
+  fi
+
+  printf 'Waiting for DCGM GPU metrics in Prometheus (timeout: %ss)\n' "${timeout_seconds}"
+  start_time=$(date +%s)
+
+  while true; do
+    endpoint_addresses=$(kubectl get endpointslice \
+      -n "${MONITORING_NAMESPACE}" \
+      -l "kubernetes.io/service-name=${DCGM_EXPORTER_SERVICE_NAME}" \
+      -o 'jsonpath={.items[*].endpoints[*].addresses[*]}' 2>/dev/null || true)
+
+    if [[ -n "${endpoint_addresses}" ]]; then
+      gpu_util_count=$(experiment_prometheus_query_scalar "count(DCGM_FI_DEV_GPU_UTIL)") || return 1
+      fb_used_count=$(experiment_prometheus_query_scalar "count(DCGM_FI_DEV_FB_USED)") || return 1
+      fb_free_count=$(experiment_prometheus_query_scalar "count(DCGM_FI_DEV_FB_FREE)") || return 1
+
+      if experiment_scalar_is_positive "${gpu_util_count}" &&
+        experiment_scalar_is_positive "${fb_used_count}" &&
+        experiment_scalar_is_positive "${fb_free_count}"; then
+        return 0
+      fi
+    fi
+
+    elapsed_seconds=$(($(date +%s) - start_time))
+    if (( elapsed_seconds >= timeout_seconds )); then
+      printf 'Timed out waiting for DCGM GPU metrics in Prometheus: endpoints=%s gpu_util_count=%s fb_used_count=%s fb_free_count=%s\n' \
+        "$(display_optional_metric "${endpoint_addresses}")" \
+        "$(display_optional_metric "${gpu_util_count}")" \
+        "$(display_optional_metric "${fb_used_count}")" \
+        "$(display_optional_metric "${fb_free_count}")" >&2
+      print_experiment_dcgm_diagnostics
+      stop_experiment_prometheus_port_forward
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
 experiment_metric_lookback_window() {
   local duration_seconds=${RESULT_RUN_DURATION_SECONDS:-}
 
-  if [[ -z "${duration_seconds}" ]]; then
+  if [[ -n "${EXPERIMENT_LOAD_START_EPOCH_SECONDS:-}" && -n "${EXPERIMENT_LOAD_END_EPOCH_SECONDS:-}" ]] &&
+    (( EXPERIMENT_LOAD_END_EPOCH_SECONDS > EXPERIMENT_LOAD_START_EPOCH_SECONDS )); then
+    duration_seconds=$((EXPERIMENT_LOAD_END_EPOCH_SECONDS - EXPERIMENT_LOAD_START_EPOCH_SECONDS))
+  elif [[ -z "${duration_seconds}" ]]; then
     duration_seconds=$(case_planned_duration_seconds)
   fi
 
   awk -v duration="${duration_seconds}" 'BEGIN {
-    window = int(duration + 120)
-    if (window < 300) {
-      window = 300
+    window = int(duration)
+    if (window < 60) {
+      window = 60
     }
     printf "%ss\n", window
   }'
@@ -1880,19 +2081,23 @@ experiment_metric_lookback_window() {
 
 collect_experiment_observability_metrics() {
   local window
+  local query_time=""
 
   command -v curl >/dev/null 2>&1 || return 0
   start_experiment_prometheus_port_forward || return 0
 
   window=$(experiment_metric_lookback_window)
+  if [[ -n "${EXPERIMENT_LOAD_END_EPOCH_SECONDS:-}" ]]; then
+    query_time=${EXPERIMENT_LOAD_END_EPOCH_SECONDS}
+  fi
 
-  RESULT_PEAK_WAITING_REQUESTS=$(experiment_prometheus_query_scalar "max_over_time((sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])")
-  RESULT_PEAK_RUNNING_REQUESTS=$(experiment_prometheus_query_scalar "max_over_time((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])")
-  RESULT_PEAK_ACTIVE_REQUESTS=$(experiment_prometheus_query_scalar "max_over_time(((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}) + sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s]))")
-  RESULT_AVERAGE_GPU_UTILIZATION_PERCENT=$(experiment_prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])")
-  RESULT_MAX_GPU_UTILIZATION_PERCENT=$(experiment_prometheus_query_scalar "max_over_time((max(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])")
-  RESULT_GPU_MEMORY_USED_BYTES=$(experiment_prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_FB_USED) * 1048576)[${window}:1m])")
-  RESULT_GPU_MEMORY_FREE_BYTES=$(experiment_prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_FB_FREE) * 1048576)[${window}:1m])")
+  RESULT_PEAK_WAITING_REQUESTS=$(experiment_prometheus_query_scalar "max_over_time((sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" "${query_time}")
+  RESULT_PEAK_RUNNING_REQUESTS=$(experiment_prometheus_query_scalar "max_over_time((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" "${query_time}")
+  RESULT_PEAK_ACTIVE_REQUESTS=$(experiment_prometheus_query_scalar "max_over_time(((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}) + sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s]))" "${query_time}")
+  RESULT_AVERAGE_GPU_UTILIZATION_PERCENT=$(experiment_prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])" "${query_time}")
+  RESULT_MAX_GPU_UTILIZATION_PERCENT=$(experiment_prometheus_query_scalar "max_over_time((max(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])" "${query_time}")
+  RESULT_GPU_MEMORY_USED_BYTES=$(experiment_prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_FB_USED) * 1048576)[${window}:1m])" "${query_time}")
+  RESULT_GPU_MEMORY_FREE_BYTES=$(experiment_prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_FB_FREE) * 1048576)[${window}:1m])" "${query_time}")
 
   stop_experiment_prometheus_port_forward
 }
@@ -1902,11 +2107,14 @@ parse_k6_summary_log() {
   local in_summary=0
   local key
   local value
+  local footer_interrupted_iterations
+  local calculated_buffering_required
 
   RESULT_COMPLETED_REQUESTS=""
   RESULT_SUCCESSFUL_REQUESTS=""
   RESULT_FAILED_REQUESTS=""
   RESULT_DROPPED_ITERATIONS=""
+  RESULT_INTERRUPTED_ITERATIONS=""
   RESULT_BUFFERING_REQUIRED_REQUESTS=""
   RESULT_FAILURE_ATTRIBUTION=""
   RESULT_P50_REQUEST_LATENCY_SECONDS=""
@@ -1948,6 +2156,9 @@ parse_k6_summary_log() {
       dropped_iterations)
         RESULT_DROPPED_ITERATIONS=${value}
         ;;
+      interrupted_iterations)
+        RESULT_INTERRUPTED_ITERATIONS=${value}
+        ;;
       buffering_required_requests)
         RESULT_BUFFERING_REQUIRED_REQUESTS=${value}
         ;;
@@ -1972,8 +2183,39 @@ parse_k6_summary_log() {
     esac
   done < "${log_path}"
 
+  footer_interrupted_iterations=$(awk '
+    /interrupted iterations/ {
+      for (field_index = 1; field_index <= NF; field_index++) {
+        if ($field_index == "interrupted" && field_index > 1) {
+          interrupted = $(field_index - 1)
+        }
+      }
+    }
+    END { print interrupted }
+  ' "${log_path}")
+  RESULT_INTERRUPTED_ITERATIONS=$(max_optional_integer_values "${RESULT_INTERRUPTED_ITERATIONS}" "${footer_interrupted_iterations}")
+
+  calculated_buffering_required=$(sum_optional_integer_values "${RESULT_DROPPED_ITERATIONS}" "${RESULT_INTERRUPTED_ITERATIONS}")
+  if [[ -n "${calculated_buffering_required}" ]]; then
+    RESULT_BUFFERING_REQUIRED_REQUESTS=$(max_optional_integer_values "${RESULT_BUFFERING_REQUIRED_REQUESTS}" "${calculated_buffering_required}")
+  fi
+
+  if [[ -n "${RESULT_COMPLETED_REQUESTS}" ]]; then
+    if [[ -z "${RESULT_DROPPED_ITERATIONS}" ]]; then
+      RESULT_DROPPED_ITERATIONS=0
+    fi
+    if [[ -z "${RESULT_INTERRUPTED_ITERATIONS}" ]]; then
+      RESULT_INTERRUPTED_ITERATIONS=0
+    fi
+    if [[ -z "${RESULT_BUFFERING_REQUIRED_REQUESTS}" ]]; then
+      RESULT_BUFFERING_REQUIRED_REQUESTS=$(sum_optional_integer_values "${RESULT_DROPPED_ITERATIONS}" "${RESULT_INTERRUPTED_ITERATIONS}")
+    fi
+  fi
+
   if [[ -n "${RESULT_DROPPED_ITERATIONS}" ]] && awk -v value="${RESULT_DROPPED_ITERATIONS}" 'BEGIN { exit !((value + 0) > 0) }'; then
     RESULT_FAILURE_ATTRIBUTION="client_queue_limit"
+  elif [[ -n "${RESULT_INTERRUPTED_ITERATIONS}" ]] && awk -v value="${RESULT_INTERRUPTED_ITERATIONS}" 'BEGIN { exit !((value + 0) > 0) }'; then
+    RESULT_FAILURE_ATTRIBUTION="client_graceful_stop_limit"
   elif [[ -n "${RESULT_FAILED_REQUESTS}" ]] && awk -v value="${RESULT_FAILED_REQUESTS}" 'BEGIN { exit !((value + 0) > 0) }'; then
     RESULT_FAILURE_ATTRIBUTION="serving_or_provisioning"
   elif [[ -n "${RESULT_COMPLETED_REQUESTS}" ]]; then
@@ -2071,7 +2313,31 @@ derive_successful_requests() {
           successful = 0
         }
         printf "%.0f\n", successful
-      }'
+	    }'
+}
+
+derive_demand_metrics() {
+  RESULT_OFFERED_ITERATIONS=""
+  RESULT_UNSERVED_ITERATIONS=""
+  RESULT_DELIVERY_RATIO=""
+
+  if [[ -z "${RESULT_COMPLETED_REQUESTS:-}" ]]; then
+    return 0
+  fi
+
+  RESULT_OFFERED_ITERATIONS=$(awk \
+    -v completed="${RESULT_COMPLETED_REQUESTS}" \
+    -v dropped="${RESULT_DROPPED_ITERATIONS:-0}" \
+    -v interrupted="${RESULT_INTERRUPTED_ITERATIONS:-0}" '
+      BEGIN { printf "%.0f\n", (completed + 0) + (dropped + 0) + (interrupted + 0) }')
+
+  RESULT_UNSERVED_ITERATIONS=$(awk \
+    -v failed="${RESULT_FAILED_REQUESTS:-0}" \
+    -v dropped="${RESULT_DROPPED_ITERATIONS:-0}" \
+    -v interrupted="${RESULT_INTERRUPTED_ITERATIONS:-0}" '
+      BEGIN { printf "%.0f\n", (failed + 0) + (dropped + 0) + (interrupted + 0) }')
+
+  RESULT_DELIVERY_RATIO=$(divide_decimal_values "${RESULT_SUCCESSFUL_REQUESTS:-}" "${RESULT_OFFERED_ITERATIONS}" 6)
 }
 
 derive_slo_passed() {
@@ -2113,6 +2379,7 @@ derive_cost_metrics() {
   load_cost_profile "${experiment_name}" "${profile_id}"
 
   RESULT_SUCCESSFUL_REQUESTS=$(derive_successful_requests)
+  derive_demand_metrics
   RESULT_ESTIMATED_BURST_COST_USD=""
   RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD=""
   RESULT_COST_PER_1M_GENERATED_TOKENS_USD=""
@@ -2164,6 +2431,58 @@ detect_vllm_oom_events() {
   RESULT_OOM_EVENTS=${count}
 }
 
+wait_for_experiment_job_completion() {
+  local namespace=$1
+  local job_name=$2
+  local timeout_seconds=$3
+  local start_time
+  local complete_status
+  local failed_status
+  local failed_reason
+  local failed_message
+
+  start_time=$(date +%s)
+
+  while true; do
+    complete_status=$(kubectl get "job/${job_name}" \
+      -n "${namespace}" \
+      -o "jsonpath={.status.conditions[?(@.type=='Complete')].status}" 2>/dev/null || true)
+    if [[ "${complete_status}" == "True" ]]; then
+      return 0
+    fi
+
+    failed_status=$(kubectl get "job/${job_name}" \
+      -n "${namespace}" \
+      -o "jsonpath={.status.conditions[?(@.type=='Failed')].status}" 2>/dev/null || true)
+    if [[ "${failed_status}" == "True" ]]; then
+      failed_reason=$(kubectl get "job/${job_name}" \
+        -n "${namespace}" \
+        -o "jsonpath={.status.conditions[?(@.type=='Failed')].reason}" 2>/dev/null || true)
+      failed_message=$(kubectl get "job/${job_name}" \
+        -n "${namespace}" \
+        -o "jsonpath={.status.conditions[?(@.type=='Failed')].message}" 2>/dev/null || true)
+
+      printf 'Job %s/%s failed' "${namespace}" "${job_name}" >&2
+      if [[ -n "${failed_reason}" ]]; then
+        printf ': %s' "${failed_reason}" >&2
+      fi
+      if [[ -n "${failed_message}" ]]; then
+        printf ' - %s' "${failed_message}" >&2
+      fi
+      printf '\n' >&2
+      return 1
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for job %s/%s to complete after %ss\n' \
+        "${namespace}" "${job_name}" "${timeout_seconds}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
 run_experiment_case() {
   local experiment_name=$1
   local case_id=$2
@@ -2200,14 +2519,17 @@ run_experiment_case() {
   printf 'Applying serving profile %s/%s\n' "${experiment_name}" "${profile_id}"
   kubectl apply -f "${serving_manifest}"
   kubectl rollout status "deployment/${GPU_INFERENCE_DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" --timeout=20m
+  wait_for_experiment_dcgm_metrics
 
   printf 'Applying load case %s/%s\n' "${experiment_name}" "${CASE_ID}"
+  EXPERIMENT_LOAD_START_EPOCH_SECONDS=$(date +%s)
   kubectl apply -f "${load_manifest}"
 
   set +e
-  wait_for_job_completion "${APP_NAMESPACE}" "${job_name}" "${EVALUATE_LOAD_TIMEOUT_SECONDS}"
+  wait_for_experiment_job_completion "${APP_NAMESPACE}" "${job_name}" "${EVALUATE_LOAD_TIMEOUT_SECONDS}"
   job_status=$?
   set -e
+  EXPERIMENT_LOAD_END_EPOCH_SECONDS=$(date +%s)
 
   mkdir -p "$(dirname "${k6_log_path}")"
   kubectl logs -n "${APP_NAMESPACE}" "job/${job_name}" > "${k6_log_path}" 2>/dev/null || true
@@ -2283,14 +2605,17 @@ run_stream_case() {
   printf 'Applying serving profile %s/%s\n' "${experiment_name}" "${profile_id}"
   kubectl apply -f "${serving_manifest}"
   kubectl rollout status "deployment/${GPU_INFERENCE_DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" --timeout=20m
+  wait_for_experiment_dcgm_metrics
 
   printf 'Applying streaming case %s/%s with %s sample(s)\n' "${experiment_name}" "${CASE_ID}" "${samples}"
+  EXPERIMENT_LOAD_START_EPOCH_SECONDS=$(date +%s)
   kubectl apply -f "${stream_manifest}"
 
   set +e
-  wait_for_job_completion "${APP_NAMESPACE}" "${job_name}" "${EVALUATE_LOAD_TIMEOUT_SECONDS}"
+  wait_for_experiment_job_completion "${APP_NAMESPACE}" "${job_name}" "${EVALUATE_LOAD_TIMEOUT_SECONDS}"
   job_status=$?
   set -e
+  EXPERIMENT_LOAD_END_EPOCH_SECONDS=$(date +%s)
 
   mkdir -p "$(dirname "${stream_log_path}")"
   kubectl logs -n "${APP_NAMESPACE}" "job/${job_name}" > "${stream_log_path}" 2>/dev/null || true
@@ -2495,6 +2820,99 @@ render_report_command() {
   write_report_files "${experiment_name}" "${case_id}" "${profile_id}" "${report_path}" "${json_report_path}" "${generated_at}"
   printf 'Rendered Markdown report: %s\n' "${report_path}"
   printf 'Rendered JSON report: %s\n' "${json_report_path}"
+}
+
+summarize_reports_command() {
+  local experiment_name=""
+  local reports_dir="${REPORTS_DIR}"
+  local report_path
+  local rows
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --reports-dir)
+        reports_dir=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "summarize-reports requires --experiment"
+  fi
+
+  require_experiment "${experiment_name}"
+  require_commands jq
+
+  printf '# %s Report Summary\n\n' "$(experiment_title "${experiment_name}")"
+  printf '| Case | Profile | Status | Target | Successful | Failed | Dropped | Interrupted | Buffering required | Delivery ratio | p95 latency | Requests/sec | Peak waiting | Peak active | Avg GPU | Max GPU | Report |\n'
+  printf '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n'
+
+  rows=$(
+    find "${reports_dir}" -maxdepth 1 -type f -name "experiment-${experiment_name}-*.json" -print 2>/dev/null |
+      while IFS= read -r report_path; do
+        jq -r '
+          [
+            input_filename,
+            (.case.id // "n/a"),
+            (.serving_profile.id // "n/a"),
+            (.run.generated_at // ""),
+            (.run.status // "n/a"),
+            (.case.arrival.target_rate // "n/a"),
+            (.results.success.successful_requests // "n/a"),
+            (.results.success.failed_requests // "n/a"),
+            (.results.queue.dropped_iterations // "n/a"),
+            (.results.queue.interrupted_iterations // "n/a"),
+            (.results.queue.buffering_required_requests // "n/a"),
+            (.results.queue.delivery_ratio // "n/a"),
+            (.results.latency.p95_request_latency_seconds // "n/a"),
+            (.results.serving.requests_per_second // "n/a"),
+            (.results.queue.peak_waiting_requests // "n/a"),
+            (.results.queue.peak_active_requests // "n/a"),
+            (.results.gpu.average_gpu_utilization_percent // "n/a"),
+            (.results.gpu.max_gpu_utilization_percent // "n/a")
+          ] | map(tostring) | @tsv
+        ' "${report_path}" 2>/dev/null || true
+      done |
+      awk -F '\t' '
+        NF > 1 {
+          key = $2 "\t" $3
+          if (!(key in latest) || $4 > generated[key]) {
+            latest[key] = $0
+            generated[key] = $4
+          }
+        }
+        END {
+          for (key in latest) {
+            print latest[key]
+          }
+        }' |
+      sort -t '	' -k2,2 -k3,3
+  )
+
+  if [[ -z "${rows}" ]]; then
+    printf '| n/a | n/a | no reports found | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |\n'
+    return 0
+  fi
+
+  printf '%s\n' "${rows}" | awk -F '\t' '{
+    file = $1
+    n = split(file, parts, "/")
+    name = parts[n]
+    printf "| `%s` | `%s` | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | [%s](%s) |\n",
+      $2, $3, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, name, file
+  }'
 }
 
 validate_command() {
@@ -2748,6 +3166,10 @@ main() {
     render-report)
       shift
       render_report_command "$@"
+      ;;
+    summarize-reports)
+      shift
+      summarize_reports_command "$@"
       ;;
     run)
       shift

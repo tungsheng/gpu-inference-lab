@@ -10,6 +10,7 @@ DEPLOYMENT_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/inference/vllm-openai.y
 RUNNING_HPA_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/inference/hpa.yaml")
 ACTIVE_PRESSURE_HPA_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/inference/hpa-active-pressure.yaml")
 ADAPTER_VALUES_CONTENT=$(cat "${REPO_ROOT}/platform/observability/prometheus-adapter-values.yaml")
+DCGM_EXPORTER_CONTENT=$(cat "${REPO_ROOT}/platform/observability/dcgm-exporter.yaml")
 DASHBOARD_CONTENT=$(cat "${REPO_ROOT}/platform/observability/dashboards/experiment-dashboard.yaml")
 SERVING_DASHBOARD_CONTENT=$(cat "${REPO_ROOT}/platform/observability/dashboards/serving-dashboard.yaml")
 LOAD_TEST_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml")
@@ -30,6 +31,13 @@ assert_contains "${ADAPTER_VALUES_CONTENT}" 'vllm:num_requests_running' "the ada
 assert_contains "${ADAPTER_VALUES_CONTENT}" 'vllm:num_requests_waiting' "the adapter should reference the waiting-request metric for active pressure"
 assert_contains "${ADAPTER_VALUES_CONTENT}" 'vllm_requests_active' "the adapter should expose the combined active-request metric"
 assert_contains "${ADAPTER_VALUES_CONTENT}" 'max_over_time' "the adapter should keep a short smoothing window so the HPA can see transient saturation"
+assert_contains "${DCGM_EXPORTER_CONTENT}" 'DCGM_EXPORTER_KUBERNETES' "the DCGM exporter should run with Kubernetes pod-to-GPU mapping enabled"
+assert_contains "${DCGM_EXPORTER_CONTENT}" 'DCGM_EXPORTER_LISTEN' "the DCGM exporter should explicitly listen on the metrics port"
+assert_contains "${DCGM_EXPORTER_CONTENT}" 'fieldPath: spec.nodeName' "the DCGM exporter should receive the node name required for Kubernetes mapping"
+assert_contains "${DCGM_EXPORTER_CONTENT}" 'name: pod-gpu-resources' "the DCGM exporter should declare the kubelet pod-resources volume"
+assert_contains "${DCGM_EXPORTER_CONTENT}" 'mountPath: /var/lib/kubelet/pod-resources' "the DCGM exporter should mount kubelet pod-resources"
+assert_contains "${DCGM_EXPORTER_CONTENT}" 'hostPath:' "the DCGM exporter should source pod-resources from the GPU node host path"
+assert_contains "${DCGM_EXPORTER_CONTENT}" 'memory: 512Mi' "the DCGM exporter should keep enough memory headroom for the current chart defaults"
 assert_contains "${DASHBOARD_CONTENT}" 'max by (profile, resilience, policy, target)' "the experiment dashboard should group series by profile, resilience mode, policy, and HPA target"
 assert_contains "${DASHBOARD_CONTENT}" '{{profile}}/{{resilience}}/{{policy}}/{{target}}' "the experiment dashboard legend should distinguish resilience mode and targets inside the same policy"
 assert_contains "${DASHBOARD_CONTENT}" 'gpu_serving_measure_p95_estimated_queue_wait_seconds' "the experiment dashboard should surface the derived queue-wait summary metric"

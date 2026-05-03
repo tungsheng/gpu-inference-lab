@@ -39,8 +39,15 @@ run_experiment_show_test() {
   assert_contains "${COMMAND_OUTPUT}" "prompt-512-output-100" "show output should include the short prompt case"
   assert_contains "${COMMAND_OUTPUT}" "prompt=512 output=100" "show output should include case token settings"
   assert_contains "${COMMAND_OUTPUT}" "prompt-8192-output-300" "show output should include the long prompt case"
+  assert_contains "${COMMAND_OUTPUT}" "prompt-8192-output-300-rate-010" "show output should include the long prompt stability sweep"
+  assert_contains "${COMMAND_OUTPUT}" "prompt-8192-output-300-rate-115" "show output should include the narrowed long-context knee sweep"
+  assert_contains "${COMMAND_OUTPUT}" "prompt-8192-output-300-rate-125-admission-032" "show output should include the admission-control comparison case"
+  assert_contains "${COMMAND_OUTPUT}" "Client policies:" "show output should include KV-cache admission-control policy metadata"
+  assert_contains "${COMMAND_OUTPUT}" "prompt-8192-output-300-rate-125-admission-032/admission-control" "show output should include the admission-control policy"
   assert_contains "${COMMAND_OUTPUT}" "Serving profiles:" "show output should include serving profiles"
   assert_contains "${COMMAND_OUTPUT}" "long-context" "show output should include the long-context serving profile"
+  assert_contains "${COMMAND_OUTPUT}" "long-context-seqs-16" "show output should include conservative long-context scheduler variants"
+  assert_contains "${COMMAND_OUTPUT}" "max_num_seqs=16 max_num_batched_tokens=9216" "show output should include scheduler settings for sequence-limit variants"
 }
 
 run_prefill_decode_show_test() {
@@ -135,12 +142,69 @@ run_render_load_test() {
   assert_contains "${RENDERED_MANIFEST}" "GPU_LAB_K6_SUMMARY_BEGIN" "rendered manifest should emit a parseable k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "p99_request_latency_seconds=" "rendered manifest should include p99 latency in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "dropped_iterations=" "rendered manifest should include dropped iterations in the k6 summary"
+  assert_contains "${RENDERED_MANIFEST}" "interrupted_iterations=" "rendered manifest should include interrupted iterations in the k6 summary"
+  assert_contains "${RENDERED_MANIFEST}" "const bufferingRequiredRequests = String(Number(droppedIterations) + Number(interruptedIterations));" "rendered manifest should count dropped and interrupted iterations as buffering pressure"
   assert_contains "${RENDERED_MANIFEST}" "buffering_required_requests=" "rendered manifest should include buffering required in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "generated_tokens=" "rendered manifest should include generated token counts in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "generation_tokens_per_second=" "rendered manifest should include generated token throughput in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "run_duration_seconds=" "rendered manifest should include run duration in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "summaryTrendStats" "rendered manifest should request p95 and p99 k6 summaries"
   assert_contains "${RENDERED_MANIFEST}" "value: http://vllm-openai.app.svc.cluster.local/v1/completions" "rendered manifest should target the in-cluster vLLM service"
+
+  teardown_test_tmpdir
+}
+
+run_render_fractional_arrival_rate_load_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-load \
+    --experiment kv-cache \
+    --case prompt-8192-output-300-rate-010 \
+    --output "${TEST_TMPDIR}/kv-cache-rate-010.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-load should support fractional arrival-rate cases"
+  assert_file_exists "${TEST_TMPDIR}/kv-cache-rate-010.yaml" "render-load should write the fractional-rate manifest"
+
+  FRACTIONAL_MANIFEST=$(cat "${TEST_TMPDIR}/kv-cache-rate-010.yaml")
+
+  assert_contains "${FRACTIONAL_MANIFEST}" 'executor: "ramping-arrival-rate"' "fractional-rate load should still use arrival-rate execution"
+  assert_contains "${FRACTIONAL_MANIFEST}" "startRate: 0" "fractional-rate load should render an integer start rate for k6"
+  assert_contains "${FRACTIONAL_MANIFEST}" 'timeUnit: "10s"' "fractional-rate load should render a longer timeUnit instead of decimal targets"
+  assert_contains "${FRACTIONAL_MANIFEST}" '{ duration: "2m", target: 1 }' "fractional-rate load should render an integer target for k6"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-load \
+    --experiment kv-cache \
+    --case prompt-8192-output-300-rate-125 \
+    --output "${TEST_TMPDIR}/kv-cache-rate-125.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-load should support fractional arrival rates above one request per second"
+  RATE_125_MANIFEST=$(cat "${TEST_TMPDIR}/kv-cache-rate-125.yaml")
+
+  assert_contains "${RATE_125_MANIFEST}" 'timeUnit: "4s"' "fractional-rate load should use the smallest exact integer time unit"
+  assert_contains "${RATE_125_MANIFEST}" '{ duration: "2m", target: 5 }' "fractional-rate load should render 1.25 req/s as five arrivals per four seconds"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-load \
+    --experiment kv-cache \
+    --case prompt-8192-output-300-rate-105 \
+    --output "${TEST_TMPDIR}/kv-cache-rate-105.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-load should support narrowed fractional knee probes"
+  RATE_105_MANIFEST=$(cat "${TEST_TMPDIR}/kv-cache-rate-105.yaml")
+
+  assert_contains "${RATE_105_MANIFEST}" 'timeUnit: "20s"' "fractional-rate load should render 1.05 req/s as a precise 20-second window"
+  assert_contains "${RATE_105_MANIFEST}" '{ duration: "2m", target: 21 }' "fractional-rate load should render 1.05 req/s as twenty-one arrivals per twenty seconds"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-load \
+    --experiment kv-cache \
+    --case prompt-8192-output-300-rate-125-admission-032 \
+    --output "${TEST_TMPDIR}/kv-cache-admission.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-load should render the admission-control comparison case"
+  ADMISSION_MANIFEST=$(cat "${TEST_TMPDIR}/kv-cache-admission.yaml")
+
+  assert_contains "${ADMISSION_MANIFEST}" 'const clientPolicy = "admission-control";' "admission-control load should include policy metadata"
+  assert_contains "${ADMISSION_MANIFEST}" "preAllocatedVUs: 32" "admission-control load should cap preallocated VUs at the serving sequence limit"
+  assert_contains "${ADMISSION_MANIFEST}" "maxVUs: 32" "admission-control load should cap max VUs at the serving sequence limit"
 
   teardown_test_tmpdir
 }
@@ -453,6 +517,7 @@ run_render_autoscaling_report_test() {
   assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Buffer capacity | 240 requests |" "autoscaling report should include buffer capacity"
   assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Start load | 1 VUs |" "autoscaling report should label queued load as VUs"
   assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Dropped client iterations | n/a |" "autoscaling report should include dropped client iterations"
+  assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Interrupted client iterations | n/a |" "autoscaling report should include interrupted client iterations"
   assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Buffering required | n/a |" "autoscaling report should include buffering required"
   assert_contains "${AUTOSCALING_REPORT_CONTENT}" "| Pod scheduled | n/a |" "autoscaling report should include pod scheduling timing"
   assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"name\": \"autoscaling\"" "autoscaling JSON report should include the experiment name"
@@ -460,6 +525,7 @@ run_render_autoscaling_report_test() {
   assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"id\": \"bounded-queue\"" "autoscaling JSON report should include the bounded queue policy id"
   assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"executor\": \"ramping-vus\"" "autoscaling JSON report should include the queued executor"
   assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"buffer_capacity_requests\": 240" "autoscaling JSON report should include buffer capacity"
+  assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"interrupted_iterations\": null" "autoscaling JSON report should include interrupted iteration result field"
   assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"buffering_required_requests\": null" "autoscaling JSON report should include buffering required result field"
   assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"failure_attribution\": null" "autoscaling JSON report should include failure attribution"
   assert_contains "${AUTOSCALING_JSON_CONTENT}" "\"pod_scheduled_seconds\": null" "autoscaling JSON report should include pod scheduling timing"
@@ -527,6 +593,29 @@ run_render_report_default_path_test() {
   teardown_test_tmpdir
 }
 
+run_summarize_reports_test() {
+  setup_test_tmpdir
+  mkdir -p "${TEST_TMPDIR}/reports"
+
+  printf '%s\n' \
+    '{"schema_version":"experiment-report/v1","experiment":{"name":"kv-cache","title":"KV Cache Vs Concurrency"},"case":{"id":"prompt-8192-output-300-rate-100","prompt_token_target":8192,"max_tokens":300,"arrival":{"target_rate":1.00}},"serving_profile":{"id":"long-context"},"run":{"status":"complete","generated_at":"2026-05-02T23:07:02Z"},"results":{"success":{"successful_requests":599,"failed_requests":0},"latency":{"p95_request_latency_seconds":13.61},"serving":{"requests_per_second":0.83},"queue":{"dropped_iterations":0,"interrupted_iterations":0,"buffering_required_requests":0,"delivery_ratio":1,"peak_waiting_requests":0,"peak_active_requests":13},"gpu":{"average_gpu_utilization_percent":23.1,"max_gpu_utilization_percent":91}}}' \
+    > "${TEST_TMPDIR}/reports/experiment-kv-cache-prompt-8192-output-300-rate-100-long-context-old.json"
+  printf '%s\n' \
+    '{"schema_version":"experiment-report/v1","experiment":{"name":"kv-cache","title":"KV Cache Vs Concurrency"},"case":{"id":"prompt-8192-output-300-rate-100","prompt_token_target":8192,"max_tokens":300,"arrival":{"target_rate":1.00}},"serving_profile":{"id":"long-context"},"run":{"status":"complete","generated_at":"2026-05-02T23:29:14Z"},"results":{"success":{"successful_requests":601,"failed_requests":0},"latency":{"p95_request_latency_seconds":12.50},"serving":{"requests_per_second":0.84},"queue":{"dropped_iterations":0,"interrupted_iterations":0,"buffering_required_requests":0,"delivery_ratio":1,"peak_waiting_requests":0,"peak_active_requests":12},"gpu":{"average_gpu_utilization_percent":58.4,"max_gpu_utilization_percent":96}}}' \
+    > "${TEST_TMPDIR}/reports/experiment-kv-cache-prompt-8192-output-300-rate-100-long-context-new.json"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" summarize-reports \
+    --experiment kv-cache \
+    --reports-dir "${TEST_TMPDIR}/reports"
+
+  assert_status 0 "${COMMAND_STATUS}" "summarize-reports should summarize available experiment reports"
+  assert_contains "${COMMAND_OUTPUT}" "# KV Cache Vs Concurrency Report Summary" "summary should include the experiment title"
+  assert_contains "${COMMAND_OUTPUT}" "| \`prompt-8192-output-300-rate-100\` | \`long-context\` | complete | 1.00 | 601 | 0 | 0 | 0 | 0 | 1 | 12.50 | 0.84 | 0 | 12 | 58.4 | 96 |" "summary should keep the latest report per case/profile"
+  assert_not_contains "${COMMAND_OUTPUT}" "599" "summary should not show superseded older reports for the same case/profile"
+
+  teardown_test_tmpdir
+}
+
 write_experiment_run_kubectl_stub() {
   write_stub kubectl \
 "#!/usr/bin/env bash" \
@@ -544,17 +633,19 @@ write_experiment_run_kubectl_stub() {
 "    cp \"\$3\" \"${TEST_TMPDIR}/applied-serving.yaml\"" \
 "    exit 0" \
 "    ;;" \
-"  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
-"  apply\\ -f\\ /tmp/gpu-lab-experiment-load.*)" \
+  "  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
+  "  'get endpointslice -n monitoring -l kubernetes.io/service-name=dcgm-exporter -o jsonpath={.items[*].endpoints[*].addresses[*]}') printf '%s\n' '10.0.0.10'; exit 0 ;;" \
+  "  apply\\ -f\\ /tmp/gpu-lab-experiment-load.*)" \
 "    cp \"\$3\" \"${TEST_TMPDIR}/applied-load.yaml\"" \
 "    exit 0" \
 "    ;;" \
-"  'wait --for=condition=complete job/kv-cache-prompt-512-output-100 -n app --timeout=1200s') exit 0 ;;" \
+"  get\\ job/kv-cache-prompt-512-output-100\\ -n\\ app\\ -o\\ jsonpath=*Complete*) printf '%s\n' 'True'; exit 0 ;;" \
 "  'logs -n app job/kv-cache-prompt-512-output-100')" \
 "    printf '%s\n' 'GPU_LAB_K6_SUMMARY_BEGIN'" \
 "    printf '%s\n' 'completed_requests=42'" \
 "    printf '%s\n' 'failed_requests=1'" \
 "    printf '%s\n' 'dropped_iterations=3'" \
+"    printf '%s\n' 'interrupted_iterations=2'" \
 "    printf '%s\n' 'buffering_required_requests=3'" \
 "    printf '%s\n' 'generated_tokens=4096'" \
 "    printf '%s\n' 'p50_request_latency_seconds=0.25'" \
@@ -562,9 +653,10 @@ write_experiment_run_kubectl_stub() {
 "    printf '%s\n' 'p99_request_latency_seconds=1.5'" \
 "    printf '%s\n' 'requests_per_second=5.5'" \
 "    printf '%s\n' 'generation_tokens_per_second=704'" \
-"    printf '%s\n' 'run_duration_seconds=120'" \
-"    printf '%s\n' 'GPU_LAB_K6_SUMMARY_END'" \
-"    exit 0" \
+	"    printf '%s\n' 'run_duration_seconds=120'" \
+	"    printf '%s\n' 'GPU_LAB_K6_SUMMARY_END'" \
+	"    printf '%s\n' 'running (02m00.0s), 000/128 VUs, 42 complete and 7 interrupted iterations'" \
+	"    exit 0" \
 "    ;;" \
 "  'get pods -n app -l app=vllm-openai -o jsonpath={range .items[*]}{range .status.containerStatuses[*]}{.state.terminated.reason}{\"\\n\"}{.lastState.terminated.reason}{\"\\n\"}{end}{end}') exit 0 ;;" \
 "  delete\\ -f\\ /tmp/gpu-lab-experiment-load.*\\ --ignore-not-found=true) exit 0 ;;" \
@@ -576,15 +668,21 @@ write_experiment_run_kubectl_stub() {
 write_experiment_run_curl_stub() {
   write_stub curl \
 "#!/usr/bin/env bash" \
-"set -euo pipefail" \
-"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/curl.log\"" \
-"cmd=\"\$*\"" \
-"if [[ \"\$cmd\" == *'/api/v1/query'* ]]; then" \
-"  value=''" \
-"  if [[ \"\$cmd\" == *'num_requests_running'* && \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
-"    value='11'" \
-"  elif [[ \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
-"    value='2'" \
+  "set -euo pipefail" \
+  "printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/curl.log\"" \
+  "cmd=\"\$*\"" \
+  "if [[ \"\$cmd\" == *'/api/v1/query'* ]]; then" \
+  "  value=''" \
+  "  if [[ \"\$cmd\" == *'count(DCGM_FI_DEV_GPU_UTIL)'* ]]; then" \
+  "    value='1'" \
+  "  elif [[ \"\$cmd\" == *'count(DCGM_FI_DEV_FB_USED)'* ]]; then" \
+  "    value='1'" \
+  "  elif [[ \"\$cmd\" == *'count(DCGM_FI_DEV_FB_FREE)'* ]]; then" \
+  "    value='1'" \
+  "  elif [[ \"\$cmd\" == *'num_requests_running'* && \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
+  "    value='11'" \
+  "  elif [[ \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
+  "    value='2'" \
 "  elif [[ \"\$cmd\" == *'num_requests_running'* ]]; then" \
 "    value='9'" \
 "  elif [[ \"\$cmd\" == *'avg_over_time((avg(DCGM_FI_DEV_GPU_UTIL))'* ]]; then" \
@@ -629,10 +727,15 @@ run_live_experiment_runner_test() {
   RUN_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/run.md")
   RUN_JSON_CONTENT=$(cat "${TEST_TMPDIR}/run.json")
   KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
+  CURL_LOG=$(cat "${TEST_TMPDIR}/curl.log")
 
   assert_contains "${RUN_REPORT_CONTENT}" "Status: complete" "experiment run should mark the Markdown report complete"
   assert_contains "${RUN_REPORT_CONTENT}" "| Completed requests | 42 |" "experiment run should parse completed requests from k6 logs"
   assert_contains "${RUN_REPORT_CONTENT}" "| Successful requests | 41 |" "experiment run should derive successful requests from completed minus failed"
+  assert_contains "${RUN_REPORT_CONTENT}" "| Offered client iterations | 52 |" "experiment run should derive offered client iterations from completed and unmet demand"
+  assert_contains "${RUN_REPORT_CONTENT}" "| Unserved client iterations | 11 |" "experiment run should derive unserved client iterations from failed, dropped, and interrupted work"
+  assert_contains "${RUN_REPORT_CONTENT}" "| Delivery ratio | 0.788462 |" "experiment run should derive a successful-delivery ratio"
+  assert_contains "${RUN_REPORT_CONTENT}" "| Interrupted client iterations | 7 |" "experiment run should prefer the final k6 footer interrupted count when it exceeds the summary"
   assert_contains "${RUN_REPORT_CONTENT}" "| p99 request latency | 1.5 |" "experiment run should parse p99 latency from k6 logs"
   assert_contains "${RUN_REPORT_CONTENT}" "| Generated tokens | 4096 |" "experiment run should parse generated token totals from k6 logs"
   assert_contains "${RUN_REPORT_CONTENT}" "| Run duration | 120 |" "experiment run should parse run duration from k6 logs"
@@ -641,8 +744,12 @@ run_live_experiment_runner_test() {
   assert_contains "${RUN_JSON_CONTENT}" "\"completed_requests\": 42" "experiment run should write completed requests to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"successful_requests\": 41" "experiment run should write successful requests to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"failed_requests\": 1" "experiment run should write failed requests to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"offered_iterations\": 52" "experiment run should write offered iterations to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"unserved_iterations\": 11" "experiment run should write unserved iterations to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"delivery_ratio\": 0.788462" "experiment run should write delivery ratio to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"dropped_iterations\": 3" "experiment run should write dropped iterations to JSON"
-  assert_contains "${RUN_JSON_CONTENT}" "\"buffering_required_requests\": 3" "experiment run should write buffering required to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"interrupted_iterations\": 7" "experiment run should write merged interrupted iterations to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"buffering_required_requests\": 10" "experiment run should count dropped and interrupted work as buffering pressure"
   assert_contains "${RUN_JSON_CONTENT}" "\"failure_attribution\": \"client_queue_limit\"" "experiment run should attribute dropped iterations to the client queue limit"
   assert_contains "${RUN_JSON_CONTENT}" "\"oom_events\": null" "experiment run should leave OOM events null when pod status has no termination reason"
   assert_contains "${RUN_JSON_CONTENT}" "\"p95_request_latency_seconds\": 0.75" "experiment run should write p95 latency to JSON"
@@ -664,8 +771,24 @@ run_live_experiment_runner_test() {
     "experiment run should apply the service before waiting for serving readiness"
   assert_occurs_before "${KUBECTL_LOG}" \
     "rollout status deployment/vllm-openai -n app --timeout=20m" \
-    "wait --for=condition=complete job/kv-cache-prompt-512-output-100 -n app --timeout=1200s" \
+    "get endpointslice -n monitoring -l kubernetes.io/service-name=dcgm-exporter -o jsonpath={.items[*].endpoints[*].addresses[*]}" \
+    "experiment run should wait for a live DCGM exporter endpoint after serving readiness"
+  assert_occurs_before "${KUBECTL_LOG}" \
+    "get endpointslice -n monitoring -l kubernetes.io/service-name=dcgm-exporter -o jsonpath={.items[*].endpoints[*].addresses[*]}" \
+    "port-forward -n monitoring service/kube-prometheus-stack-prometheus :9090" \
+    "experiment run should check Prometheus after finding a DCGM endpoint"
+  assert_occurs_before "${KUBECTL_LOG}" \
+    "port-forward -n monitoring service/kube-prometheus-stack-prometheus :9090" \
+    "apply -f /tmp/gpu-lab-experiment-load." \
+    "experiment run should verify DCGM metrics before starting load"
+  assert_occurs_before "${KUBECTL_LOG}" \
+    "rollout status deployment/vllm-openai -n app --timeout=20m" \
+    "get job/kv-cache-prompt-512-output-100 -n app -o jsonpath=" \
     "experiment run should wait for serving readiness before waiting on load"
+  assert_contains "${CURL_LOG}" "query=count(DCGM_FI_DEV_GPU_UTIL)" "experiment run should verify DCGM GPU utilization is scrapeable before load"
+  assert_contains "${CURL_LOG}" "query=count(DCGM_FI_DEV_FB_USED)" "experiment run should verify DCGM used-memory metrics are scrapeable before load"
+  assert_contains "${CURL_LOG}" "query=count(DCGM_FI_DEV_FB_FREE)" "experiment run should verify DCGM free-memory metrics are scrapeable before load"
+  assert_contains "${CURL_LOG}" "time=" "experiment run should anchor final Prometheus queries to the observed load window"
   assert_contains "${KUBECTL_LOG}" "delete -f /tmp/gpu-lab-experiment-load." "experiment run should clean up the rendered load manifest"
   assert_contains "${KUBECTL_LOG}" "delete -f /tmp/gpu-lab-experiment-serving." "experiment run should clean up the rendered serving manifest"
 
@@ -678,23 +801,30 @@ write_cost_run_kubectl_stub() {
 "set -euo pipefail" \
 "printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/kubectl.log\"" \
 "cmd=\"\$*\"" \
+"if [[ \"\$1\" == 'port-forward' ]]; then" \
+"  printf '%s\n' 'Forwarding from 127.0.0.1:39090 -> 9090'" \
+"  sleep 30" \
+"  exit 0" \
+"fi" \
 "case \"\$cmd\" in" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
 "  apply\\ -f\\ /tmp/gpu-lab-experiment-serving.*)" \
 "    cp \"\$3\" \"${TEST_TMPDIR}/applied-serving.yaml\"" \
 "    exit 0" \
 "    ;;" \
-"  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
-"  apply\\ -f\\ /tmp/gpu-lab-experiment-load.*)" \
+  "  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
+  "  'get endpointslice -n monitoring -l kubernetes.io/service-name=dcgm-exporter -o jsonpath={.items[*].endpoints[*].addresses[*]}') printf '%s\n' '10.0.0.10'; exit 0 ;;" \
+  "  apply\\ -f\\ /tmp/gpu-lab-experiment-load.*)" \
 "    cp \"\$3\" \"${TEST_TMPDIR}/applied-load.yaml\"" \
 "    exit 0" \
 "    ;;" \
-"  'wait --for=condition=complete job/cost-steady-cost-efficiency -n app --timeout=1200s') exit 0 ;;" \
+"  get\\ job/cost-steady-cost-efficiency\\ -n\\ app\\ -o\\ jsonpath=*Complete*) printf '%s\n' 'True'; exit 0 ;;" \
 "  'logs -n app job/cost-steady-cost-efficiency')" \
 "    printf '%s\n' 'GPU_LAB_K6_SUMMARY_BEGIN'" \
 "    printf '%s\n' 'completed_requests=100'" \
 "    printf '%s\n' 'failed_requests=4'" \
 "    printf '%s\n' 'dropped_iterations=0'" \
+"    printf '%s\n' 'interrupted_iterations=0'" \
 "    printf '%s\n' 'buffering_required_requests=0'" \
 "    printf '%s\n' 'generated_tokens=8000'" \
 "    printf '%s\n' 'p50_request_latency_seconds=0.6'" \
@@ -716,6 +846,7 @@ write_cost_run_kubectl_stub() {
 run_cost_experiment_runner_test() {
   setup_test_tmpdir
   write_cost_run_kubectl_stub
+  write_experiment_run_curl_stub
 
   run_and_capture env \
     PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -752,6 +883,119 @@ run_cost_experiment_runner_test() {
   teardown_test_tmpdir
 }
 
+write_missing_dcgm_curl_stub() {
+  write_stub curl \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/curl.log\"" \
+"if [[ \"\$*\" == *'/api/v1/query'* ]]; then" \
+"  printf '{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{},\"value\":[1712781000,\"0\"]}]}}'" \
+"  exit 0" \
+"fi" \
+"printf '200'"
+}
+
+run_experiment_waits_for_dcgm_before_load_test() {
+  setup_test_tmpdir
+  write_experiment_run_kubectl_stub
+  write_missing_dcgm_curl_stub
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
+    TMPDIR=/tmp \
+    EXPERIMENT_DCGM_METRICS_TIMEOUT_SECONDS=0 \
+    /bin/bash "${REPO_ROOT}/scripts/experiment" run \
+    --experiment kv-cache \
+    --case prompt-512-output-100 \
+    --profile default \
+    --report "${TEST_TMPDIR}/missing-dcgm.md" \
+    --json-report "${TEST_TMPDIR}/missing-dcgm.json"
+
+  assert_status 1 "${COMMAND_STATUS}" "experiment run should fail before load when DCGM metrics never become scrapeable"
+  assert_contains "${COMMAND_OUTPUT}" "Timed out waiting for DCGM GPU metrics in Prometheus" "experiment run should explain missing DCGM metrics"
+  assert_file_exists "${TEST_TMPDIR}/applied-serving.yaml" "experiment run should still apply serving before checking DCGM"
+  assert_file_not_exists "${TEST_TMPDIR}/applied-load.yaml" "experiment run should not start k6 load before DCGM is scrapeable"
+
+  KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
+  CURL_LOG=$(cat "${TEST_TMPDIR}/curl.log")
+  assert_contains "${KUBECTL_LOG}" "get daemonset dcgm-exporter -n monitoring -o wide" "experiment run should print DCGM daemonset diagnostics on missing metrics"
+  assert_not_contains "${KUBECTL_LOG}" "apply -f /tmp/gpu-lab-experiment-load." "experiment run should not apply the load manifest when DCGM preflight fails"
+  assert_contains "${CURL_LOG}" "query=count(DCGM_FI_DEV_GPU_UTIL)" "experiment run should query DCGM utilization availability"
+  teardown_test_tmpdir
+}
+
+write_failed_experiment_run_kubectl_stub() {
+  write_stub kubectl \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/kubectl.log\"" \
+"cmd=\"\$*\"" \
+"if [[ \"\$1\" == 'port-forward' ]]; then" \
+"  printf '%s\n' 'Forwarding from 127.0.0.1:39090 -> 9090'" \
+"  sleep 30" \
+"  exit 0" \
+"fi" \
+"case \"\$cmd\" in" \
+"  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
+"  apply\\ -f\\ /tmp/gpu-lab-experiment-serving.*) exit 0 ;;" \
+  "  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
+  "  'get endpointslice -n monitoring -l kubernetes.io/service-name=dcgm-exporter -o jsonpath={.items[*].endpoints[*].addresses[*]}') printf '%s\n' '10.0.0.10'; exit 0 ;;" \
+  "  apply\\ -f\\ /tmp/gpu-lab-experiment-load.*) exit 0 ;;" \
+"  get\\ job/kv-cache-prompt-512-output-100\\ -n\\ app\\ -o\\ jsonpath=*Complete*) exit 0 ;;" \
+"  get\\ job/kv-cache-prompt-512-output-100\\ -n\\ app\\ -o\\ jsonpath=*Failed*.status*) printf '%s\n' 'True'; exit 0 ;;" \
+"  get\\ job/kv-cache-prompt-512-output-100\\ -n\\ app\\ -o\\ jsonpath=*Failed*.reason*) printf '%s\n' 'BackoffLimitExceeded'; exit 0 ;;" \
+"  get\\ job/kv-cache-prompt-512-output-100\\ -n\\ app\\ -o\\ jsonpath=*Failed*.message*) printf '%s\n' 'Job has reached the specified backoff limit'; exit 0 ;;" \
+"  'logs -n app job/kv-cache-prompt-512-output-100')" \
+"    printf '%s\n' 'GPU_LAB_K6_SUMMARY_BEGIN'" \
+"    printf '%s\n' 'completed_requests=10'" \
+"    printf '%s\n' 'failed_requests=10'" \
+"    printf '%s\n' 'interrupted_iterations=0'" \
+"    printf '%s\n' 'run_duration_seconds=60'" \
+"    printf '%s\n' 'GPU_LAB_K6_SUMMARY_END'" \
+"    exit 0" \
+"    ;;" \
+"  'get pods -n app -l app=vllm-openai -o jsonpath={range .items[*]}{range .status.containerStatuses[*]}{.state.terminated.reason}{\"\\n\"}{.lastState.terminated.reason}{\"\\n\"}{end}{end}') exit 0 ;;" \
+"  delete\\ -f\\ /tmp/gpu-lab-experiment-load.*\\ --ignore-not-found=true) exit 0 ;;" \
+"  delete\\ -f\\ /tmp/gpu-lab-experiment-serving.*\\ --ignore-not-found=true) exit 0 ;;" \
+"  *) printf 'unexpected kubectl command: %s\n' \"\$cmd\" >&2; exit 1 ;;" \
+"esac"
+}
+
+run_failed_experiment_job_test() {
+  setup_test_tmpdir
+  write_failed_experiment_run_kubectl_stub
+  write_experiment_run_curl_stub
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
+    TMPDIR=/tmp \
+    /bin/bash "${REPO_ROOT}/scripts/experiment" run \
+    --experiment kv-cache \
+    --case prompt-512-output-100 \
+    --profile default \
+    --report "${TEST_TMPDIR}/failed.md" \
+    --json-report "${TEST_TMPDIR}/failed.json"
+
+  assert_status 1 "${COMMAND_STATUS}" "experiment run should fail when the load job reaches Failed"
+  assert_contains "${COMMAND_OUTPUT}" "Job app/kv-cache-prompt-512-output-100 failed: BackoffLimitExceeded" "experiment run should report the job failure reason"
+  assert_contains "${COMMAND_OUTPUT}" "Experiment run status: failed" "experiment run output should summarize failed status"
+  assert_file_exists "${TEST_TMPDIR}/failed.md" "failed runs should still write a Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/failed.json" "failed runs should still write a JSON report"
+
+  FAILED_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/failed.md")
+  FAILED_JSON_CONTENT=$(cat "${TEST_TMPDIR}/failed.json")
+
+  assert_contains "${FAILED_REPORT_CONTENT}" "Status: failed" "failed run should mark the Markdown report failed"
+  assert_contains "${FAILED_REPORT_CONTENT}" "| Failed requests | 10 |" "failed run should still parse k6 logs"
+  assert_contains "${FAILED_REPORT_CONTENT}" "| Dropped client iterations | 0 |" "failed run should normalize absent dropped iterations to zero once k6 emitted a summary"
+  assert_contains "${FAILED_JSON_CONTENT}" "\"status\": \"failed\"" "failed run should mark JSON report failed"
+  assert_contains "${FAILED_JSON_CONTENT}" "\"failed_requests\": 10" "failed run should write failed requests to JSON"
+  assert_contains "${FAILED_JSON_CONTENT}" "\"dropped_iterations\": 0" "failed run should write normalized dropped iterations to JSON"
+  assert_contains "${FAILED_JSON_CONTENT}" "\"buffering_required_requests\": 0" "failed run should write normalized buffering pressure to JSON"
+
+  teardown_test_tmpdir
+}
+
 run_incompatible_case_profile_test() {
   setup_test_tmpdir
   write_experiment_run_kubectl_stub
@@ -779,18 +1023,24 @@ write_stream_run_kubectl_stub() {
 "set -euo pipefail" \
 "printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/kubectl.log\"" \
 "cmd=\"\$*\"" \
+"if [[ \"\$1\" == 'port-forward' ]]; then" \
+"  printf '%s\n' 'Forwarding from 127.0.0.1:39090 -> 9090'" \
+"  sleep 30" \
+"  exit 0" \
+"fi" \
 "case \"\$cmd\" in" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
 "  apply\\ -f\\ /tmp/gpu-lab-experiment-serving.*)" \
 "    cp \"\$3\" \"${TEST_TMPDIR}/applied-serving.yaml\"" \
 "    exit 0" \
 "    ;;" \
-"  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
-"  apply\\ -f\\ /tmp/gpu-lab-experiment-stream.*)" \
+  "  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
+  "  'get endpointslice -n monitoring -l kubernetes.io/service-name=dcgm-exporter -o jsonpath={.items[*].endpoints[*].addresses[*]}') printf '%s\n' '10.0.0.10'; exit 0 ;;" \
+  "  apply\\ -f\\ /tmp/gpu-lab-experiment-stream.*)" \
 "    cp \"\$3\" \"${TEST_TMPDIR}/applied-stream.yaml\"" \
 "    exit 0" \
 "    ;;" \
-"  'wait --for=condition=complete job/prefill-decode-prefill-heavy-stream -n app --timeout=1200s') exit 0 ;;" \
+"  get\\ job/prefill-decode-prefill-heavy-stream\\ -n\\ app\\ -o\\ jsonpath=*Complete*) printf '%s\n' 'True'; exit 0 ;;" \
 "  'logs -n app job/prefill-decode-prefill-heavy-stream')" \
 "    printf '%s\n' 'GPU_LAB_STREAM_SUMMARY_BEGIN'" \
 "    printf '%s\n' 'completed_requests=5'" \
@@ -817,6 +1067,7 @@ write_stream_run_kubectl_stub() {
 run_stream_experiment_runner_test() {
   setup_test_tmpdir
   write_stream_run_kubectl_stub
+  write_experiment_run_curl_stub
 
   run_and_capture env \
     PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -855,7 +1106,7 @@ run_stream_experiment_runner_test() {
   assert_contains "${STREAM_JSON_CONTENT}" "\"run_duration_seconds\": 6.5" "run-stream should write run duration to JSON"
   assert_occurs_before "${KUBECTL_LOG}" \
     "rollout status deployment/vllm-openai -n app --timeout=20m" \
-    "wait --for=condition=complete job/prefill-decode-prefill-heavy-stream -n app --timeout=1200s" \
+    "get job/prefill-decode-prefill-heavy-stream -n app -o jsonpath=" \
     "run-stream should wait for serving readiness before waiting on the streaming job"
   assert_contains "${KUBECTL_LOG}" "delete -f /tmp/gpu-lab-experiment-stream." "run-stream should clean up the rendered stream manifest"
 
@@ -871,6 +1122,7 @@ run_request_patterns_show_test
 run_autoscaling_show_test
 run_cost_show_test
 run_render_load_test
+run_render_fractional_arrival_rate_load_test
 run_render_autoscaling_load_test
 run_render_request_pattern_load_test
 run_render_stream_test
@@ -886,7 +1138,10 @@ run_render_request_pattern_report_test
 run_render_autoscaling_report_test
 run_render_cost_report_test
 run_render_report_default_path_test
+run_summarize_reports_test
 run_live_experiment_runner_test
 run_cost_experiment_runner_test
+run_experiment_waits_for_dcgm_before_load_test
+run_failed_experiment_job_test
 run_incompatible_case_profile_test
 run_stream_experiment_runner_test

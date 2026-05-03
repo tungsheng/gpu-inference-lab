@@ -87,7 +87,7 @@ main() {
 
   set_failure_hints \
     "kubectl get ingress ${GPU_INFERENCE_INGRESS_NAME} -n ${APP_NAMESPACE} -o yaml" \
-    "kubectl get endpoints ${GPU_INFERENCE_DEPLOYMENT_NAME} -n ${APP_NAMESPACE} -o yaml" \
+    "kubectl get endpointslice -n ${APP_NAMESPACE} -l kubernetes.io/service-name=${GPU_INFERENCE_DEPLOYMENT_NAME} -o yaml" \
     "curl -i http://<ingress-hostname>${GPU_INFERENCE_EDGE_PATH}"
   run_stage 5 "${TOTAL_STAGES}" "wait for first successful response" wait_for_first_response
 

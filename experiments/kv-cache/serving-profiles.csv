@@ -1,3 +1,6 @@
 profile_id,model,served_model_name,vllm_image,max_model_len,gpu_memory_utilization,max_num_seqs,max_num_batched_tokens,cpu_request,memory_request,cpu_limit,memory_limit,model_cache_size,shm_size,description
 default,,,,,,,,,,,,,,default checked-in serving profile
 long-context,,,,9216,0.90,32,9216,,,,,,,comparable long-context profile for the full KV-cache matrix
+long-context-seqs-16,,,,9216,0.90,16,9216,,,,,,,long-context scheduler variant that trades concurrency for lower tail latency
+long-context-seqs-24,,,,9216,0.90,24,9216,,,,,,,long-context scheduler variant between the conservative and default sequence limits
+long-context-batched-16384,,,,9216,0.90,32,16384,,,,,,,long-context scheduler variant that tests whether larger batched-token capacity improves prefill throughput

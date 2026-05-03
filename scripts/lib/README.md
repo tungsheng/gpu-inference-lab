@@ -13,7 +13,7 @@ Current library files:
 
 - `platform.sh`: shared cluster, manifest, and wait helpers for the public
   scripts
-- `destroy-recovery.sh`: optional teardown diagnostics and orphan CNI ENI
-  cleanup helpers for `./scripts/down`
+- `destroy-recovery.sh`: optional teardown diagnostics plus orphan CNI ENI and
+  EKS node security-group cleanup helpers for `./scripts/down`
 - `evaluate-reports.sh`: schema metadata for `./scripts/evaluate` report
   artifacts

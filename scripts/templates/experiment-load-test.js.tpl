@@ -34,16 +34,10 @@ const targetUrl = __ENV.TARGET_URL || "@TARGET_URL@";
 const modelName = __ENV.MODEL_NAME || "@MODEL_NAME@";
 
 function buildPrompt(targetTokens) {
-  const seedWords = [
-    "GPU", "inference", "capacity", "planning", "requires", "measuring",
-    "KV", "cache", "pressure", "queueing", "latency", "throughput",
-    "memory", "headroom", "scheduling", "autoscaling", "recovery",
-    "cost", "utilization", "and", "tail", "behavior", "under",
-    "controlled", "workloads"
-  ];
+  const tokenLikeWord = "the";
   const words = [];
   for (let index = 0; index < targetTokens; index += 1) {
-    words.push(seedWords[index % seedWords.length]);
+    words.push(tokenLikeWord);
   }
   return words.join(" ");
 }
@@ -107,6 +101,11 @@ function metricValue(data, metricName, valueName) {
   return String(metric.values[valueName]);
 }
 
+function counterValue(data, metricName) {
+  const value = metricValue(data, metricName, "count");
+  return value === "" ? "0" : value;
+}
+
 function secondsFromMilliseconds(value) {
   if (value === "") {
     return "";
@@ -117,7 +116,9 @@ function secondsFromMilliseconds(value) {
 export function handleSummary(data) {
   const completedRequests = metricValue(data, "http_reqs", "count");
   const failedRate = metricValue(data, "http_req_failed", "rate");
-  const droppedIterations = metricValue(data, "dropped_iterations", "count");
+  const droppedIterations = counterValue(data, "dropped_iterations");
+  const interruptedIterations = counterValue(data, "interrupted_iterations");
+  const bufferingRequiredRequests = String(Number(droppedIterations) + Number(interruptedIterations));
   const generatedTokens = metricValue(data, "completion_tokens", "count");
   const generatedTokensPerSecond = metricValue(data, "completion_tokens", "rate");
   const testRunDurationMs = data.state && data.state.testRunDurationMs !== undefined
@@ -133,7 +134,8 @@ export function handleSummary(data) {
       "completed_requests=" + completedRequests,
       "failed_requests=" + failedRequests,
       "dropped_iterations=" + droppedIterations,
-      "buffering_required_requests=" + droppedIterations,
+      "interrupted_iterations=" + interruptedIterations,
+      "buffering_required_requests=" + bufferingRequiredRequests,
       "generated_tokens=" + generatedTokens,
       "p50_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "med")),
       "p95_request_latency_seconds=" + secondsFromMilliseconds(metricValue(data, "http_req_duration", "p(95)")),

@@ -187,7 +187,11 @@
             "peak_waiting_requests": { "type": ["number", "null"] },
             "peak_running_requests": { "type": ["number", "null"] },
             "peak_active_requests": { "type": ["number", "null"] },
+            "offered_iterations": { "type": ["number", "null"] },
+            "unserved_iterations": { "type": ["number", "null"] },
+            "delivery_ratio": { "type": ["number", "null"] },
             "dropped_iterations": { "type": ["number", "null"] },
+            "interrupted_iterations": { "type": ["number", "null"] },
             "buffering_required_requests": { "type": ["number", "null"] },
             "failure_attribution": { "type": ["string", "null"] }
           },

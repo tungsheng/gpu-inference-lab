@@ -74,6 +74,18 @@ you want to compare runs programmatically. The sweep summary is the fastest
 way to review whether one `--active-target` looks clearly healthier than the
 others for the same burst shape.
 
+For experiment reports, use the built-in summary table to compare the latest
+artifact for each case/profile pair:
+
+```bash
+./scripts/experiment summarize-reports --experiment kv-cache
+```
+
+The experiment summary includes offered iterations, unserved iterations,
+delivery ratio, dropped/interrupted iterations, tail latency, request throughput,
+queue pressure, and GPU utilization when those fields are present in the source
+JSON.
+
 If final Prometheus or DCGM collection fails after the workload has already
 cleaned up, `./scripts/evaluate` still writes the report with
 `metrics_collection_status: partial`. Timeline, cost, and resilience fields are

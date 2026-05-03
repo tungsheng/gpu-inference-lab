@@ -303,9 +303,10 @@ wait_for_service_endpoints() {
 
   while true; do
     local endpoints
-    endpoints=$(kubectl get endpoints "${service_name}" \
+    endpoints=$(kubectl get endpointslice \
       -n "${namespace}" \
-      -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)
+      -l "kubernetes.io/service-name=${service_name}" \
+      -o jsonpath='{.items[*].endpoints[*].addresses[*]}' 2>/dev/null || true)
 
     if [[ -n "${endpoints}" ]]; then
       return 0

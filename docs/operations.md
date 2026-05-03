@@ -22,7 +22,8 @@ you need the full setup and teardown walkthrough.
 | `./scripts/evaluate --profile zero-idle --resilience spot-unavailable` | you want pre-run degraded-capacity evidence | spot burst capacity is withdrawn and on-demand fallback is measured |
 | `./scripts/evaluate --profile zero-idle --resilience spot-interruption` | you want a synthetic interruption drill | a live spot-backed burst node is deleted and replacement timing is reported |
 | `./scripts/down` | you want a normal teardown | runtime resources, controllers, observability, capacity definitions, and Terraform infrastructure are removed |
-| `./scripts/down --cleanup-orphan-enis` | destroy failed because cleanup-eligible CNI ENIs remain | matching `available` `aws-K8S` or `aws-node` ENIs are deleted, then destroy is retried once |
+| `./scripts/down --cleanup-orphan-enis` | destroy failed because cleanup-eligible CNI ENIs or owned EKS node security groups remain | matching `available` `aws-K8S`/`aws-node` ENIs and unused orphan node security groups are deleted, then destroy is retried once |
+| `./scripts/down --cleanup-orphan-network-dependencies` | same recovery path with a clearer flag name | equivalent to `--cleanup-orphan-enis` |
 | `./scripts/down --terraform-only` | the cluster API is already gone or cluster-scoped cleanup already completed | Kubernetes, Helm, and AWS cleanup are skipped; Terraform init/destroy still run |
 
 ## Expected States
