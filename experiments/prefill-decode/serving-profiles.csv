@@ -1,2 +1,5 @@
 profile_id,model,served_model_name,vllm_image,max_model_len,gpu_memory_utilization,max_num_seqs,max_num_batched_tokens,cpu_request,memory_request,cpu_limit,memory_limit,model_cache_size,shm_size,description
 default,,,,,,,,,,,,,,default checked-in serving profile
+max-seqs-16,,,,,,16,,,,,,,,cap active mixed streams at the last stable concurrency point
+max-seqs-8,,,,,,8,,,,,,,,protect mixed streaming tail latency with a smaller active set
+batched-tokens-4096,,,,,,,4096,,,,,,,limit batched token budget without capping sequence count

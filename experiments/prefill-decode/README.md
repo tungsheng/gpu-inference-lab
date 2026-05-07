@@ -11,6 +11,7 @@ long-prompt/short-output and short-prompt/long-output requests.
 | --- | ---: | ---: | --- |
 | `prefill-heavy` | 1536 | 64 | higher TTFT from prompt processing |
 | `decode-heavy` | 128 | 768 | longer decode path and inter-token timing |
+| `mixed-prefill-decode` | 1536 | 64 | 50/50 streamed mix of the two shapes from `request-shapes.csv` |
 
 Both cases fit the default 2048-token serving profile.
 

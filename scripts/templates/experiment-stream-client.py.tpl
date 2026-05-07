@@ -1,5 +1,7 @@
 import json
 import math
+import concurrent.futures
+import random
 import sys
 import time
 import urllib.error
@@ -9,7 +11,9 @@ experiment_name = "@EXPERIMENT_NAME@"
 case_id = "@CASE_ID@"
 prompt_token_target = @PROMPT_TOKEN_TARGET@
 max_tokens = @MAX_TOKENS@
+request_shapes = @REQUEST_SHAPES_JSON@
 samples = @SAMPLES@
+stream_concurrency = @STREAM_CONCURRENCY@
 timeout_seconds = @TIMEOUT_SECONDS@
 target_url = "@TARGET_URL@"
 model_name = "@MODEL_NAME@"
@@ -38,11 +42,31 @@ def percentile(values, percentile_value):
   value = sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
   return f"{value:.6f}"
 
-def stream_once():
+def optional_float(value):
+  return None if value == "" else float(value)
+
+def average(values):
+  if not values:
+    return None
+  return sum(values) / len(values)
+
+def display_metric(value):
+  return "n/a" if value is None else f"{value:.6f}"
+
+def select_request_shape():
+  total_weight = sum(shape["weight"] for shape in request_shapes)
+  threshold = random.random() * total_weight
+  for shape in request_shapes:
+    threshold -= shape["weight"]
+    if threshold <= 0:
+      return shape
+  return request_shapes[-1]
+
+def stream_once(request_shape):
   payload = json.dumps({
     "model": model_name,
-    "prompt": build_prompt(prompt_token_target),
-    "max_tokens": max_tokens,
+    "prompt": build_prompt(request_shape["prompt_token_target"]),
+    "max_tokens": request_shape["max_tokens"],
     "temperature": 0,
     "stream": True,
   }).encode("utf-8")
@@ -99,6 +123,18 @@ def stream_once():
     "chunks_per_second": chunks_per_second,
   }
 
+shape_stats = {
+  shape["id"]: {
+    "shape": shape,
+    "completed_requests": 0,
+    "failed_requests": 0,
+    "request_latencies": [],
+    "ttfts": [],
+    "inter_token_latencies": [],
+    "chunk_rates": [],
+  }
+  for shape in request_shapes
+}
 request_latencies = []
 ttfts = []
 inter_token_latencies = []
@@ -106,26 +142,76 @@ chunk_rates = []
 failed_requests = 0
 run_start = time.perf_counter()
 
-for _ in range(samples):
-  try:
-    result = stream_once()
-  except (urllib.error.URLError, TimeoutError, OSError) as exc:
-    failed_requests += 1
-    sys.stderr.write(f"stream request failed: {exc}\n")
-    continue
+with concurrent.futures.ThreadPoolExecutor(max_workers=stream_concurrency) as executor:
+  future_shapes = {}
+  for _ in range(samples):
+    request_shape = select_request_shape()
+    future_shapes[executor.submit(stream_once, request_shape)] = request_shape
 
-  request_latencies.append(result["total_latency"])
-  if result["ttft"] != "":
-    ttfts.append(result["ttft"])
-  inter_token_latencies.extend(result["inter_token_latencies"])
-  if result["chunks_per_second"] != "":
-    chunk_rates.append(result["chunks_per_second"])
+  for future in concurrent.futures.as_completed(future_shapes):
+    request_shape = future_shapes[future]
+    shape_stat = shape_stats[request_shape["id"]]
+    try:
+      result = future.result()
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+      failed_requests += 1
+      shape_stat["failed_requests"] += 1
+      sys.stderr.write(f"stream request failed: {exc}\n")
+      continue
+
+    shape_stat["completed_requests"] += 1
+    shape_stat["request_latencies"].append(result["total_latency"])
+    request_latencies.append(result["total_latency"])
+    if result["ttft"] != "":
+      shape_stat["ttfts"].append(result["ttft"])
+      ttfts.append(result["ttft"])
+    shape_stat["inter_token_latencies"].extend(result["inter_token_latencies"])
+    inter_token_latencies.extend(result["inter_token_latencies"])
+    if result["chunks_per_second"] != "":
+      shape_stat["chunk_rates"].append(result["chunks_per_second"])
+      chunk_rates.append(result["chunks_per_second"])
 
 run_duration_seconds = time.perf_counter() - run_start
 completed_requests = len(request_latencies)
 average_chunk_rate = "" if not chunk_rates else sum(chunk_rates) / len(chunk_rates)
+shape_summaries = []
+
+for request_shape in request_shapes:
+  shape_stat = shape_stats[request_shape["id"]]
+  shape_summaries.append({
+    "id": request_shape["id"],
+    "prompt_token_target": request_shape["prompt_token_target"],
+    "max_tokens": request_shape["max_tokens"],
+    "weight": request_shape["weight"],
+    "completed_requests": shape_stat["completed_requests"],
+    "failed_requests": shape_stat["failed_requests"],
+    "p50_request_latency_seconds": optional_float(percentile(shape_stat["request_latencies"], 50)),
+    "p95_request_latency_seconds": optional_float(percentile(shape_stat["request_latencies"], 95)),
+    "p99_request_latency_seconds": optional_float(percentile(shape_stat["request_latencies"], 99)),
+    "p50_ttft_seconds": optional_float(percentile(shape_stat["ttfts"], 50)),
+    "p95_ttft_seconds": optional_float(percentile(shape_stat["ttfts"], 95)),
+    "p50_inter_token_latency_seconds": optional_float(percentile(shape_stat["inter_token_latencies"], 50)),
+    "p95_inter_token_latency_seconds": optional_float(percentile(shape_stat["inter_token_latencies"], 95)),
+    "generation_tokens_per_second": average(shape_stat["chunk_rates"]),
+  })
 
 print("GPU_LAB_STREAM_SUMMARY_BEGIN")
+print(f"stream_samples={samples}")
+print(f"stream_concurrency={stream_concurrency}")
+print("stream_shape_summaries=" + json.dumps(shape_summaries, separators=(",", ":")))
+for shape_summary in shape_summaries:
+  print(
+    "stream_shape_summary_row="
+    f"| {shape_summary['id']} "
+    f"| {shape_summary['prompt_token_target']} "
+    f"| {shape_summary['max_tokens']} "
+    f"| {shape_summary['completed_requests']} "
+    f"| {shape_summary['failed_requests']} "
+    f"| {display_metric(shape_summary['p95_request_latency_seconds'])} "
+    f"| {display_metric(shape_summary['p95_ttft_seconds'])} "
+    f"| {display_metric(shape_summary['p95_inter_token_latency_seconds'])} "
+    f"| {display_metric(shape_summary['generation_tokens_per_second'])} |"
+  )
 print(f"completed_requests={completed_requests}")
 print(f"failed_requests={failed_requests}")
 print(f"p50_request_latency_seconds={percentile(request_latencies, 50)}")

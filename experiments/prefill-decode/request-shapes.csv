@@ -1,0 +1,3 @@
+case_id,shape_id,prompt_token_target,max_tokens,weight
+mixed-prefill-decode,prefill-heavy,1536,64,1
+mixed-prefill-decode,decode-heavy,128,768,1

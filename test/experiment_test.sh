@@ -263,6 +263,7 @@ run_render_stream_test() {
     --experiment prefill-decode \
     --case prefill-heavy \
     --samples 3 \
+    --concurrency 2 \
     --output "${TEST_TMPDIR}/prefill-stream.yaml"
 
   assert_status 0 "${COMMAND_STATUS}" "render-stream should render the selected streaming case"
@@ -274,11 +275,41 @@ run_render_stream_test() {
   assert_contains "${STREAM_MANIFEST}" "name: prefill-decode-prefill-heavy-stream-client" "stream manifest should name the ConfigMap from the experiment and case"
   assert_contains "${STREAM_MANIFEST}" "name: prefill-decode-prefill-heavy-stream" "stream manifest should name the Job from the experiment and case"
   assert_contains "${STREAM_MANIFEST}" "samples = 3" "stream manifest should include the requested sample count"
+  assert_contains "${STREAM_MANIFEST}" "stream_concurrency = 2" "stream manifest should include the requested concurrency"
+  assert_contains "${STREAM_MANIFEST}" 'request_shapes = [{"id":"prefill-heavy","prompt_token_target":1536,"max_tokens":64,"weight":1}]' "stream manifest should include the fallback request shape"
+  assert_contains "${STREAM_MANIFEST}" "ThreadPoolExecutor(max_workers=stream_concurrency)" "stream manifest should run samples concurrently when requested"
+  assert_contains "${STREAM_MANIFEST}" "def select_request_shape():" "stream manifest should select a request shape per sample"
+  assert_contains "${STREAM_MANIFEST}" "stream_shape_summaries=" "stream manifest should emit per-shape summary JSON"
+  assert_contains "${STREAM_MANIFEST}" "stream_shape_summary_row=" "stream manifest should emit per-shape Markdown rows"
   assert_contains "${STREAM_MANIFEST}" '"stream": True' "stream manifest should request streamed completions"
   assert_contains "${STREAM_MANIFEST}" "GPU_LAB_STREAM_SUMMARY_BEGIN" "stream manifest should emit a parseable streaming summary"
   assert_contains "${STREAM_MANIFEST}" "p95_ttft_seconds=" "stream manifest should include TTFT in the summary"
   assert_contains "${STREAM_MANIFEST}" "p95_inter_token_latency_seconds=" "stream manifest should include inter-token latency in the summary"
   assert_contains "${STREAM_MANIFEST}" "image: python:3.12-slim" "stream manifest should use a standard Python client image"
+
+  teardown_test_tmpdir
+}
+
+run_render_mixed_stream_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-stream \
+    --experiment prefill-decode \
+    --case mixed-prefill-decode \
+    --samples 4 \
+    --concurrency 2 \
+    --output "${TEST_TMPDIR}/mixed-stream.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-stream should render the mixed prefill/decode case"
+  assert_file_exists "${TEST_TMPDIR}/mixed-stream.yaml" "render-stream should write the mixed manifest"
+
+  MIXED_STREAM_MANIFEST=$(cat "${TEST_TMPDIR}/mixed-stream.yaml")
+
+  assert_contains "${MIXED_STREAM_MANIFEST}" "name: prefill-decode-mixed-prefill-decode-stream-client" "mixed stream manifest should name the ConfigMap from the experiment and case"
+  assert_contains "${MIXED_STREAM_MANIFEST}" 'request_shapes = [{"id":"prefill-heavy","prompt_token_target":1536,"max_tokens":64,"weight":1}, {"id":"decode-heavy","prompt_token_target":128,"max_tokens":768,"weight":1}]' "mixed stream manifest should embed weighted prefill/decode shapes"
+  assert_contains "${MIXED_STREAM_MANIFEST}" 'future_shapes[executor.submit(stream_once, request_shape)] = request_shape' "mixed stream manifest should track the selected shape for each sample"
+  assert_contains "${MIXED_STREAM_MANIFEST}" '"prompt": build_prompt(request_shape["prompt_token_target"])' "mixed stream manifest should build prompts from the selected shape"
+  assert_contains "${MIXED_STREAM_MANIFEST}" '"max_tokens": request_shape["max_tokens"]' "mixed stream manifest should set output caps from the selected shape"
 
   teardown_test_tmpdir
 }
@@ -795,6 +826,136 @@ run_live_experiment_runner_test() {
   teardown_test_tmpdir
 }
 
+write_autoscaling_experiment_run_kubectl_stub() {
+  write_stub kubectl \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/kubectl.log\"" \
+"cmd=\"\$*\"" \
+"if [[ \"\$1\" == 'port-forward' ]]; then" \
+"  printf '%s\n' 'Forwarding from 127.0.0.1:39090 -> 9090'" \
+"  sleep 30" \
+"  exit 0" \
+"fi" \
+"if [[ \"\${cmd}\" == *\"get nodeclaims\"*\"--sort-by=.metadata.creationTimestamp\"* ]]; then" \
+"  printf '%s\n' 'gpu-serving-ondemand-test'" \
+"  exit 0" \
+"fi" \
+"if [[ \"\${cmd}\" == *\"get nodeclaims\"*\"-o name\"* ]]; then" \
+"  printf '%s\n' 'nodeclaim/gpu-serving-ondemand-test'" \
+"  exit 0" \
+"fi" \
+"if [[ \"\${cmd}\" == 'get nodeclaim gpu-serving-ondemand-test -o jsonpath={.metadata.creationTimestamp}' ]]; then" \
+"  printf '%s\n' '2020-01-01T00:00:00Z'" \
+"  exit 0" \
+"fi" \
+"if [[ \"\${cmd}\" == *\"get nodes -l workload=gpu\"*\"--sort-by=.metadata.creationTimestamp\"* ]]; then" \
+"  printf '%s\n' 'ip-10-0-0-42.us-west-2.compute.internal Ready <none> 1m v1.35.2'" \
+"  exit 0" \
+"fi" \
+"if [[ \"\${cmd}\" == *\"get nodes -l workload=gpu\"*\"-o name\"* ]]; then" \
+"  printf '%s\n' 'node/ip-10-0-0-42.us-west-2.compute.internal'" \
+"  exit 0" \
+"fi" \
+"if [[ \"\${cmd}\" == 'get node ip-10-0-0-42.us-west-2.compute.internal -o jsonpath={.metadata.creationTimestamp}' ]]; then" \
+"  printf '%s\n' '2020-01-01T00:00:30Z'" \
+"  exit 0" \
+"fi" \
+"if [[ \"\${cmd}\" == *\"get pods -n app -l app=vllm-openai --sort-by=.metadata.creationTimestamp\"* ]]; then" \
+"  printf '%s\n' 'vllm-openai-test'" \
+"  exit 0" \
+"fi" \
+"if [[ \"\${cmd}\" == 'get pod vllm-openai-test -n app -o jsonpath={.status.conditions[?(@.type=='\"'\"'PodScheduled'\"'\"')].status}' ]]; then" \
+"  printf '%s\n' 'True'" \
+"  exit 0" \
+"fi" \
+"if [[ \"\${cmd}\" == 'get pod vllm-openai-test -n app -o jsonpath={.status.conditions[?(@.type=='\"'\"'PodScheduled'\"'\"')].lastTransitionTime}' ]]; then" \
+"  printf '%s\n' '2020-01-01T00:01:00Z'" \
+"  exit 0" \
+"fi" \
+"if [[ \"\${cmd}\" == 'get pod vllm-openai-test -n app -o jsonpath={.status.containerStatuses[0].state.running.startedAt}' ]]; then" \
+"  printf '%s\n' '2020-01-01T00:02:00Z'" \
+"  exit 0" \
+"fi" \
+"case \"\$cmd\" in" \
+"  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
+"  apply\\ -f\\ /tmp/gpu-lab-experiment-serving.*)" \
+"    cp \"\$3\" \"${TEST_TMPDIR}/applied-serving.yaml\"" \
+"    exit 0" \
+"    ;;" \
+"  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
+"  'get endpointslice -n monitoring -l kubernetes.io/service-name=dcgm-exporter -o jsonpath={.items[*].endpoints[*].addresses[*]}') printf '%s\n' '10.0.0.10'; exit 0 ;;" \
+"  apply\\ -f\\ /tmp/gpu-lab-experiment-load.*)" \
+"    cp \"\$3\" \"${TEST_TMPDIR}/applied-load.yaml\"" \
+"    exit 0" \
+"    ;;" \
+"  get\\ job/autoscaling-spike-queued\\ -n\\ app\\ -o\\ jsonpath=*Complete*) printf '%s\n' 'True'; exit 0 ;;" \
+"  'logs -n app job/autoscaling-spike-queued')" \
+"    printf '%s\n' 'GPU_LAB_K6_SUMMARY_BEGIN'" \
+"    printf '%s\n' 'completed_requests=24'" \
+"    printf '%s\n' 'failed_requests=0'" \
+"    printf '%s\n' 'dropped_iterations=0'" \
+"    printf '%s\n' 'interrupted_iterations=0'" \
+"    printf '%s\n' 'buffering_required_requests=0'" \
+"    printf '%s\n' 'generated_tokens=3072'" \
+"    printf '%s\n' 'p95_request_latency_seconds=2.5'" \
+"    printf '%s\n' 'requests_per_second=6'" \
+"    printf '%s\n' 'generation_tokens_per_second=768'" \
+"    printf '%s\n' 'run_duration_seconds=110'" \
+"    printf '%s\n' 'GPU_LAB_K6_SUMMARY_END'" \
+"    exit 0" \
+"    ;;" \
+"  'get pods -n app -l app=vllm-openai -o jsonpath={range .items[*]}{range .status.containerStatuses[*]}{.state.terminated.reason}{\"\\n\"}{.lastState.terminated.reason}{\"\\n\"}{end}{end}') exit 0 ;;" \
+"  delete\\ -f\\ /tmp/gpu-lab-experiment-load.*\\ --ignore-not-found=true) exit 0 ;;" \
+"  delete\\ -f\\ /tmp/gpu-lab-experiment-serving.*\\ --ignore-not-found=true) exit 0 ;;" \
+"  *) printf 'unexpected kubectl command: %s\n' \"\$cmd\" >&2; exit 1 ;;" \
+"esac"
+}
+
+run_autoscaling_experiment_runner_timeline_test() {
+  setup_test_tmpdir
+  write_autoscaling_experiment_run_kubectl_stub
+  write_experiment_run_curl_stub
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
+    TMPDIR=/tmp \
+    /bin/bash "${REPO_ROOT}/scripts/experiment" run \
+    --experiment autoscaling \
+    --case spike-queued \
+    --profile default \
+    --report "${TEST_TMPDIR}/autoscaling-run.md" \
+    --json-report "${TEST_TMPDIR}/autoscaling-run.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "autoscaling experiment run should complete when the load job succeeds"
+  assert_file_exists "${TEST_TMPDIR}/autoscaling-run.md" "autoscaling run should write a Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/autoscaling-run.json" "autoscaling run should write a JSON report"
+
+  AUTOSCALING_RUN_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/autoscaling-run.md")
+  AUTOSCALING_RUN_JSON_CONTENT=$(cat "${TEST_TMPDIR}/autoscaling-run.json")
+  KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
+
+  assert_contains "${AUTOSCALING_RUN_REPORT_CONTENT}" "| First NodeClaim | 0 |" "autoscaling run should record first NodeClaim timing"
+  assert_contains "${AUTOSCALING_RUN_REPORT_CONTENT}" "| First GPU node | 0 |" "autoscaling run should record first GPU node timing"
+  assert_contains "${AUTOSCALING_RUN_REPORT_CONTENT}" "| Pod scheduled | 0 |" "autoscaling run should record pod scheduling timing"
+  assert_contains "${AUTOSCALING_RUN_REPORT_CONTENT}" "| Container started | 0 |" "autoscaling run should record container startup timing"
+  assert_contains "${AUTOSCALING_RUN_JSON_CONTENT}" "\"first_nodeclaim_seconds\": 0" "autoscaling JSON should include first NodeClaim timing"
+  assert_contains "${AUTOSCALING_RUN_JSON_CONTENT}" "\"first_gpu_node_seconds\": 0" "autoscaling JSON should include first GPU node timing"
+  assert_contains "${AUTOSCALING_RUN_JSON_CONTENT}" "\"pod_scheduled_seconds\": 0" "autoscaling JSON should include pod scheduling timing"
+  assert_contains "${AUTOSCALING_RUN_JSON_CONTENT}" "\"container_started_seconds\": 0" "autoscaling JSON should include container startup timing"
+  assert_not_contains "${AUTOSCALING_RUN_JSON_CONTENT}" "\"model_ready_seconds\": null" "autoscaling JSON should include model readiness timing"
+  assert_occurs_before "${KUBECTL_LOG}" \
+    "apply -f /tmp/gpu-lab-experiment-serving." \
+    "get nodeclaims -l" \
+    "autoscaling run should start timeline collection immediately after applying serving"
+  assert_occurs_before "${KUBECTL_LOG}" \
+    "get pod vllm-openai-test -n app -o jsonpath={.status.containerStatuses[0].state.running.startedAt}" \
+    "rollout status deployment/vllm-openai -n app --timeout=20m" \
+    "autoscaling run should capture container startup before marking the model ready"
+
+  teardown_test_tmpdir
+}
+
 write_cost_run_kubectl_stub() {
   write_stub kubectl \
 "#!/usr/bin/env bash" \
@@ -1043,6 +1204,10 @@ write_stream_run_kubectl_stub() {
 "  get\\ job/prefill-decode-prefill-heavy-stream\\ -n\\ app\\ -o\\ jsonpath=*Complete*) printf '%s\n' 'True'; exit 0 ;;" \
 "  'logs -n app job/prefill-decode-prefill-heavy-stream')" \
 "    printf '%s\n' 'GPU_LAB_STREAM_SUMMARY_BEGIN'" \
+"    printf '%s\n' 'stream_samples=5'" \
+"    printf '%s\n' 'stream_concurrency=3'" \
+"    printf '%s\n' 'stream_shape_summaries=[{\"id\":\"prefill-heavy\",\"prompt_token_target\":1536,\"max_tokens\":64,\"weight\":1,\"completed_requests\":5,\"failed_requests\":0,\"p50_request_latency_seconds\":1.25,\"p95_request_latency_seconds\":1.75,\"p99_request_latency_seconds\":1.95,\"p50_ttft_seconds\":0.12,\"p95_ttft_seconds\":0.20,\"p50_inter_token_latency_seconds\":0.01,\"p95_inter_token_latency_seconds\":0.03,\"generation_tokens_per_second\":42.5}]'" \
+"    printf '%s\n' 'stream_shape_summary_row=| prefill-heavy | 1536 | 64 | 5 | 0 | 1.75 | 0.20 | 0.03 | 42.5 |'" \
 "    printf '%s\n' 'completed_requests=5'" \
 "    printf '%s\n' 'failed_requests=0'" \
 "    printf '%s\n' 'p50_request_latency_seconds=1.25'" \
@@ -1077,6 +1242,7 @@ run_stream_experiment_runner_test() {
     --case prefill-heavy \
     --profile default \
     --samples 5 \
+    --concurrency 3 \
     --report "${TEST_TMPDIR}/stream.md" \
     --json-report "${TEST_TMPDIR}/stream.json"
 
@@ -1093,9 +1259,16 @@ run_stream_experiment_runner_test() {
   KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
 
   assert_contains "${STREAM_REPORT_CONTENT}" "Status: complete" "run-stream should mark the Markdown report complete"
+  assert_contains "${STREAM_REPORT_CONTENT}" "| Stream samples | 5 |" "run-stream should record stream samples in the Markdown report"
+  assert_contains "${STREAM_REPORT_CONTENT}" "| Stream concurrency | 3 |" "run-stream should record stream concurrency in the Markdown report"
   assert_contains "${STREAM_REPORT_CONTENT}" "| p50 TTFT | 0.12 |" "run-stream should parse p50 TTFT from stream logs"
   assert_contains "${STREAM_REPORT_CONTENT}" "| p95 inter-token latency | 0.03 |" "run-stream should parse p95 inter-token latency from stream logs"
+  assert_contains "${STREAM_REPORT_CONTENT}" "## Stream Shape Results" "run-stream should include per-shape metrics in the Markdown report"
+  assert_contains "${STREAM_REPORT_CONTENT}" "| prefill-heavy | 1536 | 64 | 5 | 0 | 1.75 | 0.20 | 0.03 | 42.5 |" "run-stream should render per-shape Markdown rows"
   assert_contains "${STREAM_JSON_CONTENT}" "\"source\": \"scripts/experiment run-stream\"" "run-stream should record the streaming runner source"
+  assert_contains "${STREAM_JSON_CONTENT}" "\"stream\": {" "run-stream should write stream metadata to JSON"
+  assert_contains "${STREAM_JSON_CONTENT}" "\"samples\": 5" "run-stream should write stream sample count to JSON"
+  assert_contains "${STREAM_JSON_CONTENT}" "\"concurrency\": 3" "run-stream should write stream concurrency to JSON"
   assert_contains "${STREAM_JSON_CONTENT}" "\"completed_requests\": 5" "run-stream should write completed requests to JSON"
   assert_contains "${STREAM_JSON_CONTENT}" "\"successful_requests\": 5" "run-stream should derive successful requests"
   assert_contains "${STREAM_JSON_CONTENT}" "\"p50_ttft_seconds\": 0.12" "run-stream should write p50 TTFT to JSON"
@@ -1104,6 +1277,8 @@ run_stream_experiment_runner_test() {
   assert_contains "${STREAM_JSON_CONTENT}" "\"p95_inter_token_latency_seconds\": 0.03" "run-stream should write p95 inter-token latency to JSON"
   assert_contains "${STREAM_JSON_CONTENT}" "\"generation_tokens_per_second\": 42.5" "run-stream should write streamed chunk throughput to JSON"
   assert_contains "${STREAM_JSON_CONTENT}" "\"run_duration_seconds\": 6.5" "run-stream should write run duration to JSON"
+  assert_contains "${STREAM_JSON_CONTENT}" "\"stream_shapes\": [{\"id\":\"prefill-heavy\"" "run-stream should write per-shape metrics to JSON"
+  assert_contains "${STREAM_JSON_CONTENT}" "\"p95_ttft_seconds\":0.20" "run-stream should preserve per-shape TTFT metrics"
   assert_occurs_before "${KUBECTL_LOG}" \
     "rollout status deployment/vllm-openai -n app --timeout=20m" \
     "get job/prefill-decode-prefill-heavy-stream -n app -o jsonpath=" \
@@ -1126,6 +1301,7 @@ run_render_fractional_arrival_rate_load_test
 run_render_autoscaling_load_test
 run_render_request_pattern_load_test
 run_render_stream_test
+run_render_mixed_stream_test
 run_render_unknown_case_test
 run_render_default_serving_profile_test
 run_render_long_context_serving_profile_test
@@ -1140,6 +1316,7 @@ run_render_cost_report_test
 run_render_report_default_path_test
 run_summarize_reports_test
 run_live_experiment_runner_test
+run_autoscaling_experiment_runner_timeline_test
 run_cost_experiment_runner_test
 run_experiment_waits_for_dcgm_before_load_test
 run_failed_experiment_job_test

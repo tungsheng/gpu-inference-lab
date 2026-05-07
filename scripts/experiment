@@ -24,12 +24,12 @@ Usage:
   ./scripts/experiment validate
   ./scripts/experiment show <experiment>
   ./scripts/experiment render-load --experiment name --case case-id [--output path]
-  ./scripts/experiment render-stream --experiment name --case case-id [--samples count] [--output path]
+  ./scripts/experiment render-stream --experiment name --case case-id [--samples count] [--concurrency count] [--output path]
   ./scripts/experiment render-serving --experiment name --profile profile-id [--output path]
   ./scripts/experiment render-report --experiment name --case case-id --profile profile-id [--report path] [--json-report path]
   ./scripts/experiment summarize-reports --experiment name [--reports-dir path]
   ./scripts/experiment run --experiment name --case case-id --profile profile-id [--report path] [--json-report path] [--preserve-serving] [--preserve-load]
-  ./scripts/experiment run-stream --experiment name --case case-id --profile profile-id [--samples count] [--report path] [--json-report path] [--preserve-serving] [--preserve-load]
+  ./scripts/experiment run-stream --experiment name --case case-id --profile profile-id [--samples count] [--concurrency count] [--report path] [--json-report path] [--preserve-serving] [--preserve-load]
 
 Examples:
   ./scripts/experiment list
@@ -478,6 +478,327 @@ max_optional_integer_values() {
 
 utc_timestamp() {
   date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+normalize_rfc3339() {
+  local timestamp=$1
+
+  if [[ "${timestamp}" == *.*Z ]]; then
+    printf '%sZ\n' "${timestamp%%.*}"
+    return 0
+  fi
+
+  printf '%s\n' "${timestamp}"
+}
+
+rfc3339_to_epoch() {
+  local timestamp
+
+  timestamp=$(normalize_rfc3339 "$1")
+
+  if date -u -d "${timestamp}" +%s >/dev/null 2>&1; then
+    date -u -d "${timestamp}" +%s
+    return 0
+  fi
+
+  date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "${timestamp}" +%s
+}
+
+experiment_scaling_timeline_enabled() {
+  local experiment_name=$1
+
+  [[ "${experiment_name}" == "autoscaling" ]]
+}
+
+record_experiment_scaling_elapsed_epoch() {
+  local variable_name=$1
+  local timestamp_epoch=${2:-}
+  local elapsed_seconds
+
+  if [[ -z "${timestamp_epoch}" || -z "${EXPERIMENT_SERVING_START_EPOCH_SECONDS:-}" ]]; then
+    return 0
+  fi
+
+  elapsed_seconds=$((timestamp_epoch - EXPERIMENT_SERVING_START_EPOCH_SECONDS))
+  if (( elapsed_seconds < 0 )); then
+    elapsed_seconds=0
+  fi
+
+  printf -v "${variable_name}" '%s' "${elapsed_seconds}"
+}
+
+record_experiment_scaling_now() {
+  local variable_name=$1
+
+  record_experiment_scaling_elapsed_epoch "${variable_name}" "$(date +%s)"
+}
+
+kubectl_resource_creation_epoch() {
+  local resource_kind=$1
+  local resource_name=$2
+  local namespace=${3:-}
+  local timestamp
+
+  if [[ -n "${namespace}" ]]; then
+    timestamp=$(kubectl get "${resource_kind}" "${resource_name}" \
+      -n "${namespace}" \
+      -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)
+  else
+    timestamp=$(kubectl get "${resource_kind}" "${resource_name}" \
+      -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)
+  fi
+
+  if [[ -z "${timestamp}" ]]; then
+    return 0
+  fi
+
+  rfc3339_to_epoch "${timestamp}" 2>/dev/null || true
+}
+
+record_experiment_resource_creation_elapsed() {
+  local variable_name=$1
+  local resource_kind=$2
+  local resource_name=$3
+  local namespace=${4:-}
+  local creation_epoch
+
+  if [[ -z "${resource_name}" ]]; then
+    return 0
+  fi
+
+  creation_epoch=$(kubectl_resource_creation_epoch "${resource_kind}" "${resource_name}" "${namespace}")
+  if [[ -n "${creation_epoch}" ]]; then
+    record_experiment_scaling_elapsed_epoch "${variable_name}" "${creation_epoch}"
+    return 0
+  fi
+
+  record_experiment_scaling_now "${variable_name}"
+}
+
+experiment_nodeclaim_rows() {
+  kubectl get nodeclaims \
+    -l "${KARPENTER_SERVING_NODEPOOL_SELECTOR}" \
+    --sort-by=.metadata.creationTimestamp \
+    -o custom-columns='NAME:.metadata.name,DELETION:.metadata.deletionTimestamp' \
+    --no-headers 2>/dev/null || true
+}
+
+active_experiment_nodeclaim_count() {
+  experiment_nodeclaim_rows | awk '($2 == "" || $2 == "<none>") { count++ } END { print count + 0 }'
+}
+
+first_experiment_nodeclaim_name() {
+  experiment_nodeclaim_rows | awk '($2 == "" || $2 == "<none>") { print $1; exit }'
+}
+
+experiment_gpu_node_rows() {
+  kubectl get nodes \
+    -l 'workload=gpu' \
+    --sort-by=.metadata.creationTimestamp \
+    --no-headers 2>/dev/null || true
+}
+
+active_experiment_gpu_node_count() {
+  experiment_gpu_node_rows | awk '$2 == "Ready" { count++ } END { print count + 0 }'
+}
+
+first_experiment_gpu_node_name() {
+  experiment_gpu_node_rows | awk '$2 == "Ready" { print $1; exit }'
+}
+
+experiment_pod_names() {
+  kubectl get pods \
+    -n "${APP_NAMESPACE}" \
+    -l "app=${GPU_INFERENCE_DEPLOYMENT_NAME}" \
+    --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+}
+
+first_experiment_pod_name() {
+  experiment_pod_names | sed -n '1p'
+}
+
+wait_for_experiment_nodeclaims_at_least() {
+  local expected=$1
+  local timeout_seconds=$2
+  local start_time
+
+  start_time=$(date +%s)
+
+  while true; do
+    if (( $(active_experiment_nodeclaim_count) >= expected )); then
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for at least %s serving NodeClaim(s)\n' "${expected}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+wait_for_experiment_gpu_nodes_at_least() {
+  local expected=$1
+  local timeout_seconds=$2
+  local start_time
+
+  start_time=$(date +%s)
+
+  while true; do
+    if (( $(active_experiment_gpu_node_count) >= expected )); then
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for at least %s GPU node(s)\n' "${expected}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+wait_for_experiment_first_pod_name() {
+  local timeout_seconds=$1
+  local start_time
+  local pod_name
+
+  start_time=$(date +%s)
+
+  while true; do
+    pod_name=$(first_experiment_pod_name)
+    if [[ -n "${pod_name}" ]]; then
+      printf '%s\n' "${pod_name}"
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for the first experiment serving pod to appear\n' >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+wait_for_experiment_pod_timestamp() {
+  local pod_name=$1
+  local jsonpath=$2
+  local timeout_seconds=$3
+  local start_time
+  local timestamp
+
+  start_time=$(date +%s)
+
+  while true; do
+    timestamp=$(kubectl get pod "${pod_name}" \
+      -n "${APP_NAMESPACE}" \
+      -o "jsonpath=${jsonpath}" 2>/dev/null || true)
+
+    if [[ -n "${timestamp}" ]]; then
+      printf '%s\n' "${timestamp}"
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for pod timestamp: %s\n' "${pod_name}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+wait_for_experiment_pod_condition_timestamp() {
+  local pod_name=$1
+  local condition_type=$2
+  local timeout_seconds=$3
+  local start_time
+  local condition_status
+  local timestamp
+
+  start_time=$(date +%s)
+
+  while true; do
+    condition_status=$(kubectl get pod "${pod_name}" \
+      -n "${APP_NAMESPACE}" \
+      -o "jsonpath={.status.conditions[?(@.type=='${condition_type}')].status}" 2>/dev/null || true)
+    timestamp=$(kubectl get pod "${pod_name}" \
+      -n "${APP_NAMESPACE}" \
+      -o "jsonpath={.status.conditions[?(@.type=='${condition_type}')].lastTransitionTime}" 2>/dev/null || true)
+
+    if [[ "${condition_status}" == "True" && -n "${timestamp}" ]]; then
+      printf '%s\n' "${timestamp}"
+      return 0
+    fi
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for pod condition %s=True: %s\n' "${condition_type}" "${pod_name}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+record_experiment_pod_timestamp_elapsed() {
+  local variable_name=$1
+  local timestamp=${2:-}
+  local timestamp_epoch
+
+  if [[ -z "${timestamp}" ]]; then
+    return 0
+  fi
+
+  timestamp_epoch=$(rfc3339_to_epoch "${timestamp}" 2>/dev/null || true)
+  record_experiment_scaling_elapsed_epoch "${variable_name}" "${timestamp_epoch}"
+}
+
+collect_experiment_autoscaling_timeline() {
+  local experiment_name=$1
+  local nodeclaim_name
+  local gpu_node_name
+  local pod_name
+  local pod_scheduled_timestamp
+  local container_started_timestamp
+
+  if ! experiment_scaling_timeline_enabled "${experiment_name}"; then
+    return 0
+  fi
+
+  printf 'Collecting autoscaling provisioning timeline\n'
+  wait_for_experiment_nodeclaims_at_least 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  nodeclaim_name=$(first_experiment_nodeclaim_name)
+  record_experiment_resource_creation_elapsed RESULT_FIRST_NODECLAIM_SECONDS nodeclaim "${nodeclaim_name}"
+
+  wait_for_experiment_gpu_nodes_at_least 1 "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  gpu_node_name=$(first_experiment_gpu_node_name)
+  record_experiment_resource_creation_elapsed RESULT_FIRST_GPU_NODE_SECONDS node "${gpu_node_name}"
+
+  pod_name=$(wait_for_experiment_first_pod_name "${EVALUATE_SCALE_TIMEOUT_SECONDS}") || return 1
+  pod_scheduled_timestamp=$(wait_for_experiment_pod_condition_timestamp \
+    "${pod_name}" \
+    "PodScheduled" \
+    "${EVALUATE_SCALE_TIMEOUT_SECONDS}") || return 1
+  record_experiment_pod_timestamp_elapsed RESULT_POD_SCHEDULED_SECONDS "${pod_scheduled_timestamp}"
+
+  container_started_timestamp=$(wait_for_experiment_pod_timestamp \
+    "${pod_name}" \
+    '{.status.containerStatuses[0].state.running.startedAt}' \
+    "${EVALUATE_SCALE_TIMEOUT_SECONDS}") || return 1
+  record_experiment_pod_timestamp_elapsed RESULT_CONTAINER_STARTED_SECONDS "${container_started_timestamp}"
+}
+
+record_experiment_model_ready_timeline() {
+  local experiment_name=$1
+
+  if ! experiment_scaling_timeline_enabled "${experiment_name}"; then
+    return 0
+  fi
+
+  record_experiment_scaling_now RESULT_MODEL_READY_SECONDS
 }
 
 experiment_job_name() {
@@ -1249,6 +1570,8 @@ render_stream_client_script() {
   local experiment_name=$1
   local served_model_name=$2
   local samples=$3
+  local stream_concurrency=$4
+  local request_shapes_json=$5
   local target_url="http://${GPU_INFERENCE_SERVICE_NAME}.${APP_NAMESPACE}.svc.cluster.local/v1/completions"
   local rendered
 
@@ -1258,7 +1581,9 @@ render_stream_client_script() {
   rendered=${rendered//@CASE_ID@/${CASE_ID}}
   rendered=${rendered//@PROMPT_TOKEN_TARGET@/${PROMPT_TOKEN_TARGET}}
   rendered=${rendered//@MAX_TOKENS@/${MAX_TOKENS}}
+  rendered=${rendered//@REQUEST_SHAPES_JSON@/${request_shapes_json}}
   rendered=${rendered//@SAMPLES@/${samples}}
+  rendered=${rendered//@STREAM_CONCURRENCY@/${stream_concurrency}}
   rendered=${rendered//@TIMEOUT_SECONDS@/${TIMEOUT_SECONDS}}
   rendered=${rendered//@TARGET_URL@/${target_url}}
   rendered=${rendered//@MODEL_NAME@/${served_model_name}}
@@ -1438,17 +1763,21 @@ render_stream_manifest() {
   local experiment_name=$1
   local case_id=$2
   local samples=$3
+  local stream_concurrency=$4
   local job_name
   local configmap_name
   local stream_served_model_name
+  local request_shapes_json
 
   require_experiment "${experiment_name}"
   load_case "${experiment_name}" "${case_id}"
   require_positive_integer "${samples}" "stream samples"
+  require_positive_integer "${stream_concurrency}" "stream concurrency"
 
   job_name=$(stream_job_name "${experiment_name}" "${CASE_ID}")
   configmap_name="${job_name}-client"
   stream_served_model_name="${SERVED_MODEL_NAME:-${GPU_INFERENCE_SERVED_MODEL_NAME}}"
+  request_shapes_json=$(render_request_shapes_json "${experiment_name}")
 
   cat <<EOF
 apiVersion: v1
@@ -1463,7 +1792,7 @@ metadata:
 data:
   stream-client.py: |
 EOF
-  render_stream_client_script "${experiment_name}" "${stream_served_model_name}" "${samples}" | indent_manifest_script
+  render_stream_client_script "${experiment_name}" "${stream_served_model_name}" "${samples}" "${stream_concurrency}" "${request_shapes_json}" | indent_manifest_script
   cat <<EOF
 ---
 apiVersion: batch/v1
@@ -1499,6 +1828,21 @@ spec:
         - name: scripts
           configMap:
             name: ${configmap_name}
+EOF
+}
+
+render_stream_shape_summary_markdown() {
+  if [[ -z "${STREAM_SHAPE_SUMMARY_ROWS:-}" ]]; then
+    return 0
+  fi
+
+  cat <<EOF
+
+## Stream Shape Results
+
+| Shape | Prompt tokens | Max output tokens | Completed | Failed | p95 request latency | p95 TTFT | p95 inter-token latency | Generation tokens/sec |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+${STREAM_SHAPE_SUMMARY_ROWS}
 EOF
 }
 
@@ -1557,6 +1901,9 @@ render_report_markdown() {
   local slo_p95_target_display
   local slo_p99_target_display
   local slo_passed_display
+  local stream_samples_display
+  local stream_concurrency_display
+  local stream_shape_summary_section
 
   require_experiment "${experiment_name}"
   load_case "${experiment_name}" "${case_id}"
@@ -1619,6 +1966,9 @@ render_report_markdown() {
   slo_p95_target_display=$(display_optional_metric "${COST_SLO_P95_REQUEST_LATENCY_SECONDS:-}")
   slo_p99_target_display=$(display_optional_metric "${COST_SLO_P99_REQUEST_LATENCY_SECONDS:-}")
   slo_passed_display=$(display_optional_metric "${RESULT_SLO_PASSED:-}")
+  stream_samples_display=$(display_optional_metric "${STREAM_SAMPLES:-}")
+  stream_concurrency_display=$(display_optional_metric "${STREAM_CONCURRENCY:-}")
+  stream_shape_summary_section=$(render_stream_shape_summary_markdown)
 
   cat <<EOF
 # ${experiment_title_value} - ${CASE_ID}
@@ -1651,6 +2001,8 @@ render_report_markdown() {
 | Pre-allocated VUs | ${PRE_ALLOCATED_VUS} |
 | Max VUs | ${MAX_VUS} |
 | Timeout | ${TIMEOUT_SECONDS}s |
+| Stream samples | ${stream_samples_display} |
+| Stream concurrency | ${stream_concurrency_display} |
 
 ## Serving Profile
 
@@ -1712,6 +2064,7 @@ render_report_markdown() {
 | Estimated burst cost | ${estimated_burst_cost_display} |
 | Cost per 1K successful requests | ${cost_per_1000_display} |
 | Cost per 1M generated tokens | ${cost_per_1m_tokens_display} |
+${stream_shape_summary_section}
 
 ## Notes
 
@@ -1730,6 +2083,7 @@ render_report_json() {
   local max_num_seqs_json
   local max_num_batched_tokens_json
   local request_shapes_json
+  local stream_shape_summaries_json
   local run_status="${RUN_STATUS:-pending}"
   local run_source="${RUN_SOURCE:-scripts/experiment render-report}"
 
@@ -1743,6 +2097,7 @@ render_report_json() {
   max_num_seqs_json=$(json_optional_integer "${MAX_NUM_SEQS}")
   max_num_batched_tokens_json=$(json_optional_integer "${MAX_NUM_BATCHED_TOKENS}")
   request_shapes_json=$(render_request_shapes_json "${experiment_name}")
+  stream_shape_summaries_json=${RESULT_STREAM_SHAPE_SUMMARIES_JSON:-[]}
 
   cat <<EOF
 {
@@ -1772,6 +2127,10 @@ render_report_json() {
       "pre_allocated_vus": ${PRE_ALLOCATED_VUS},
       "max_vus": ${MAX_VUS},
       "timeout_seconds": ${TIMEOUT_SECONDS}
+    },
+    "stream": {
+      "samples": $(json_optional_integer "${STREAM_SAMPLES:-}"),
+      "concurrency": $(json_optional_integer "${STREAM_CONCURRENCY:-}")
     }
   },
   "serving_profile": {
@@ -1819,6 +2178,7 @@ render_report_json() {
       "run_duration_seconds": $(json_optional_number "${RESULT_RUN_DURATION_SECONDS:-}"),
       "generation_tokens_per_second": $(json_optional_number "${RESULT_GENERATION_TOKENS_PER_SECOND:-}")
     },
+    "stream_shapes": ${stream_shape_summaries_json},
     "queue": {
       "peak_waiting_requests": $(json_optional_number "${RESULT_PEAK_WAITING_REQUESTS:-}"),
       "peak_running_requests": $(json_optional_number "${RESULT_PEAK_RUNNING_REQUESTS:-}"),
@@ -2241,6 +2601,10 @@ parse_stream_summary_log() {
   RESULT_P95_INTER_TOKEN_LATENCY_SECONDS=""
   RESULT_GENERATION_TOKENS_PER_SECOND=""
   RESULT_RUN_DURATION_SECONDS=""
+  RESULT_STREAM_SHAPE_SUMMARIES_JSON=""
+  STREAM_SAMPLES=""
+  STREAM_CONCURRENCY=""
+  STREAM_SHAPE_SUMMARY_ROWS=""
 
   while IFS= read -r line; do
     case "${line}" in
@@ -2261,6 +2625,18 @@ parse_stream_summary_log() {
     key=${line%%=*}
     value=${line#*=}
     case "${key}" in
+      stream_samples)
+        STREAM_SAMPLES=${value}
+        ;;
+      stream_concurrency)
+        STREAM_CONCURRENCY=${value}
+        ;;
+      stream_shape_summaries)
+        RESULT_STREAM_SHAPE_SUMMARIES_JSON=${value}
+        ;;
+      stream_shape_summary_row)
+        STREAM_SHAPE_SUMMARY_ROWS+="${value}"$'\n'
+        ;;
       completed_requests)
         RESULT_COMPLETED_REQUESTS=${value}
         ;;
@@ -2517,8 +2893,11 @@ run_experiment_case() {
   kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}"
 
   printf 'Applying serving profile %s/%s\n' "${experiment_name}" "${profile_id}"
+  EXPERIMENT_SERVING_START_EPOCH_SECONDS=$(date +%s)
   kubectl apply -f "${serving_manifest}"
+  collect_experiment_autoscaling_timeline "${experiment_name}"
   kubectl rollout status "deployment/${GPU_INFERENCE_DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" --timeout=20m
+  record_experiment_model_ready_timeline "${experiment_name}"
   wait_for_experiment_dcgm_metrics
 
   printf 'Applying load case %s/%s\n' "${experiment_name}" "${CASE_ID}"
@@ -2572,10 +2951,11 @@ run_stream_case() {
   local case_id=$2
   local profile_id=$3
   local samples=$4
-  local report_path=$5
-  local json_report_path=$6
-  local preserve_serving=$7
-  local preserve_load=$8
+  local stream_concurrency=$5
+  local report_path=$6
+  local json_report_path=$7
+  local preserve_serving=$8
+  local preserve_load=$9
   local serving_manifest
   local stream_manifest
   local stream_log_path
@@ -2588,6 +2968,7 @@ run_stream_case() {
   load_case "${experiment_name}" "${case_id}"
   load_serving_profile "${experiment_name}" "${profile_id}"
   require_positive_integer "${samples}" "stream samples"
+  require_positive_integer "${stream_concurrency}" "stream concurrency"
   validate_case_profile_compatibility "${experiment_name}"
 
   generated_at=$(utc_timestamp)
@@ -2597,17 +2978,20 @@ run_stream_case() {
   stream_log_path="${json_report_path%.json}.stream.log"
 
   render_serving_manifest "${experiment_name}" "${profile_id}" > "${serving_manifest}"
-  render_stream_manifest "${experiment_name}" "${case_id}" "${samples}" > "${stream_manifest}"
+  render_stream_manifest "${experiment_name}" "${case_id}" "${samples}" "${stream_concurrency}" > "${stream_manifest}"
 
   printf 'Applying service manifest: %s\n' "${GPU_INFERENCE_SERVICE_MANIFEST}"
   kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}"
 
   printf 'Applying serving profile %s/%s\n' "${experiment_name}" "${profile_id}"
+  EXPERIMENT_SERVING_START_EPOCH_SECONDS=$(date +%s)
   kubectl apply -f "${serving_manifest}"
+  collect_experiment_autoscaling_timeline "${experiment_name}"
   kubectl rollout status "deployment/${GPU_INFERENCE_DEPLOYMENT_NAME}" -n "${APP_NAMESPACE}" --timeout=20m
+  record_experiment_model_ready_timeline "${experiment_name}"
   wait_for_experiment_dcgm_metrics
 
-  printf 'Applying streaming case %s/%s with %s sample(s)\n' "${experiment_name}" "${CASE_ID}" "${samples}"
+  printf 'Applying streaming case %s/%s with %s sample(s), concurrency %s\n' "${experiment_name}" "${CASE_ID}" "${samples}" "${stream_concurrency}"
   EXPERIMENT_LOAD_START_EPOCH_SECONDS=$(date +%s)
   kubectl apply -f "${stream_manifest}"
 
@@ -2622,6 +3006,8 @@ run_stream_case() {
   if [[ -s "${stream_log_path}" ]]; then
     parse_stream_summary_log "${stream_log_path}"
   fi
+  STREAM_SAMPLES=${STREAM_SAMPLES:-${samples}}
+  STREAM_CONCURRENCY=${STREAM_CONCURRENCY:-${stream_concurrency}}
   detect_vllm_oom_events
   collect_experiment_observability_metrics
   derive_cost_metrics "${experiment_name}" "${PROFILE_ID}"
@@ -2702,6 +3088,7 @@ render_stream_command() {
   local experiment_name=""
   local case_id=""
   local samples=5
+  local stream_concurrency=1
   local output_path=""
 
   while [[ $# -gt 0 ]]; do
@@ -2716,6 +3103,10 @@ render_stream_command() {
         ;;
       --samples)
         samples=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --concurrency)
+        stream_concurrency=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       --output)
@@ -2741,12 +3132,13 @@ render_stream_command() {
   fi
 
   require_positive_integer "${samples}" "stream samples"
+  require_positive_integer "${stream_concurrency}" "stream concurrency"
 
   if [[ -n "${output_path}" ]]; then
-    render_stream_manifest "${experiment_name}" "${case_id}" "${samples}" > "${output_path}"
+    render_stream_manifest "${experiment_name}" "${case_id}" "${samples}" "${stream_concurrency}" > "${output_path}"
     printf 'Rendered stream manifest: %s\n' "${output_path}"
   else
-    render_stream_manifest "${experiment_name}" "${case_id}" "${samples}"
+    render_stream_manifest "${experiment_name}" "${case_id}" "${samples}" "${stream_concurrency}"
   fi
 }
 
@@ -3005,6 +3397,7 @@ run_stream_command() {
   local case_id=""
   local profile_id=""
   local samples=5
+  local stream_concurrency=1
   local report_path=""
   local json_report_path=""
   local preserve_serving=0
@@ -3028,6 +3421,10 @@ run_stream_command() {
         ;;
       --samples)
         samples=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --concurrency)
+        stream_concurrency=$(require_option_value "$1" "${2-}")
         shift 2
         ;;
       --report)
@@ -3069,6 +3466,7 @@ run_stream_command() {
   fi
 
   require_positive_integer "${samples}" "stream samples"
+  require_positive_integer "${stream_concurrency}" "stream concurrency"
 
   timestamp=$(date +%Y%m%d-%H%M%S)
   if [[ -z "${report_path}" || -z "${json_report_path}" ]]; then
@@ -3081,7 +3479,7 @@ run_stream_command() {
     fi
   fi
 
-  run_stream_case "${experiment_name}" "${case_id}" "${profile_id}" "${samples}" "${report_path}" "${json_report_path}" "${preserve_serving}" "${preserve_load}"
+  run_stream_case "${experiment_name}" "${case_id}" "${profile_id}" "${samples}" "${stream_concurrency}" "${report_path}" "${json_report_path}" "${preserve_serving}" "${preserve_load}"
 }
 
 render_serving_command() {
