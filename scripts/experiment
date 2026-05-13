@@ -12,6 +12,8 @@ SERVING_DEFAULTS_PATH="${EXPERIMENT_SERVING_DEFAULTS_PATH:-${EXPERIMENTS_DIR}/_p
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 LOAD_CLIENT_TEMPLATE="${TEMPLATES_DIR}/experiment-load-test.js.tpl"
 STREAM_CLIENT_TEMPLATE="${TEMPLATES_DIR}/experiment-stream-client.py.tpl"
+ACCURACY_CLIENT_TEMPLATE="${TEMPLATES_DIR}/experiment-accuracy-client.py.tpl"
+MODEL_ARTIFACT_PVC_NAME="${EXPERIMENT_MODEL_ARTIFACT_PVC_NAME:-model-artifacts}"
 EXPERIMENT_PROMETHEUS_LOCAL_PORT=""
 EXPERIMENT_PROMETHEUS_PORT_FORWARD_PID=""
 EXPERIMENT_PROMETHEUS_PORT_FORWARD_LOG=""
@@ -25,6 +27,8 @@ Usage:
   ./scripts/experiment show <experiment>
   ./scripts/experiment render-load --experiment name --case case-id [--output path]
   ./scripts/experiment render-stream --experiment name --case case-id [--samples count] [--concurrency count] [--output path]
+  ./scripts/experiment render-accuracy --experiment name --profile profile-id [--case accuracy-case-id] [--output path]
+  ./scripts/experiment render-quantization --experiment name --profile profile-id [--output path]
   ./scripts/experiment render-serving --experiment name --profile profile-id [--output path]
   ./scripts/experiment render-report --experiment name --case case-id --profile profile-id [--report path] [--json-report path]
   ./scripts/experiment summarize-reports --experiment name [--reports-dir path]
@@ -37,6 +41,8 @@ Examples:
   ./scripts/experiment show kv-cache
   ./scripts/experiment render-load --experiment kv-cache --case prompt-512-output-100 --output /tmp/kv-cache-load.yaml
   ./scripts/experiment render-stream --experiment prefill-decode --case prefill-heavy --output /tmp/prefill-stream.yaml
+  ./scripts/experiment render-accuracy --experiment fp4 --profile bf16-baseline --output /tmp/fp4-accuracy.yaml
+  ./scripts/experiment render-quantization --experiment fp4 --profile nvfp4-plain --output /tmp/fp4-quantize.yaml
   ./scripts/experiment render-serving --experiment kv-cache --profile long-context --output /tmp/vllm-long-context.yaml
   ./scripts/experiment render-report --experiment kv-cache --case prompt-512-output-100 --profile default
   ./scripts/experiment summarize-reports --experiment kv-cache
@@ -105,6 +111,31 @@ experiment_cost_profiles_path() {
   printf '%s/cost-profiles.csv\n' "$(experiment_dir "${experiment_name}")"
 }
 
+experiment_cost_details_path() {
+  local experiment_name=$1
+  printf '%s/cost-details.csv\n' "$(experiment_dir "${experiment_name}")"
+}
+
+experiment_serving_extensions_path() {
+  local experiment_name=$1
+  printf '%s/serving-extensions.csv\n' "$(experiment_dir "${experiment_name}")"
+}
+
+experiment_accuracy_cases_path() {
+  local experiment_name=$1
+  printf '%s/accuracy-cases.csv\n' "$(experiment_dir "${experiment_name}")"
+}
+
+experiment_quantization_dir() {
+  local experiment_name=$1
+  printf '%s/quantization\n' "$(experiment_dir "${experiment_name}")"
+}
+
+experiment_quantization_jobs_path() {
+  local experiment_name=$1
+  printf '%s/quantization/quantization-jobs.csv\n' "$(experiment_dir "${experiment_name}")"
+}
+
 require_experiment() {
   local experiment_name=$1
   local metadata_path
@@ -158,6 +189,10 @@ show_experiment() {
   local request_shapes_path
   local client_policies_path
   local cost_profiles_path
+  local cost_details_path
+  local serving_extensions_path
+  local accuracy_cases_path
+  local quantization_jobs_path
   local row_profile_id
   local _row_rest
   local scheduler
@@ -170,6 +205,10 @@ show_experiment() {
   request_shapes_path=$(experiment_request_shapes_path "${experiment_name}")
   client_policies_path=$(experiment_client_policies_path "${experiment_name}")
   cost_profiles_path=$(experiment_cost_profiles_path "${experiment_name}")
+  cost_details_path=$(experiment_cost_details_path "${experiment_name}")
+  serving_extensions_path=$(experiment_serving_extensions_path "${experiment_name}")
+  accuracy_cases_path=$(experiment_accuracy_cases_path "${experiment_name}")
+  quantization_jobs_path=$(experiment_quantization_jobs_path "${experiment_name}")
 
   printf 'Experiment: %s\n' "${experiment_name}"
   printf 'Title: %s\n' "$(experiment_title "${experiment_name}")"
@@ -213,6 +252,37 @@ show_experiment() {
     ' "${cost_profiles_path}"
   fi
 
+  if [[ -f "${cost_details_path}" ]]; then
+    printf 'Cost details:\n'
+    awk -F',' '
+      NR == 1 { next }
+      NF > 0 && $1 !~ /^#/ {
+        printf "  - %s: instance=%s region=%s source=%s instance_hourly=%s accelerator_hourly=%s build_hours=%s\n", $1, $2, $3, $4, $5, $7, $10
+      }
+    ' "${cost_details_path}"
+  fi
+
+  if [[ -f "${accuracy_cases_path}" ]]; then
+    printf 'Accuracy cases:\n'
+    awk -F',' '
+      NR == 1 { next }
+      NF > 0 && $1 !~ /^#/ {
+        gsub(/\|/, ",", $2)
+        printf "  - %s: tasks=%s fewshot=%s limit=%s metric=%s\n", $1, $2, $3, $4, $5
+      }
+    ' "${accuracy_cases_path}"
+  fi
+
+  if [[ -f "${quantization_jobs_path}" ]]; then
+    printf 'Quantization jobs:\n'
+    awk -F',' '
+      NR == 1 { next }
+      NF > 0 && $1 !~ /^#/ {
+        printf "  - %s: recipe=%s base=%s output=%s calibration=%s/%s samples=%s max_seq_len=%s seed=%s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9
+      }
+    ' "${quantization_jobs_path}"
+  fi
+
   if [[ -f "${serving_profiles_path}" ]]; then
     printf 'Serving profiles:\n'
     while IFS=',' read -r row_profile_id _row_rest; do
@@ -229,6 +299,16 @@ show_experiment() {
       printf "  - %s: model=%s served=%s max_model_len=%s gpu_memory=%s scheduler=%s\n" \
         "${PROFILE_ID}" "${MODEL}" "${SERVED_MODEL_NAME}" "${MAX_MODEL_LEN}" "${GPU_MEMORY_UTILIZATION}" "${scheduler}"
     done < "${serving_profiles_path}"
+  fi
+
+  if [[ -f "${serving_extensions_path}" ]]; then
+    printf 'Serving extensions:\n'
+    awk -F',' '
+      NR == 1 { next }
+      NF > 0 && $1 !~ /^#/ {
+        printf "  - %s: dtype=%s tensor_parallel=%s node_profile=%s quantization=%s artifact=%s recipe_hash=%s\n", $1, $2, $3, $4, $5, $6, $8
+      }
+    ' "${serving_extensions_path}"
   fi
 }
 
@@ -282,6 +362,42 @@ require_safe_text() {
 
   if [[ ! "${value}" =~ ^[A-Za-z0-9._:/+=@-]+$ ]]; then
     die "Invalid ${label}: ${value}"
+  fi
+}
+
+require_task_list() {
+  local value=$1
+  local label=$2
+
+  if [[ ! "${value}" =~ ^[A-Za-z0-9._-]+(\|[A-Za-z0-9._-]+)*$ ]]; then
+    die "Invalid ${label}: ${value}"
+  fi
+}
+
+require_optional_rate() {
+  local value=${1:-}
+  local label=$2
+
+  if [[ -n "${value}" ]]; then
+    require_rate "${value}" "${label}"
+  fi
+}
+
+require_optional_positive_integer() {
+  local value=${1:-}
+  local label=$2
+
+  if [[ -n "${value}" ]]; then
+    require_positive_integer "${value}" "${label}"
+  fi
+}
+
+require_optional_non_negative_integer() {
+  local value=${1:-}
+  local label=$2
+
+  if [[ -n "${value}" ]]; then
+    require_non_negative_integer "${value}" "${label}"
   fi
 }
 
@@ -351,6 +467,21 @@ display_optional_metric() {
   else
     printf '%s' "${value}"
   fi
+}
+
+display_task_list() {
+  local value=${1:-}
+
+  if [[ -z "${value}" ]]; then
+    printf 'n/a'
+  else
+    printf '%s' "${value//|/, }"
+  fi
+}
+
+tasks_pipe_to_csv() {
+  local value=$1
+  printf '%s' "${value//|/,}"
 }
 
 display_optional_bytes_gib() {
@@ -880,6 +1011,82 @@ validate_loaded_serving_profile() {
   require_resource_quantity "${SHM_SIZE}" "shared memory size"
 }
 
+reset_serving_extension() {
+  SERVING_DTYPE="float16"
+  SERVING_TENSOR_PARALLEL_SIZE=""
+  SERVING_NODE_PROFILE=""
+  QUANTIZATION_METHOD=""
+  MODEL_ARTIFACT_PATH=""
+  MODEL_ARTIFACT_HASH=""
+  RECIPE_HASH=""
+  CALIBRATION_DATASET=""
+  CALIBRATION_SPLIT=""
+  CALIBRATION_SAMPLES=""
+  CALIBRATION_MAX_SEQ_LEN=""
+  CALIBRATION_SEED=""
+}
+
+validate_loaded_serving_extension() {
+  case "${SERVING_DTYPE}" in
+    auto|float16|bfloat16)
+      ;;
+    *)
+      die "Invalid serving dtype: ${SERVING_DTYPE}"
+      ;;
+  esac
+
+  require_optional_positive_integer "${SERVING_TENSOR_PARALLEL_SIZE}" "tensor parallel size"
+  if [[ -n "${SERVING_NODE_PROFILE}" ]]; then
+    require_safe_text "${SERVING_NODE_PROFILE}" "serving node profile"
+  fi
+  if [[ -n "${QUANTIZATION_METHOD}" ]]; then
+    require_safe_text "${QUANTIZATION_METHOD}" "quantization method"
+  fi
+  if [[ -n "${MODEL_ARTIFACT_PATH}" ]]; then
+    require_safe_text "${MODEL_ARTIFACT_PATH}" "model artifact path"
+  fi
+  if [[ -n "${MODEL_ARTIFACT_HASH}" ]]; then
+    require_safe_text "${MODEL_ARTIFACT_HASH}" "model artifact hash"
+  fi
+  if [[ -n "${RECIPE_HASH}" ]]; then
+    require_safe_text "${RECIPE_HASH}" "recipe hash"
+  fi
+  if [[ -n "${CALIBRATION_DATASET}" ]]; then
+    require_safe_text "${CALIBRATION_DATASET}" "calibration dataset"
+  fi
+  if [[ -n "${CALIBRATION_SPLIT}" ]]; then
+    require_safe_text "${CALIBRATION_SPLIT}" "calibration split"
+  fi
+  require_optional_non_negative_integer "${CALIBRATION_SAMPLES}" "calibration samples"
+  require_optional_positive_integer "${CALIBRATION_MAX_SEQ_LEN}" "calibration max sequence length"
+  require_optional_non_negative_integer "${CALIBRATION_SEED}" "calibration seed"
+}
+
+load_serving_extension() {
+  local experiment_name=$1
+  local requested_profile_id=$2
+  local extensions_path
+  local row_profile_id
+
+  reset_serving_extension
+
+  extensions_path=$(experiment_serving_extensions_path "${experiment_name}")
+  if [[ ! -f "${extensions_path}" ]]; then
+    return 0
+  fi
+
+  while IFS=',' read -r row_profile_id SERVING_DTYPE SERVING_TENSOR_PARALLEL_SIZE SERVING_NODE_PROFILE QUANTIZATION_METHOD MODEL_ARTIFACT_PATH MODEL_ARTIFACT_HASH RECIPE_HASH CALIBRATION_DATASET CALIBRATION_SPLIT CALIBRATION_SAMPLES CALIBRATION_MAX_SEQ_LEN CALIBRATION_SEED _serving_extension_description; do
+    if [[ -z "${row_profile_id}" || "${row_profile_id}" == "profile_id" || "${row_profile_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "${row_profile_id}" == "${requested_profile_id}" ]]; then
+      validate_loaded_serving_extension
+      return 0
+    fi
+  done < "${extensions_path}"
+}
+
 load_default_serving_profile() {
   local row_profile_id
 
@@ -897,6 +1104,7 @@ load_default_serving_profile() {
   MODEL_CACHE_SIZE=""
   SHM_SIZE=""
   PROFILE_DESCRIPTION=""
+  reset_serving_extension
 
   if [[ ! -f "${SERVING_DEFAULTS_PATH}" ]]; then
     die "Missing shared serving defaults: ${SERVING_DEFAULTS_PATH}"
@@ -964,6 +1172,7 @@ load_serving_profile() {
       SHM_SIZE=${row_shm_size:-${SHM_SIZE}}
       PROFILE_DESCRIPTION=${row_profile_description:-${PROFILE_DESCRIPTION}}
       validate_loaded_serving_profile
+      load_serving_extension "${experiment_name}" "${requested_profile_id}"
       return 0
     fi
   done < "${profiles_path}"
@@ -1060,6 +1269,133 @@ load_cost_profile() {
   done < "${cost_profiles_path}"
 
   die "Experiment ${experiment_name} has cost-profiles.csv but no cost profile for serving profile ${requested_profile_id}"
+}
+
+load_cost_detail_profile() {
+  local experiment_name=$1
+  local requested_profile_id=$2
+  local cost_details_path
+  local row_profile_id
+
+  COST_INSTANCE_TYPE=""
+  COST_REGION=""
+  COST_SOURCE=""
+  COST_INSTANCE_HOURLY_COST_USD=""
+  COST_ACCELERATOR_COUNT=""
+  COST_ACCELERATOR_HOURLY_COST_USD=""
+  COST_LINUX_HOURLY_COST_USD=""
+  COST_QUANTIZATION_BUILD_HOURLY_COST_USD=""
+  COST_QUANTIZATION_BUILD_HOURS=""
+  COST_QUANTIZATION_BUILD_COST_USD=""
+
+  cost_details_path=$(experiment_cost_details_path "${experiment_name}")
+  if [[ ! -f "${cost_details_path}" ]]; then
+    return 0
+  fi
+
+  while IFS=',' read -r row_profile_id COST_INSTANCE_TYPE COST_REGION COST_SOURCE COST_INSTANCE_HOURLY_COST_USD COST_ACCELERATOR_COUNT COST_ACCELERATOR_HOURLY_COST_USD COST_LINUX_HOURLY_COST_USD COST_QUANTIZATION_BUILD_HOURLY_COST_USD COST_QUANTIZATION_BUILD_HOURS _cost_detail_description; do
+    if [[ -z "${row_profile_id}" || "${row_profile_id}" == "profile_id" || "${row_profile_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "${row_profile_id}" == "${requested_profile_id}" ]]; then
+      require_name "${row_profile_id}" "cost detail profile id"
+      require_safe_text "${COST_INSTANCE_TYPE}" "cost instance type"
+      require_safe_text "${COST_REGION}" "cost region"
+      require_safe_text "${COST_SOURCE}" "cost source"
+      require_rate "${COST_INSTANCE_HOURLY_COST_USD}" "instance hourly cost"
+      require_positive_integer "${COST_ACCELERATOR_COUNT}" "accelerator count"
+      require_rate "${COST_ACCELERATOR_HOURLY_COST_USD}" "accelerator hourly cost"
+      require_rate "${COST_LINUX_HOURLY_COST_USD}" "Linux hourly cost"
+      require_rate "${COST_QUANTIZATION_BUILD_HOURLY_COST_USD}" "quantization build hourly cost"
+      require_rate "${COST_QUANTIZATION_BUILD_HOURS}" "quantization build hours"
+      COST_QUANTIZATION_BUILD_COST_USD=$(multiply_decimal_values "${COST_QUANTIZATION_BUILD_HOURLY_COST_USD}" "${COST_QUANTIZATION_BUILD_HOURS}" 6)
+      return 0
+    fi
+  done < "${cost_details_path}"
+}
+
+load_accuracy_case() {
+  local experiment_name=$1
+  local requested_accuracy_case_id=${2:-}
+  local accuracy_cases_path
+  local row_case_id
+
+  ACCURACY_CASE_ID=""
+  ACCURACY_TASKS=""
+  ACCURACY_NUM_FEWSHOT=""
+  ACCURACY_LIMIT=""
+  ACCURACY_PRIMARY_METRIC=""
+
+  accuracy_cases_path=$(experiment_accuracy_cases_path "${experiment_name}")
+  if [[ ! -f "${accuracy_cases_path}" ]]; then
+    return 0
+  fi
+
+  while IFS=',' read -r row_case_id ACCURACY_TASKS ACCURACY_NUM_FEWSHOT ACCURACY_LIMIT ACCURACY_PRIMARY_METRIC _accuracy_description; do
+    if [[ -z "${row_case_id}" || "${row_case_id}" == "case_id" || "${row_case_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ -z "${requested_accuracy_case_id}" || "${row_case_id}" == "${requested_accuracy_case_id}" ]]; then
+      ACCURACY_CASE_ID=${row_case_id}
+      require_name "${ACCURACY_CASE_ID}" "accuracy case id"
+      require_task_list "${ACCURACY_TASKS}" "accuracy task list"
+      require_non_negative_integer "${ACCURACY_NUM_FEWSHOT}" "accuracy few-shot count"
+      require_positive_integer "${ACCURACY_LIMIT}" "accuracy limit"
+      require_safe_text "${ACCURACY_PRIMARY_METRIC}" "accuracy primary metric"
+      return 0
+    fi
+  done < "${accuracy_cases_path}"
+
+  if [[ -n "${requested_accuracy_case_id}" ]]; then
+    die "Unknown accuracy case ${requested_accuracy_case_id} for experiment ${experiment_name}"
+  fi
+}
+
+load_quantization_job() {
+  local experiment_name=$1
+  local requested_profile_id=$2
+  local jobs_path
+  local row_profile_id
+
+  QUANTIZATION_RECIPE_PATH=""
+  QUANTIZATION_BASE_MODEL=""
+  QUANTIZATION_OUTPUT_MODEL=""
+  QUANTIZATION_CALIBRATION_DATASET=""
+  QUANTIZATION_CALIBRATION_SPLIT=""
+  QUANTIZATION_CALIBRATION_SAMPLES=""
+  QUANTIZATION_CALIBRATION_MAX_SEQ_LEN=""
+  QUANTIZATION_CALIBRATION_SEED=""
+  QUANTIZATION_IMAGE=""
+
+  require_name "${requested_profile_id}" "quantization profile id"
+  jobs_path=$(experiment_quantization_jobs_path "${experiment_name}")
+  if [[ ! -f "${jobs_path}" ]]; then
+    die "Experiment ${experiment_name} is missing quantization/quantization-jobs.csv"
+  fi
+
+  while IFS=',' read -r row_profile_id QUANTIZATION_RECIPE_PATH QUANTIZATION_BASE_MODEL QUANTIZATION_OUTPUT_MODEL QUANTIZATION_CALIBRATION_DATASET QUANTIZATION_CALIBRATION_SPLIT QUANTIZATION_CALIBRATION_SAMPLES QUANTIZATION_CALIBRATION_MAX_SEQ_LEN QUANTIZATION_CALIBRATION_SEED QUANTIZATION_IMAGE _quantization_description; do
+    if [[ -z "${row_profile_id}" || "${row_profile_id}" == "profile_id" || "${row_profile_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "${row_profile_id}" == "${requested_profile_id}" ]]; then
+      load_serving_profile "${experiment_name}" "${requested_profile_id}" >/dev/null
+      require_safe_text "${QUANTIZATION_RECIPE_PATH}" "quantization recipe path"
+      require_safe_text "${QUANTIZATION_BASE_MODEL}" "quantization base model"
+      require_safe_text "${QUANTIZATION_OUTPUT_MODEL}" "quantization output model"
+      require_safe_text "${QUANTIZATION_CALIBRATION_DATASET}" "quantization calibration dataset"
+      require_safe_text "${QUANTIZATION_CALIBRATION_SPLIT}" "quantization calibration split"
+      require_positive_integer "${QUANTIZATION_CALIBRATION_SAMPLES}" "quantization calibration samples"
+      require_positive_integer "${QUANTIZATION_CALIBRATION_MAX_SEQ_LEN}" "quantization calibration max sequence length"
+      require_non_negative_integer "${QUANTIZATION_CALIBRATION_SEED}" "quantization calibration seed"
+      require_safe_text "${QUANTIZATION_IMAGE}" "quantization image"
+      return 0
+    fi
+  done < "${jobs_path}"
+
+  die "Unknown quantization profile ${requested_profile_id} for experiment ${experiment_name}"
 }
 
 render_request_shapes_js() {
@@ -1383,6 +1719,93 @@ validate_cost_profile_rows() {
   done < "${cost_profiles_path}"
 }
 
+validate_cost_detail_rows() {
+  local experiment_name=$1
+  local cost_details_path
+  local row_profile_id
+  local _row_rest
+
+  cost_details_path=$(experiment_cost_details_path "${experiment_name}")
+  if [[ ! -f "${cost_details_path}" ]]; then
+    return 0
+  fi
+
+  while IFS=',' read -r row_profile_id _row_rest; do
+    if [[ -z "${row_profile_id}" || "${row_profile_id}" == "profile_id" || "${row_profile_id}" == \#* ]]; then
+      continue
+    fi
+
+    load_serving_profile "${experiment_name}" "${row_profile_id}" >/dev/null
+    load_cost_detail_profile "${experiment_name}" "${row_profile_id}"
+  done < "${cost_details_path}"
+}
+
+validate_serving_extension_rows() {
+  local experiment_name=$1
+  local extensions_path
+  local row_profile_id
+  local _row_rest
+
+  extensions_path=$(experiment_serving_extensions_path "${experiment_name}")
+  if [[ ! -f "${extensions_path}" ]]; then
+    return 0
+  fi
+
+  while IFS=',' read -r row_profile_id _row_rest; do
+    if [[ -z "${row_profile_id}" || "${row_profile_id}" == "profile_id" || "${row_profile_id}" == \#* ]]; then
+      continue
+    fi
+
+    load_serving_profile "${experiment_name}" "${row_profile_id}" >/dev/null
+    load_serving_extension "${experiment_name}" "${row_profile_id}"
+  done < "${extensions_path}"
+}
+
+validate_accuracy_case_rows() {
+  local experiment_name=$1
+  local accuracy_cases_path
+  local row_case_id
+  local _row_rest
+
+  accuracy_cases_path=$(experiment_accuracy_cases_path "${experiment_name}")
+  if [[ ! -f "${accuracy_cases_path}" ]]; then
+    return 0
+  fi
+
+  while IFS=',' read -r row_case_id _row_rest; do
+    if [[ -z "${row_case_id}" || "${row_case_id}" == "case_id" || "${row_case_id}" == \#* ]]; then
+      continue
+    fi
+
+    load_accuracy_case "${experiment_name}" "${row_case_id}"
+  done < "${accuracy_cases_path}"
+}
+
+validate_quantization_job_rows() {
+  local experiment_name=$1
+  local jobs_path
+  local row_profile_id
+  local _row_rest
+  local recipe_file
+
+  jobs_path=$(experiment_quantization_jobs_path "${experiment_name}")
+  if [[ ! -f "${jobs_path}" ]]; then
+    return 0
+  fi
+
+  while IFS=',' read -r row_profile_id _row_rest; do
+    if [[ -z "${row_profile_id}" || "${row_profile_id}" == "profile_id" || "${row_profile_id}" == \#* ]]; then
+      continue
+    fi
+
+    load_quantization_job "${experiment_name}" "${row_profile_id}"
+    recipe_file="$(experiment_dir "${experiment_name}")/${QUANTIZATION_RECIPE_PATH}"
+    if [[ ! -f "${recipe_file}" ]]; then
+      die "Missing quantization recipe: ${recipe_file}"
+    fi
+  done < "${jobs_path}"
+}
+
 validate_experiment() {
   local experiment_name=$1
   local cases_path
@@ -1390,6 +1813,10 @@ validate_experiment() {
   local request_shapes_path
   local client_policies_path
   local cost_profiles_path
+  local cost_details_path
+  local serving_extensions_path
+  local accuracy_cases_path
+  local quantization_jobs_path
 
   require_experiment "${experiment_name}"
   require_serving_profiles "${experiment_name}"
@@ -1399,6 +1826,10 @@ validate_experiment() {
   request_shapes_path=$(experiment_request_shapes_path "${experiment_name}")
   client_policies_path=$(experiment_client_policies_path "${experiment_name}")
   cost_profiles_path=$(experiment_cost_profiles_path "${experiment_name}")
+  cost_details_path=$(experiment_cost_details_path "${experiment_name}")
+  serving_extensions_path=$(experiment_serving_extensions_path "${experiment_name}")
+  accuracy_cases_path=$(experiment_accuracy_cases_path "${experiment_name}")
+  quantization_jobs_path=$(experiment_quantization_jobs_path "${experiment_name}")
 
   validate_csv_field_count "${cases_path}" 12
   validate_csv_field_count "${serving_profiles_path}" 15
@@ -1411,12 +1842,28 @@ validate_experiment() {
   if [[ -f "${cost_profiles_path}" ]]; then
     validate_csv_field_count "${cost_profiles_path}" 6
   fi
+  if [[ -f "${cost_details_path}" ]]; then
+    validate_csv_field_count "${cost_details_path}" 11
+  fi
+  if [[ -f "${serving_extensions_path}" ]]; then
+    validate_csv_field_count "${serving_extensions_path}" 14
+  fi
+  if [[ -f "${accuracy_cases_path}" ]]; then
+    validate_csv_field_count "${accuracy_cases_path}" 6
+  fi
+  if [[ -f "${quantization_jobs_path}" ]]; then
+    validate_csv_field_count "${quantization_jobs_path}" 11
+  fi
 
   validate_case_rows "${experiment_name}"
   validate_serving_profile_rows "${experiment_name}"
   validate_request_shape_rows "${experiment_name}"
   validate_client_policy_rows "${experiment_name}"
   validate_cost_profile_rows "${experiment_name}"
+  validate_cost_detail_rows "${experiment_name}"
+  validate_serving_extension_rows "${experiment_name}"
+  validate_accuracy_case_rows "${experiment_name}"
+  validate_quantization_job_rows "${experiment_name}"
 }
 
 validate_experiment_catalog() {
@@ -1428,6 +1875,7 @@ validate_experiment_catalog() {
   load_default_serving_profile
   require_template "${LOAD_CLIENT_TEMPLATE}"
   require_template "${STREAM_CLIENT_TEMPLATE}"
+  require_template "${ACCURACY_CLIENT_TEMPLATE}"
 
   while read -r experiment_path; do
     experiment_name=$(basename "${experiment_path}")
@@ -1527,6 +1975,55 @@ EOF
   fi
 }
 
+render_optional_vllm_parallel_args() {
+  if [[ -n "${SERVING_TENSOR_PARALLEL_SIZE}" ]]; then
+    cat <<EOF
+            - --tensor-parallel-size
+            - "${SERVING_TENSOR_PARALLEL_SIZE}"
+EOF
+  fi
+}
+
+render_optional_node_selector_labels() {
+  case "${SERVING_NODE_PROFILE}" in
+    blackwell)
+      cat <<EOF
+        node.kubernetes.io/instance-type: p6-b200.48xlarge
+EOF
+      ;;
+    "")
+      ;;
+    *)
+      cat <<EOF
+        gpu-lab/node-profile: ${SERVING_NODE_PROFILE}
+EOF
+      ;;
+  esac
+}
+
+serving_uses_model_artifacts_volume() {
+  [[ "${MODEL}" == /models/* ]]
+}
+
+render_optional_model_artifact_volume_mounts() {
+  if serving_uses_model_artifacts_volume; then
+    cat <<EOF
+            - name: model-artifacts
+              mountPath: /models
+EOF
+  fi
+}
+
+render_optional_model_artifact_volumes() {
+  if serving_uses_model_artifacts_volume; then
+    cat <<EOF
+        - name: model-artifacts
+          persistentVolumeClaim:
+            claimName: ${MODEL_ARTIFACT_PVC_NAME}
+EOF
+  fi
+}
+
 require_template() {
   local template_path=$1
 
@@ -1590,11 +2087,37 @@ render_stream_client_script() {
   printf '%s\n' "${rendered}"
 }
 
+render_accuracy_client_script() {
+  local experiment_name=$1
+  local profile_id=$2
+  local accuracy_tasks_csv
+  local target_url="http://${GPU_INFERENCE_SERVICE_NAME}.${APP_NAMESPACE}.svc.cluster.local/v1/completions"
+  local rendered
+
+  require_template "${ACCURACY_CLIENT_TEMPLATE}"
+  accuracy_tasks_csv=$(tasks_pipe_to_csv "${ACCURACY_TASKS}")
+  rendered=$(<"${ACCURACY_CLIENT_TEMPLATE}")
+  rendered=${rendered//@EXPERIMENT_NAME@/${experiment_name}}
+  rendered=${rendered//@PROFILE_ID@/${profile_id}}
+  rendered=${rendered//@ACCURACY_CASE_ID@/${ACCURACY_CASE_ID}}
+  rendered=${rendered//@ACCURACY_TASKS_CSV@/${accuracy_tasks_csv}}
+  rendered=${rendered//@ACCURACY_NUM_FEWSHOT@/${ACCURACY_NUM_FEWSHOT}}
+  rendered=${rendered//@ACCURACY_LIMIT@/${ACCURACY_LIMIT}}
+  rendered=${rendered//@ACCURACY_PRIMARY_METRIC@/${ACCURACY_PRIMARY_METRIC}}
+  rendered=${rendered//@TARGET_URL@/${target_url}}
+  rendered=${rendered//@MODEL_NAME@/${SERVED_MODEL_NAME}}
+  printf '%s\n' "${rendered}"
+}
+
 render_serving_manifest() {
   local experiment_name=$1
   local profile_id=$2
+  local serving_gpu_count="1"
 
   load_serving_profile "${experiment_name}" "${profile_id}"
+  if [[ -n "${SERVING_TENSOR_PARALLEL_SIZE}" ]]; then
+    serving_gpu_count=${SERVING_TENSOR_PARALLEL_SIZE}
+  fi
 
   cat <<EOF
 apiVersion: apps/v1
@@ -1615,6 +2138,9 @@ spec:
       terminationGracePeriodSeconds: 120
       nodeSelector:
         workload: gpu
+EOF
+  render_optional_node_selector_labels
+  cat <<EOF
       tolerations:
         - key: gpu
           operator: Equal
@@ -1633,12 +2159,13 @@ spec:
             - --port
             - "8000"
             - --dtype
-            - float16
+            - ${SERVING_DTYPE}
             - --max-model-len
             - "${MAX_MODEL_LEN}"
             - --gpu-memory-utilization
             - "${GPU_MEMORY_UTILIZATION}"
 EOF
+  render_optional_vllm_parallel_args
   render_optional_vllm_scheduler_args
   cat <<EOF
           env:
@@ -1667,20 +2194,26 @@ EOF
             requests:
               cpu: "${CPU_REQUEST}"
               memory: ${MEMORY_REQUEST}
-              nvidia.com/gpu: "1"
+              nvidia.com/gpu: "${serving_gpu_count}"
             limits:
               cpu: "${CPU_LIMIT}"
               memory: ${MEMORY_LIMIT}
-              nvidia.com/gpu: "1"
+              nvidia.com/gpu: "${serving_gpu_count}"
           volumeMounts:
             - name: model-cache
               mountPath: /cache/huggingface
+EOF
+  render_optional_model_artifact_volume_mounts
+  cat <<EOF
             - name: shm
               mountPath: /dev/shm
       volumes:
         - name: model-cache
           emptyDir:
             sizeLimit: ${MODEL_CACHE_SIZE}
+EOF
+  render_optional_model_artifact_volumes
+  cat <<EOF
         - name: shm
           emptyDir:
             medium: Memory
@@ -1831,6 +2364,233 @@ spec:
 EOF
 }
 
+render_accuracy_manifest() {
+  local experiment_name=$1
+  local profile_id=$2
+  local accuracy_case_id=${3:-}
+  local job_name
+  local configmap_name
+
+  require_experiment "${experiment_name}"
+  load_serving_profile "${experiment_name}" "${profile_id}"
+  load_accuracy_case "${experiment_name}" "${accuracy_case_id}"
+  if [[ -z "${ACCURACY_CASE_ID}" ]]; then
+    die "Experiment ${experiment_name} is missing accuracy-cases.csv"
+  fi
+
+  job_name="${experiment_name}-${profile_id}-${ACCURACY_CASE_ID}-accuracy"
+  configmap_name="${job_name}-client"
+
+  cat <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${configmap_name}
+  namespace: ${APP_NAMESPACE}
+  labels:
+    experiment.gpu-lab/name: ${experiment_name}
+    experiment.gpu-lab/profile: ${profile_id}
+    experiment.gpu-lab/accuracy-case: ${ACCURACY_CASE_ID}
+data:
+  accuracy-client.py: |
+EOF
+  render_accuracy_client_script "${experiment_name}" "${profile_id}" | indent_manifest_script
+  cat <<EOF
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${APP_NAMESPACE}
+  labels:
+    experiment.gpu-lab/name: ${experiment_name}
+    experiment.gpu-lab/profile: ${profile_id}
+    experiment.gpu-lab/accuracy-case: ${ACCURACY_CASE_ID}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        experiment.gpu-lab/name: ${experiment_name}
+        experiment.gpu-lab/profile: ${profile_id}
+        experiment.gpu-lab/accuracy-case: ${ACCURACY_CASE_ID}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: accuracy
+          image: ghcr.io/eleutherai/lm-evaluation-harness:latest
+          args:
+            - python
+            - /scripts/accuracy-client.py
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: ${configmap_name}
+EOF
+}
+
+render_quantization_client_script() {
+  cat <<'PY'
+import os
+from pathlib import Path
+
+from llmcompressor import oneshot
+
+base_model = os.environ["BASE_MODEL"]
+output_model = os.environ["OUTPUT_MODEL"]
+dataset = os.environ["CALIBRATION_DATASET"]
+split = os.environ["CALIBRATION_SPLIT"]
+samples = int(os.environ["CALIBRATION_SAMPLES"])
+max_seq_len = int(os.environ["CALIBRATION_MAX_SEQ_LEN"])
+seed = int(os.environ["CALIBRATION_SEED"])
+
+recipe_globals = {}
+exec(Path("/config/recipe.py").read_text(), recipe_globals)
+recipe = recipe_globals["recipe"]
+
+oneshot(
+    model=base_model,
+    dataset=dataset,
+    splits=split,
+    recipe=recipe,
+    output_dir=output_model,
+    max_seq_length=max_seq_len,
+    num_calibration_samples=samples,
+    seed=seed,
+)
+
+print("GPU_LAB_QUANTIZATION_SUMMARY_BEGIN")
+print(f"base_model={base_model}")
+print(f"output_model={output_model}")
+print(f"calibration_dataset={dataset}")
+print(f"calibration_split={split}")
+print(f"calibration_samples={samples}")
+print(f"calibration_max_seq_len={max_seq_len}")
+print(f"calibration_seed={seed}")
+print("GPU_LAB_QUANTIZATION_SUMMARY_END")
+PY
+}
+
+render_quantization_manifest() {
+  local experiment_name=$1
+  local profile_id=$2
+  local job_name
+  local configmap_name
+  local recipe_file
+
+  require_experiment "${experiment_name}"
+  load_quantization_job "${experiment_name}" "${profile_id}"
+
+  job_name="${experiment_name}-${profile_id}-quantize"
+  configmap_name="${job_name}-recipe"
+  recipe_file="$(experiment_dir "${experiment_name}")/${QUANTIZATION_RECIPE_PATH}"
+  if [[ ! -f "${recipe_file}" ]]; then
+    die "Missing quantization recipe: ${recipe_file}"
+  fi
+
+  cat <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${configmap_name}
+  namespace: ${APP_NAMESPACE}
+  labels:
+    experiment.gpu-lab/name: ${experiment_name}
+    experiment.gpu-lab/profile: ${profile_id}
+    experiment.gpu-lab/job: quantization
+data:
+  quantize.py: |
+EOF
+  render_quantization_client_script | indent_manifest_script
+  cat <<EOF
+  recipe.py: |
+EOF
+  indent_manifest_script < "${recipe_file}"
+  cat <<EOF
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${APP_NAMESPACE}
+  labels:
+    experiment.gpu-lab/name: ${experiment_name}
+    experiment.gpu-lab/profile: ${profile_id}
+    experiment.gpu-lab/job: quantization
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        experiment.gpu-lab/name: ${experiment_name}
+        experiment.gpu-lab/profile: ${profile_id}
+        experiment.gpu-lab/job: quantization
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        workload: gpu
+        node.kubernetes.io/instance-type: p6-b200.48xlarge
+      tolerations:
+        - key: gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: quantize
+          image: ${QUANTIZATION_IMAGE}
+          args:
+            - python
+            - /config/quantize.py
+          env:
+            - name: BASE_MODEL
+              value: ${QUANTIZATION_BASE_MODEL}
+            - name: OUTPUT_MODEL
+              value: ${QUANTIZATION_OUTPUT_MODEL}
+            - name: CALIBRATION_DATASET
+              value: ${QUANTIZATION_CALIBRATION_DATASET}
+            - name: CALIBRATION_SPLIT
+              value: ${QUANTIZATION_CALIBRATION_SPLIT}
+            - name: CALIBRATION_SAMPLES
+              value: "${QUANTIZATION_CALIBRATION_SAMPLES}"
+            - name: CALIBRATION_MAX_SEQ_LEN
+              value: "${QUANTIZATION_CALIBRATION_MAX_SEQ_LEN}"
+            - name: CALIBRATION_SEED
+              value: "${QUANTIZATION_CALIBRATION_SEED}"
+          resources:
+            requests:
+              cpu: "64000m"
+              memory: 512Gi
+              nvidia.com/gpu: "8"
+            limits:
+              cpu: "96000m"
+              memory: 768Gi
+              nvidia.com/gpu: "8"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: model-work
+              mountPath: /models
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: config
+          configMap:
+            name: ${configmap_name}
+        - name: model-work
+          persistentVolumeClaim:
+            claimName: ${MODEL_ARTIFACT_PVC_NAME}
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Gi
+EOF
+}
+
 render_stream_shape_summary_markdown() {
   if [[ -z "${STREAM_SHAPE_SUMMARY_ROWS:-}" ]]; then
     return 0
@@ -1854,6 +2614,7 @@ render_report_markdown() {
   local experiment_title_value
   local max_num_seqs_display="n/a"
   local max_num_batched_tokens_display="n/a"
+  local tensor_parallel_size_display="n/a"
   local run_status="${RUN_STATUS:-pending}"
   local run_source="${RUN_SOURCE:-scripts/experiment render-report}"
   local request_shapes_display_value
@@ -1887,6 +2648,22 @@ render_report_markdown() {
   local max_gpu_utilization_display
   local gpu_memory_used_display
   local gpu_memory_free_display
+  local quantization_method_display
+  local model_artifact_path_display
+  local model_artifact_hash_display
+  local recipe_hash_display
+  local calibration_settings_display="n/a"
+  local accuracy_case_display
+  local accuracy_tasks_display
+  local accuracy_fewshot_display
+  local accuracy_limit_display
+  local accuracy_metric_display
+  local accuracy_arc_easy_display
+  local accuracy_hellaswag_display
+  local accuracy_winogrande_display
+  local accuracy_average_score_display
+  local fp4_recovery_display
+  local smoothquant_gain_display
   local first_nodeclaim_display
   local first_gpu_node_display
   local pod_scheduled_display
@@ -1894,10 +2671,21 @@ render_report_markdown() {
   local model_ready_display
   local first_successful_completion_display
   local cost_scope_display
+  local cost_instance_type_display
+  local cost_region_display
+  local cost_source_display
+  local cost_instance_hourly_display
+  local cost_accelerator_count_display
+  local cost_accelerator_hourly_display
+  local cost_linux_hourly_display
   local serving_hourly_cost_display
   local estimated_burst_cost_display
-  local cost_per_1000_display
+  local estimated_serving_cost_display
+  local cost_per_1k_display
   local cost_per_1m_tokens_display
+  local cost_per_accuracy_point_display
+  local cost_per_accuracy_recovered_percent_display
+  local quantization_build_cost_display
   local slo_p95_target_display
   local slo_p99_target_display
   local slo_passed_display
@@ -1910,6 +2698,8 @@ render_report_markdown() {
   load_client_policy "${experiment_name}" "${CASE_ID}"
   load_serving_profile "${experiment_name}" "${profile_id}"
   load_cost_profile "${experiment_name}" "${profile_id}"
+  load_cost_detail_profile "${experiment_name}" "${profile_id}"
+  load_accuracy_case "${experiment_name}"
 
   experiment_title_value=$(experiment_title "${experiment_name}")
   request_shapes_display_value=$(request_shapes_display "${experiment_name}")
@@ -1921,6 +2711,9 @@ render_report_markdown() {
   fi
   if [[ -n "${MAX_NUM_BATCHED_TOKENS}" ]]; then
     max_num_batched_tokens_display=${MAX_NUM_BATCHED_TOKENS}
+  fi
+  if [[ -n "${SERVING_TENSOR_PARALLEL_SIZE}" ]]; then
+    tensor_parallel_size_display=${SERVING_TENSOR_PARALLEL_SIZE}
   fi
 
   completed_requests_display=$(display_optional_metric "${RESULT_COMPLETED_REQUESTS:-}")
@@ -1952,6 +2745,24 @@ render_report_markdown() {
   max_gpu_utilization_display=$(display_optional_metric "${RESULT_MAX_GPU_UTILIZATION_PERCENT:-}")
   gpu_memory_used_display=$(display_optional_bytes_gib "${RESULT_GPU_MEMORY_USED_BYTES:-}")
   gpu_memory_free_display=$(display_optional_bytes_gib "${RESULT_GPU_MEMORY_FREE_BYTES:-}")
+  quantization_method_display=$(display_optional_metric "${QUANTIZATION_METHOD:-}")
+  model_artifact_path_display=$(display_optional_metric "${MODEL_ARTIFACT_PATH:-}")
+  model_artifact_hash_display=$(display_optional_metric "${MODEL_ARTIFACT_HASH:-}")
+  recipe_hash_display=$(display_optional_metric "${RECIPE_HASH:-}")
+  if [[ -n "${CALIBRATION_DATASET:-}" ]]; then
+    calibration_settings_display="dataset=${CALIBRATION_DATASET} split=${CALIBRATION_SPLIT} samples=${CALIBRATION_SAMPLES} max_seq_len=${CALIBRATION_MAX_SEQ_LEN} seed=${CALIBRATION_SEED}"
+  fi
+  accuracy_case_display=$(display_optional_metric "${ACCURACY_CASE_ID:-}")
+  accuracy_tasks_display=$(display_task_list "${ACCURACY_TASKS:-}")
+  accuracy_fewshot_display=$(display_optional_metric "${ACCURACY_NUM_FEWSHOT:-}")
+  accuracy_limit_display=$(display_optional_metric "${ACCURACY_LIMIT:-}")
+  accuracy_metric_display=$(display_optional_metric "${ACCURACY_PRIMARY_METRIC:-}")
+  accuracy_arc_easy_display=$(display_optional_metric "${RESULT_ACCURACY_ARC_EASY:-}")
+  accuracy_hellaswag_display=$(display_optional_metric "${RESULT_ACCURACY_HELLASWAG:-}")
+  accuracy_winogrande_display=$(display_optional_metric "${RESULT_ACCURACY_WINOGRANDE:-}")
+  accuracy_average_score_display=$(display_optional_metric "${RESULT_ACCURACY_AVERAGE_SCORE:-}")
+  fp4_recovery_display=$(display_optional_metric "${RESULT_FP4_RECOVERY_VS_BF16_PERCENT:-}")
+  smoothquant_gain_display=$(display_optional_metric "${RESULT_SMOOTHQUANT_GAIN_VS_NVFP4_PERCENT:-}")
   first_nodeclaim_display=$(display_optional_metric "${RESULT_FIRST_NODECLAIM_SECONDS:-}")
   first_gpu_node_display=$(display_optional_metric "${RESULT_FIRST_GPU_NODE_SECONDS:-}")
   pod_scheduled_display=$(display_optional_metric "${RESULT_POD_SCHEDULED_SECONDS:-}")
@@ -1959,10 +2770,21 @@ render_report_markdown() {
   model_ready_display=$(display_optional_metric "${RESULT_MODEL_READY_SECONDS:-}")
   first_successful_completion_display=$(display_optional_metric "${RESULT_FIRST_SUCCESSFUL_COMPLETION_SECONDS:-}")
   cost_scope_display=$(display_optional_metric "${COST_SCOPE:-}")
+  cost_instance_type_display=$(display_optional_metric "${COST_INSTANCE_TYPE:-}")
+  cost_region_display=$(display_optional_metric "${COST_REGION:-}")
+  cost_source_display=$(display_optional_metric "${COST_SOURCE:-}")
+  cost_instance_hourly_display=$(display_optional_metric "${COST_INSTANCE_HOURLY_COST_USD:-}")
+  cost_accelerator_count_display=$(display_optional_metric "${COST_ACCELERATOR_COUNT:-}")
+  cost_accelerator_hourly_display=$(display_optional_metric "${COST_ACCELERATOR_HOURLY_COST_USD:-}")
+  cost_linux_hourly_display=$(display_optional_metric "${COST_LINUX_HOURLY_COST_USD:-}")
   serving_hourly_cost_display=$(display_optional_metric "${COST_SERVING_HOURLY_COST_USD:-}")
   estimated_burst_cost_display=$(display_optional_metric "${RESULT_ESTIMATED_BURST_COST_USD:-}")
-  cost_per_1000_display=$(display_optional_metric "${RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD:-}")
+  estimated_serving_cost_display=$(display_optional_metric "${RESULT_ESTIMATED_SERVING_COST_USD:-}")
+  cost_per_1k_display=$(display_optional_metric "${RESULT_COST_PER_1K_SUCCESSFUL_REQUESTS_USD:-${RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD:-}}")
   cost_per_1m_tokens_display=$(display_optional_metric "${RESULT_COST_PER_1M_GENERATED_TOKENS_USD:-}")
+  cost_per_accuracy_point_display=$(display_optional_metric "${RESULT_COST_PER_ACCURACY_POINT_USD:-}")
+  cost_per_accuracy_recovered_percent_display=$(display_optional_metric "${RESULT_COST_PER_ACCURACY_RECOVERED_PERCENT_USD:-}")
+  quantization_build_cost_display=$(display_optional_metric "${RESULT_QUANTIZATION_BUILD_COST_USD:-${COST_QUANTIZATION_BUILD_COST_USD:-}}")
   slo_p95_target_display=$(display_optional_metric "${COST_SLO_P95_REQUEST_LATENCY_SECONDS:-}")
   slo_p99_target_display=$(display_optional_metric "${COST_SLO_P99_REQUEST_LATENCY_SECONDS:-}")
   slo_passed_display=$(display_optional_metric "${RESULT_SLO_PASSED:-}")
@@ -2012,14 +2834,44 @@ render_report_markdown() {
 | Model | ${MODEL} |
 | Served model name | ${SERVED_MODEL_NAME} |
 | vLLM image | ${VLLM_IMAGE} |
+| Dtype | ${SERVING_DTYPE} |
+| Tensor parallel size | ${tensor_parallel_size_display} |
+| Node profile | $(display_optional_metric "${SERVING_NODE_PROFILE:-}") |
 | Max model length | ${MAX_MODEL_LEN} |
 | GPU memory utilization | ${GPU_MEMORY_UTILIZATION} |
 | Max sequences | ${max_num_seqs_display} |
 | Max batched tokens | ${max_num_batched_tokens_display} |
 | Cost scope | ${cost_scope_display} |
 | Serving hourly cost | ${serving_hourly_cost_display} |
+| Cost source | ${cost_source_display} |
+| Region | ${cost_region_display} |
+| Instance type | ${cost_instance_type_display} |
+| Instance hourly cost | ${cost_instance_hourly_display} |
+| Accelerator count | ${cost_accelerator_count_display} |
+| Accelerator hourly cost | ${cost_accelerator_hourly_display} |
+| Linux hourly cost | ${cost_linux_hourly_display} |
 | p95 request SLO | ${slo_p95_target_display} |
 | p99 request SLO | ${slo_p99_target_display} |
+
+## Quantization
+
+| Field | Value |
+| --- | --- |
+| Method | ${quantization_method_display} |
+| Model artifact path | ${model_artifact_path_display} |
+| Model artifact hash | ${model_artifact_hash_display} |
+| Recipe hash | ${recipe_hash_display} |
+| Calibration settings | ${calibration_settings_display} |
+
+## Accuracy Plan
+
+| Field | Value |
+| --- | --- |
+| Accuracy case | ${accuracy_case_display} |
+| Tasks | ${accuracy_tasks_display} |
+| Few-shot examples | ${accuracy_fewshot_display} |
+| Limit | ${accuracy_limit_display} |
+| Primary metric | ${accuracy_metric_display} |
 
 ## Results
 
@@ -2054,6 +2906,12 @@ render_report_markdown() {
 | Max GPU utilization | ${max_gpu_utilization_display} |
 | GPU memory used | ${gpu_memory_used_display} |
 | GPU memory free | ${gpu_memory_free_display} |
+| arc_easy score | ${accuracy_arc_easy_display} |
+| hellaswag score | ${accuracy_hellaswag_display} |
+| winogrande score | ${accuracy_winogrande_display} |
+| Average accuracy score | ${accuracy_average_score_display} |
+| FP4 recovery vs BF16 | ${fp4_recovery_display} |
+| SmoothQuant gain vs plain NVFP4 | ${smoothquant_gain_display} |
 | First NodeClaim | ${first_nodeclaim_display} |
 | First GPU node | ${first_gpu_node_display} |
 | Pod scheduled | ${pod_scheduled_display} |
@@ -2062,8 +2920,12 @@ render_report_markdown() {
 | First successful completion | ${first_successful_completion_display} |
 | SLO passed | ${slo_passed_display} |
 | Estimated burst cost | ${estimated_burst_cost_display} |
-| Cost per 1K successful requests | ${cost_per_1000_display} |
+| Estimated serving cost | ${estimated_serving_cost_display} |
+| Cost per 1K successful requests | ${cost_per_1k_display} |
 | Cost per 1M generated tokens | ${cost_per_1m_tokens_display} |
+| Cost per accuracy point | ${cost_per_accuracy_point_display} |
+| Cost per accuracy recovered percent | ${cost_per_accuracy_recovered_percent_display} |
+| Quantization build cost | ${quantization_build_cost_display} |
 ${stream_shape_summary_section}
 
 ## Notes
@@ -2082,6 +2944,7 @@ render_report_json() {
   local experiment_title_value
   local max_num_seqs_json
   local max_num_batched_tokens_json
+  local tensor_parallel_size_json
   local request_shapes_json
   local stream_shape_summaries_json
   local run_status="${RUN_STATUS:-pending}"
@@ -2092,10 +2955,13 @@ render_report_json() {
   load_client_policy "${experiment_name}" "${CASE_ID}"
   load_serving_profile "${experiment_name}" "${profile_id}"
   load_cost_profile "${experiment_name}" "${profile_id}"
+  load_cost_detail_profile "${experiment_name}" "${profile_id}"
+  load_accuracy_case "${experiment_name}"
 
   experiment_title_value=$(experiment_title "${experiment_name}")
   max_num_seqs_json=$(json_optional_integer "${MAX_NUM_SEQS}")
   max_num_batched_tokens_json=$(json_optional_integer "${MAX_NUM_BATCHED_TOKENS}")
+  tensor_parallel_size_json=$(json_optional_integer "${SERVING_TENSOR_PARALLEL_SIZE}")
   request_shapes_json=$(render_request_shapes_json "${experiment_name}")
   stream_shape_summaries_json=${RESULT_STREAM_SHAPE_SUMMARIES_JSON:-[]}
 
@@ -2138,14 +3004,47 @@ render_report_json() {
     "model": "${MODEL}",
     "served_model_name": "${SERVED_MODEL_NAME}",
     "vllm_image": "${VLLM_IMAGE}",
+    "dtype": "${SERVING_DTYPE}",
+    "tensor_parallel_size": ${tensor_parallel_size_json},
+    "node_profile": $(json_optional_string "${SERVING_NODE_PROFILE:-}"),
     "max_model_len": ${MAX_MODEL_LEN},
     "gpu_memory_utilization": ${GPU_MEMORY_UTILIZATION},
     "max_num_seqs": ${max_num_seqs_json},
     "max_num_batched_tokens": ${max_num_batched_tokens_json},
+    "quantization": {
+      "method": $(json_optional_string "${QUANTIZATION_METHOD:-}"),
+      "model_artifact_path": $(json_optional_string "${MODEL_ARTIFACT_PATH:-}"),
+      "model_artifact_hash": $(json_optional_string "${MODEL_ARTIFACT_HASH:-}"),
+      "recipe_hash": $(json_optional_string "${RECIPE_HASH:-}"),
+      "calibration": {
+        "dataset": $(json_optional_string "${CALIBRATION_DATASET:-}"),
+        "split": $(json_optional_string "${CALIBRATION_SPLIT:-}"),
+        "samples": $(json_optional_integer "${CALIBRATION_SAMPLES:-}"),
+        "max_seq_len": $(json_optional_integer "${CALIBRATION_MAX_SEQ_LEN:-}"),
+        "seed": $(json_optional_integer "${CALIBRATION_SEED:-}")
+      }
+    },
+    "accuracy_plan": {
+      "case_id": $(json_optional_string "${ACCURACY_CASE_ID:-}"),
+      "tasks": $(json_optional_string "${ACCURACY_TASKS:-}"),
+      "num_fewshot": $(json_optional_integer "${ACCURACY_NUM_FEWSHOT:-}"),
+      "limit": $(json_optional_integer "${ACCURACY_LIMIT:-}"),
+      "primary_metric": $(json_optional_string "${ACCURACY_PRIMARY_METRIC:-}")
+    },
     "cost_profile": {
       "id": $(json_optional_string "${COST_PROFILE_ID:-}"),
       "cost_scope": $(json_optional_string "${COST_SCOPE:-}"),
       "serving_hourly_cost_usd": $(json_optional_number "${COST_SERVING_HOURLY_COST_USD:-}"),
+      "cost_source": $(json_optional_string "${COST_SOURCE:-}"),
+      "region": $(json_optional_string "${COST_REGION:-}"),
+      "instance_type": $(json_optional_string "${COST_INSTANCE_TYPE:-}"),
+      "instance_hourly_cost_usd": $(json_optional_number "${COST_INSTANCE_HOURLY_COST_USD:-}"),
+      "accelerator_count": $(json_optional_integer "${COST_ACCELERATOR_COUNT:-}"),
+      "accelerator_hourly_cost_usd": $(json_optional_number "${COST_ACCELERATOR_HOURLY_COST_USD:-}"),
+      "linux_hourly_cost_usd": $(json_optional_number "${COST_LINUX_HOURLY_COST_USD:-}"),
+      "quantization_build_hourly_cost_usd": $(json_optional_number "${COST_QUANTIZATION_BUILD_HOURLY_COST_USD:-}"),
+      "quantization_build_hours": $(json_optional_number "${COST_QUANTIZATION_BUILD_HOURS:-}"),
+      "quantization_build_cost_usd": $(json_optional_number "${COST_QUANTIZATION_BUILD_COST_USD:-}"),
       "slo_p95_request_latency_seconds": $(json_optional_number "${COST_SLO_P95_REQUEST_LATENCY_SECONDS:-}"),
       "slo_p99_request_latency_seconds": $(json_optional_number "${COST_SLO_P99_REQUEST_LATENCY_SECONDS:-}")
     }
@@ -2197,6 +3096,20 @@ render_report_json() {
       "gpu_memory_used_bytes": $(json_optional_number "${RESULT_GPU_MEMORY_USED_BYTES:-}"),
       "gpu_memory_free_bytes": $(json_optional_number "${RESULT_GPU_MEMORY_FREE_BYTES:-}")
     },
+    "accuracy": {
+      "tasks": $(json_optional_string "${ACCURACY_TASKS:-}"),
+      "num_fewshot": $(json_optional_integer "${ACCURACY_NUM_FEWSHOT:-}"),
+      "limit": $(json_optional_integer "${ACCURACY_LIMIT:-}"),
+      "primary_metric": $(json_optional_string "${ACCURACY_PRIMARY_METRIC:-}"),
+      "raw_task_scores": {
+        "arc_easy": $(json_optional_number "${RESULT_ACCURACY_ARC_EASY:-}"),
+        "hellaswag": $(json_optional_number "${RESULT_ACCURACY_HELLASWAG:-}"),
+        "winogrande": $(json_optional_number "${RESULT_ACCURACY_WINOGRANDE:-}")
+      },
+      "average_score": $(json_optional_number "${RESULT_ACCURACY_AVERAGE_SCORE:-}"),
+      "fp4_recovery_vs_bf16_percent": $(json_optional_number "${RESULT_FP4_RECOVERY_VS_BF16_PERCENT:-}"),
+      "smoothquant_gain_vs_plain_nvfp4_percent": $(json_optional_number "${RESULT_SMOOTHQUANT_GAIN_VS_NVFP4_PERCENT:-}")
+    },
     "scaling": {
       "first_nodeclaim_seconds": $(json_optional_number "${RESULT_FIRST_NODECLAIM_SECONDS:-}"),
       "first_gpu_node_seconds": $(json_optional_number "${RESULT_FIRST_GPU_NODE_SECONDS:-}"),
@@ -2214,8 +3127,13 @@ render_report_json() {
       "cost_scope": $(json_optional_string "${COST_SCOPE:-}"),
       "serving_hourly_cost_usd": $(json_optional_number "${COST_SERVING_HOURLY_COST_USD:-}"),
       "estimated_burst_cost_usd": $(json_optional_number "${RESULT_ESTIMATED_BURST_COST_USD:-}"),
+      "estimated_serving_cost_usd": $(json_optional_number "${RESULT_ESTIMATED_SERVING_COST_USD:-}"),
       "cost_per_1000_successful_requests_usd": $(json_optional_number "${RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD:-}"),
-      "cost_per_1m_generated_tokens_usd": $(json_optional_number "${RESULT_COST_PER_1M_GENERATED_TOKENS_USD:-}")
+      "cost_per_1k_successful_requests_usd": $(json_optional_number "${RESULT_COST_PER_1K_SUCCESSFUL_REQUESTS_USD:-${RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD:-}}"),
+      "cost_per_1m_generated_tokens_usd": $(json_optional_number "${RESULT_COST_PER_1M_GENERATED_TOKENS_USD:-}"),
+      "cost_per_accuracy_point_usd": $(json_optional_number "${RESULT_COST_PER_ACCURACY_POINT_USD:-}"),
+      "cost_per_accuracy_recovered_percent_usd": $(json_optional_number "${RESULT_COST_PER_ACCURACY_RECOVERED_PERCENT_USD:-}"),
+      "quantization_build_cost_usd": $(json_optional_number "${RESULT_QUANTIZATION_BUILD_COST_USD:-${COST_QUANTIZATION_BUILD_COST_USD:-}}")
     }
   },
   "notes": [
@@ -2753,12 +3671,18 @@ derive_cost_metrics() {
   local duration_seconds
 
   load_cost_profile "${experiment_name}" "${profile_id}"
+  load_cost_detail_profile "${experiment_name}" "${profile_id}"
 
   RESULT_SUCCESSFUL_REQUESTS=$(derive_successful_requests)
   derive_demand_metrics
   RESULT_ESTIMATED_BURST_COST_USD=""
+  RESULT_ESTIMATED_SERVING_COST_USD=""
   RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD=""
+  RESULT_COST_PER_1K_SUCCESSFUL_REQUESTS_USD=""
   RESULT_COST_PER_1M_GENERATED_TOKENS_USD=""
+  RESULT_COST_PER_ACCURACY_POINT_USD=""
+  RESULT_COST_PER_ACCURACY_RECOVERED_PERCENT_USD=""
+  RESULT_QUANTIZATION_BUILD_COST_USD="${COST_QUANTIZATION_BUILD_COST_USD:-}"
   RESULT_SLO_PASSED=""
 
   if [[ -z "${RESULT_RUN_DURATION_SECONDS:-}" && -n "${CASE_ID:-}" ]]; then
@@ -2771,6 +3695,7 @@ derive_cost_metrics() {
       -v hourly="${COST_SERVING_HOURLY_COST_USD}" \
       -v duration="${duration_seconds}" \
       'BEGIN { printf "%.6f\n", ((hourly + 0) * (duration + 0)) / 3600 }')
+    RESULT_ESTIMATED_SERVING_COST_USD=${RESULT_ESTIMATED_BURST_COST_USD}
   fi
 
   if [[ -n "${RESULT_ESTIMATED_BURST_COST_USD}" && -n "${RESULT_SUCCESSFUL_REQUESTS}" ]]; then
@@ -2778,12 +3703,27 @@ derive_cost_metrics() {
       "$(multiply_decimal_values "${RESULT_ESTIMATED_BURST_COST_USD}" "1000" 6)" \
       "${RESULT_SUCCESSFUL_REQUESTS}" \
       6)
+    RESULT_COST_PER_1K_SUCCESSFUL_REQUESTS_USD=${RESULT_COST_PER_1000_SUCCESSFUL_REQUESTS_USD}
   fi
 
   if [[ -n "${RESULT_ESTIMATED_BURST_COST_USD}" && -n "${RESULT_GENERATED_TOKENS:-}" ]]; then
     RESULT_COST_PER_1M_GENERATED_TOKENS_USD=$(divide_decimal_values \
       "$(multiply_decimal_values "${RESULT_ESTIMATED_BURST_COST_USD}" "1000000" 6)" \
       "${RESULT_GENERATED_TOKENS}" \
+      6)
+  fi
+
+  if [[ -n "${RESULT_ESTIMATED_SERVING_COST_USD}" && -n "${RESULT_ACCURACY_AVERAGE_SCORE:-}" ]]; then
+    RESULT_COST_PER_ACCURACY_POINT_USD=$(divide_decimal_values \
+      "${RESULT_ESTIMATED_SERVING_COST_USD}" \
+      "${RESULT_ACCURACY_AVERAGE_SCORE}" \
+      6)
+  fi
+
+  if [[ -n "${RESULT_ESTIMATED_SERVING_COST_USD}" && -n "${RESULT_FP4_RECOVERY_VS_BF16_PERCENT:-}" ]]; then
+    RESULT_COST_PER_ACCURACY_RECOVERED_PERCENT_USD=$(divide_decimal_values \
+      "${RESULT_ESTIMATED_SERVING_COST_USD}" \
+      "${RESULT_FP4_RECOVERY_VS_BF16_PERCENT}" \
       6)
   fi
 
@@ -3139,6 +4079,101 @@ render_stream_command() {
     printf 'Rendered stream manifest: %s\n' "${output_path}"
   else
     render_stream_manifest "${experiment_name}" "${case_id}" "${samples}" "${stream_concurrency}"
+  fi
+}
+
+render_accuracy_command() {
+  local experiment_name=""
+  local profile_id=""
+  local accuracy_case_id=""
+  local output_path=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --profile)
+        profile_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --case)
+        accuracy_case_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --output)
+        output_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "render-accuracy requires --experiment"
+  fi
+
+  if [[ -z "${profile_id}" ]]; then
+    die "render-accuracy requires --profile"
+  fi
+
+  if [[ -n "${output_path}" ]]; then
+    render_accuracy_manifest "${experiment_name}" "${profile_id}" "${accuracy_case_id}" > "${output_path}"
+    printf 'Rendered accuracy manifest: %s\n' "${output_path}"
+  else
+    render_accuracy_manifest "${experiment_name}" "${profile_id}" "${accuracy_case_id}"
+  fi
+}
+
+render_quantization_command() {
+  local experiment_name=""
+  local profile_id=""
+  local output_path=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --profile)
+        profile_id=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --output)
+        output_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "render-quantization requires --experiment"
+  fi
+
+  if [[ -z "${profile_id}" ]]; then
+    die "render-quantization requires --profile"
+  fi
+
+  if [[ -n "${output_path}" ]]; then
+    render_quantization_manifest "${experiment_name}" "${profile_id}" > "${output_path}"
+    printf 'Rendered quantization manifest: %s\n' "${output_path}"
+  else
+    render_quantization_manifest "${experiment_name}" "${profile_id}"
   fi
 }
 
@@ -3556,6 +4591,14 @@ main() {
     render-stream)
       shift
       render_stream_command "$@"
+      ;;
+    render-accuracy)
+      shift
+      render_accuracy_command "$@"
+      ;;
+    render-quantization)
+      shift
+      render_quantization_command "$@"
       ;;
     render-serving)
       shift

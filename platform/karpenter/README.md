@@ -7,6 +7,7 @@ capacity:
 - `nodeclass-gpu-serving.yaml`
 - `nodepool-gpu-serving-ondemand.yaml`
 - `nodepool-gpu-serving-spot.yaml`
+- `nodepool-gpu-serving-blackwell.yaml`
 
 ## Current Capacity Story
 
@@ -15,6 +16,8 @@ The active serving path uses two real `NodePool`s that share one GPU
 
 - `gpu-serving-ondemand`: warm baseline and fallback serving path
 - `gpu-serving-spot`: preferred burst capacity
+- `gpu-serving-blackwell`: optional p6-b200.48xlarge path for full-instance
+  Blackwell FP4 experiments
 
 Both pools:
 
@@ -25,6 +28,11 @@ Both pools:
 
 The spot pool has a higher weight, so fresh burst capacity should prefer spot
 when the market allows it.
+
+The Blackwell pool is separate from the g4dn/g5 pools and labels nodes with
+`gpu-arch=blackwell`. FP4 experiment serving manifests select
+`p6-b200.48xlarge` directly and request 8 GPUs with `--tensor-parallel-size 8`,
+which keeps p6-b200 cost accounting aligned with the full instance.
 
 ## Shared GPU NodeClass
 

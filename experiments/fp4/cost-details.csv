@@ -1,0 +1,4 @@
+profile_id,instance_type,region,cost_source,instance_hourly_cost_usd,accelerator_count,accelerator_hourly_cost_usd,linux_hourly_cost_usd,quantization_build_hourly_cost_usd,quantization_build_hours,description
+bf16-baseline,p6-b200.48xlarge,us-west-2,aws-ec2-capacity-blocks-ml,82.368,8,10.296,0,0,0,BF16 baseline has no quantization build cost
+nvfp4-plain,p6-b200.48xlarge,us-west-2,aws-ec2-capacity-blocks-ml,82.368,8,10.296,0,82.368,1.0,One full instance hour placeholder for plain NVFP4 quantization build
+nvfp4-smoothquant,p6-b200.48xlarge,us-west-2,aws-ec2-capacity-blocks-ml,82.368,8,10.296,0,82.368,1.5,One and a half full instance hours placeholder for SmoothQuant plus NVFP4 build

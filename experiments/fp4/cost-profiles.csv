@@ -1,0 +1,4 @@
+profile_id,serving_hourly_cost_usd,cost_scope,slo_p95_request_latency_seconds,slo_p99_request_latency_seconds,description
+bf16-baseline,82.368,aws-capacity-blocks-p6-b200-8gpu,10.0,20.0,AWS Capacity Blocks p6-b200.48xlarge serving instance cost
+nvfp4-plain,82.368,aws-capacity-blocks-p6-b200-8gpu,10.0,20.0,AWS Capacity Blocks p6-b200.48xlarge serving instance cost
+nvfp4-smoothquant,82.368,aws-capacity-blocks-p6-b200-8gpu,10.0,20.0,AWS Capacity Blocks p6-b200.48xlarge serving instance cost

@@ -1,0 +1,3 @@
+profile_id,recipe_path,base_model,output_model,calibration_dataset,calibration_split,calibration_samples,calibration_max_seq_len,calibration_seed,quantization_image,description
+nvfp4-plain,quantization/plain_nvfp4_recipe.py,Qwen/Qwen2.5-7B-Instruct,/models/qwen25-7b-nvfp4-plain,HuggingFaceH4/ultrachat_200k,train_sft,512,2048,42,ghcr.io/vllm-project/llm-compressor:latest,NVFP4 W4A4 without pre optimization
+nvfp4-smoothquant,quantization/smoothquant_nvfp4_recipe.py,Qwen/Qwen2.5-7B-Instruct,/models/qwen25-7b-nvfp4-smoothquant,HuggingFaceH4/ultrachat_200k,train_sft,512,2048,42,ghcr.io/vllm-project/llm-compressor:latest,SmoothQuant then NVFP4 W4A4 with identical calibration settings

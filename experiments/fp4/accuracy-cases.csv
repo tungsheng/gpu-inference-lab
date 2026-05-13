@@ -1,0 +1,2 @@
+case_id,tasks,num_fewshot,limit,primary_metric,description
+fp4-quality-0shot,arc_easy|hellaswag|winogrande,0,200,acc_norm,0 shot lightweight accuracy comparison with a fixed per task limit

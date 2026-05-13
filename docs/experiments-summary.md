@@ -21,6 +21,7 @@ schemas:
 | Request pattern utilization | renderable locally; measurable with `run` | How do steady, burst, uneven-size, and spike-to-zero traffic patterns affect GPU occupancy? | `experiments/request-patterns/` |
 | Autoscaling and queueing behavior | renderable locally; measurable with `run` | How much traffic must be buffered while GPU capacity and model readiness catch up? | `experiments/autoscaling/` |
 | Cost per useful work | renderable locally; measurable with `run` | How much cheaper does the same GPU become when concurrency and batching produce more successful work? | `experiments/cost/` |
+| FP4 quantization optimization | renderable locally; measurable with quantization, accuracy, and load jobs | Does SmoothQuant improve NVFP4 accuracy recovery, and what does that cost in memory, latency, throughput, and dollars? | `experiments/fp4/` |
 
 ## Result Standard
 
@@ -34,6 +35,8 @@ Each completed experiment should summarize:
 - throughput in requests/sec and tokens/sec
 - GPU utilization and memory pressure when available
 - cost per useful request or generated token when cost is relevant
+- quantization recipe, calibration settings, accuracy recovery, and build cost
+  when quantization is relevant
 - the practical systems conclusion
 
 ## Evidence Gate

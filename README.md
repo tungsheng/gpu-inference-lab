@@ -55,7 +55,7 @@ EKS cluster
   dashboards
 - `zero-idle` and `warm-1` evaluation profiles
 - experiment catalog for KV cache, prefill/decode, batching, request patterns,
-  autoscaling, and cost-per-useful-work questions
+  autoscaling, cost-per-useful-work, and Blackwell FP4 quantization questions
 
 ## Quick Start
 
@@ -79,6 +79,14 @@ scaffolds; they do not run workloads or produce measured results.
   --experiment cost \
   --case steady-cost-efficiency \
   --profile optimized-batched
+./scripts/experiment render-quantization \
+  --experiment fp4 \
+  --profile nvfp4-plain \
+  --output /tmp/fp4-quantize.yaml
+./scripts/experiment render-accuracy \
+  --experiment fp4 \
+  --profile bf16-baseline \
+  --output /tmp/fp4-accuracy.yaml
 ./test/run.sh
 ```
 

@@ -118,16 +118,61 @@
         "model": { "type": "string" },
         "served_model_name": { "type": "string" },
         "vllm_image": { "type": "string" },
+        "dtype": { "type": "string" },
+        "tensor_parallel_size": { "type": ["integer", "null"] },
+        "node_profile": { "type": ["string", "null"] },
         "max_model_len": { "type": "integer" },
         "gpu_memory_utilization": { "type": "number" },
         "max_num_seqs": { "type": ["integer", "null"] },
         "max_num_batched_tokens": { "type": ["integer", "null"] },
+        "quantization": {
+          "type": "object",
+          "properties": {
+            "method": { "type": ["string", "null"] },
+            "model_artifact_path": { "type": ["string", "null"] },
+            "model_artifact_hash": { "type": ["string", "null"] },
+            "recipe_hash": { "type": ["string", "null"] },
+            "calibration": {
+              "type": "object",
+              "properties": {
+                "dataset": { "type": ["string", "null"] },
+                "split": { "type": ["string", "null"] },
+                "samples": { "type": ["integer", "null"] },
+                "max_seq_len": { "type": ["integer", "null"] },
+                "seed": { "type": ["integer", "null"] }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "accuracy_plan": {
+          "type": "object",
+          "properties": {
+            "case_id": { "type": ["string", "null"] },
+            "tasks": { "type": ["string", "null"] },
+            "num_fewshot": { "type": ["integer", "null"] },
+            "limit": { "type": ["integer", "null"] },
+            "primary_metric": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
         "cost_profile": {
           "type": "object",
           "properties": {
             "id": { "type": ["string", "null"] },
             "cost_scope": { "type": ["string", "null"] },
             "serving_hourly_cost_usd": { "type": ["number", "null"] },
+            "cost_source": { "type": ["string", "null"] },
+            "region": { "type": ["string", "null"] },
+            "instance_type": { "type": ["string", "null"] },
+            "instance_hourly_cost_usd": { "type": ["number", "null"] },
+            "accelerator_count": { "type": ["integer", "null"] },
+            "accelerator_hourly_cost_usd": { "type": ["number", "null"] },
+            "linux_hourly_cost_usd": { "type": ["number", "null"] },
+            "quantization_build_hourly_cost_usd": { "type": ["number", "null"] },
+            "quantization_build_hours": { "type": ["number", "null"] },
+            "quantization_build_cost_usd": { "type": ["number", "null"] },
             "slo_p95_request_latency_seconds": { "type": ["number", "null"] },
             "slo_p99_request_latency_seconds": { "type": ["number", "null"] }
           },
@@ -254,6 +299,28 @@
           },
           "additionalProperties": false
         },
+        "accuracy": {
+          "type": "object",
+          "properties": {
+            "tasks": { "type": ["string", "null"] },
+            "num_fewshot": { "type": ["integer", "null"] },
+            "limit": { "type": ["integer", "null"] },
+            "primary_metric": { "type": ["string", "null"] },
+            "raw_task_scores": {
+              "type": "object",
+              "properties": {
+                "arc_easy": { "type": ["number", "null"] },
+                "hellaswag": { "type": ["number", "null"] },
+                "winogrande": { "type": ["number", "null"] }
+              },
+              "additionalProperties": false
+            },
+            "average_score": { "type": ["number", "null"] },
+            "fp4_recovery_vs_bf16_percent": { "type": ["number", "null"] },
+            "smoothquant_gain_vs_plain_nvfp4_percent": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        },
         "scaling": {
           "type": "object",
           "properties": {
@@ -281,8 +348,13 @@
             "cost_scope": { "type": ["string", "null"] },
             "serving_hourly_cost_usd": { "type": ["number", "null"] },
             "estimated_burst_cost_usd": { "type": ["number", "null"] },
+            "estimated_serving_cost_usd": { "type": ["number", "null"] },
             "cost_per_1000_successful_requests_usd": { "type": ["number", "null"] },
-            "cost_per_1m_generated_tokens_usd": { "type": ["number", "null"] }
+            "cost_per_1k_successful_requests_usd": { "type": ["number", "null"] },
+            "cost_per_1m_generated_tokens_usd": { "type": ["number", "null"] },
+            "cost_per_accuracy_point_usd": { "type": ["number", "null"] },
+            "cost_per_accuracy_recovered_percent_usd": { "type": ["number", "null"] },
+            "quantization_build_cost_usd": { "type": ["number", "null"] }
           },
           "additionalProperties": false
         }

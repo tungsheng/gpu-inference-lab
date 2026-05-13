@@ -22,13 +22,15 @@ run_experiment_list_test() {
   assert_contains "${COMMAND_OUTPUT}" "Autoscaling And Queueing Behavior" "experiment list should include the autoscaling title"
   assert_contains "${COMMAND_OUTPUT}" "cost" "experiment list should include the cost experiment"
   assert_contains "${COMMAND_OUTPUT}" "Cost Per Useful Work" "experiment list should include the cost title"
+  assert_contains "${COMMAND_OUTPUT}" "fp4" "experiment list should include the FP4 experiment"
+  assert_contains "${COMMAND_OUTPUT}" "FP4 Quantization Optimization" "experiment list should include the FP4 title"
 }
 
 run_experiment_validate_test() {
   run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" validate
 
   assert_status 0 "${COMMAND_STATUS}" "scripts/experiment validate should succeed for the checked-in catalog"
-  assert_contains "${COMMAND_OUTPUT}" "Validated 6 experiment(s)." "validate should report the number of checked-in experiments"
+  assert_contains "${COMMAND_OUTPUT}" "Validated 7 experiment(s)." "validate should report the number of checked-in experiments"
 }
 
 run_experiment_show_test() {
@@ -115,6 +117,25 @@ run_cost_show_test() {
   assert_contains "${COMMAND_OUTPUT}" "naive-single: hourly_cost=0.526 scope=serving-gpu-only p95_slo=2.0s p99_slo=5.0s" "show output should include the naive cost profile"
   assert_contains "${COMMAND_OUTPUT}" "optimized-batched: hourly_cost=0.526 scope=serving-gpu-only p95_slo=2.0s p99_slo=5.0s" "show output should include the optimized cost profile"
   assert_contains "${COMMAND_OUTPUT}" "max_num_seqs=32 max_num_batched_tokens=8192" "show output should include optimized scheduler settings"
+}
+
+run_fp4_show_test() {
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" show fp4
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/experiment show should succeed for fp4"
+  assert_contains "${COMMAND_OUTPUT}" "Experiment: fp4" "show output should include the FP4 experiment name"
+  assert_contains "${COMMAND_OUTPUT}" "steady-512-output-128" "show output should include the steady FP4 case"
+  assert_contains "${COMMAND_OUTPUT}" "bf16-baseline" "show output should include the BF16 serving profile"
+  assert_contains "${COMMAND_OUTPUT}" "nvfp4-plain" "show output should include the plain NVFP4 serving profile"
+  assert_contains "${COMMAND_OUTPUT}" "nvfp4-smoothquant" "show output should include the SmoothQuant NVFP4 serving profile"
+  assert_contains "${COMMAND_OUTPUT}" "Cost details:" "show output should include cost details"
+  assert_contains "${COMMAND_OUTPUT}" "instance=p6-b200.48xlarge region=us-west-2" "show output should include the Blackwell cost input"
+  assert_contains "${COMMAND_OUTPUT}" "Accuracy cases:" "show output should include accuracy cases"
+  assert_contains "${COMMAND_OUTPUT}" "tasks=arc_easy,hellaswag,winogrande fewshot=0 limit=200" "show output should include fixed accuracy tasks"
+  assert_contains "${COMMAND_OUTPUT}" "Quantization jobs:" "show output should include quantization jobs"
+  assert_contains "${COMMAND_OUTPUT}" "recipe=quantization/smoothquant_nvfp4_recipe.py" "show output should include the SmoothQuant recipe"
+  assert_contains "${COMMAND_OUTPUT}" "Serving extensions:" "show output should include serving extensions"
+  assert_contains "${COMMAND_OUTPUT}" "dtype=auto tensor_parallel=8 node_profile=blackwell quantization=nvfp4+smoothquant" "show output should include Blackwell serving metadata"
 }
 
 run_render_load_test() {
@@ -314,6 +335,61 @@ run_render_mixed_stream_test() {
   teardown_test_tmpdir
 }
 
+run_render_fp4_quantization_manifest_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-quantization \
+    --experiment fp4 \
+    --profile nvfp4-smoothquant \
+    --output "${TEST_TMPDIR}/fp4-smoothquant-quantize.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-quantization should render the SmoothQuant NVFP4 job"
+  assert_contains "${COMMAND_OUTPUT}" "Rendered quantization manifest: ${TEST_TMPDIR}/fp4-smoothquant-quantize.yaml" "render-quantization should print the output path"
+  assert_file_exists "${TEST_TMPDIR}/fp4-smoothquant-quantize.yaml" "render-quantization should write the manifest"
+
+  QUANTIZATION_MANIFEST=$(cat "${TEST_TMPDIR}/fp4-smoothquant-quantize.yaml")
+
+  assert_contains "${QUANTIZATION_MANIFEST}" "name: fp4-nvfp4-smoothquant-quantize" "quantization manifest should name the job from the profile"
+  assert_contains "${QUANTIZATION_MANIFEST}" "SmoothQuantModifier" "quantization manifest should include the SmoothQuant recipe"
+  assert_contains "${QUANTIZATION_MANIFEST}" "smoothing_strength=0.5" "quantization manifest should include the SmoothQuant strength"
+  assert_contains "${QUANTIZATION_MANIFEST}" "QuantizationModifier" "quantization manifest should include the NVFP4 modifier"
+  assert_contains "${QUANTIZATION_MANIFEST}" "scheme=\"NVFP4\"" "quantization manifest should include the NVFP4 scheme"
+  assert_contains "${QUANTIZATION_MANIFEST}" "value: Qwen/Qwen2.5-7B-Instruct" "quantization manifest should use the BF16 base model"
+  assert_contains "${QUANTIZATION_MANIFEST}" "value: /models/qwen25-7b-nvfp4-smoothquant" "quantization manifest should write the optimized artifact path"
+  assert_contains "${QUANTIZATION_MANIFEST}" "value: HuggingFaceH4/ultrachat_200k" "quantization manifest should use the shared calibration dataset"
+  assert_contains "${QUANTIZATION_MANIFEST}" "value: \"512\"" "quantization manifest should use the shared calibration sample count"
+  assert_contains "${QUANTIZATION_MANIFEST}" "node.kubernetes.io/instance-type: p6-b200.48xlarge" "quantization manifest should target p6-b200 capacity"
+  assert_contains "${QUANTIZATION_MANIFEST}" "nvidia.com/gpu: \"8\"" "quantization manifest should request a full 8 GPU instance"
+  assert_contains "${QUANTIZATION_MANIFEST}" "claimName: model-artifacts" "quantization manifest should persist artifacts outside the job pod"
+
+  teardown_test_tmpdir
+}
+
+run_render_fp4_accuracy_manifest_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-accuracy \
+    --experiment fp4 \
+    --profile bf16-baseline \
+    --output "${TEST_TMPDIR}/fp4-accuracy.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-accuracy should render the FP4 accuracy job"
+  assert_contains "${COMMAND_OUTPUT}" "Rendered accuracy manifest: ${TEST_TMPDIR}/fp4-accuracy.yaml" "render-accuracy should print the output path"
+  assert_file_exists "${TEST_TMPDIR}/fp4-accuracy.yaml" "render-accuracy should write the manifest"
+
+  ACCURACY_MANIFEST=$(cat "${TEST_TMPDIR}/fp4-accuracy.yaml")
+
+  assert_contains "${ACCURACY_MANIFEST}" "name: fp4-bf16-baseline-fp4-quality-0shot-accuracy" "accuracy manifest should name the job from the profile and accuracy case"
+  assert_contains "${ACCURACY_MANIFEST}" "ghcr.io/eleutherai/lm-evaluation-harness:latest" "accuracy manifest should use an lm-eval image"
+  assert_contains "${ACCURACY_MANIFEST}" 'tasks = "arc_easy,hellaswag,winogrande"' "accuracy manifest should include the requested tasks"
+  assert_contains "${ACCURACY_MANIFEST}" 'num_fewshot = "0"' "accuracy manifest should be zero-shot"
+  assert_contains "${ACCURACY_MANIFEST}" 'limit = "200"' "accuracy manifest should use the requested limit"
+  assert_contains "${ACCURACY_MANIFEST}" 'model_name = "qwen2.5-7b-bf16"' "accuracy manifest should use the served model name"
+  assert_contains "${ACCURACY_MANIFEST}" "GPU_LAB_ACCURACY_SUMMARY_BEGIN" "accuracy manifest should emit parseable summary markers"
+
+  teardown_test_tmpdir
+}
+
 run_render_unknown_case_test() {
   run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-load \
     --experiment kv-cache \
@@ -398,6 +474,33 @@ run_render_batching_serving_profile_test() {
   assert_not_contains "${DYNAMIC_MANIFEST}" '--max-num-batched-tokens' "dynamic default manifest should not set an explicit batched-token limit"
   assert_contains "${DYNAMIC_MANIFEST}" '- --max-model-len' "dynamic default manifest should still include the max model length"
   assert_contains "${DYNAMIC_MANIFEST}" '- "2048"' "dynamic default manifest should keep the 2048 model length"
+
+  teardown_test_tmpdir
+}
+
+run_render_fp4_serving_profile_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-serving \
+    --experiment fp4 \
+    --profile nvfp4-smoothquant \
+    --output "${TEST_TMPDIR}/vllm-fp4-smoothquant.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-serving should render the FP4 SmoothQuant profile"
+  assert_file_exists "${TEST_TMPDIR}/vllm-fp4-smoothquant.yaml" "render-serving should write the FP4 serving manifest"
+
+  FP4_SERVING_MANIFEST=$(cat "${TEST_TMPDIR}/vllm-fp4-smoothquant.yaml")
+
+  assert_contains "${FP4_SERVING_MANIFEST}" "image: vllm/vllm-openai:v0.20.1" "FP4 serving should use the requested vLLM image"
+  assert_contains "${FP4_SERVING_MANIFEST}" "- /models/qwen25-7b-nvfp4-smoothquant" "FP4 serving should target the quantized artifact path"
+  assert_contains "${FP4_SERVING_MANIFEST}" "- --dtype" "FP4 serving should render dtype explicitly"
+  assert_contains "${FP4_SERVING_MANIFEST}" "- auto" "FP4 serving should use dtype auto"
+  assert_contains "${FP4_SERVING_MANIFEST}" "- --tensor-parallel-size" "FP4 serving should request tensor parallelism"
+  assert_contains "${FP4_SERVING_MANIFEST}" "- \"8\"" "FP4 serving should use all 8 B200 GPUs"
+  assert_contains "${FP4_SERVING_MANIFEST}" "node.kubernetes.io/instance-type: p6-b200.48xlarge" "FP4 serving should target p6-b200 capacity"
+  assert_contains "${FP4_SERVING_MANIFEST}" "nvidia.com/gpu: \"8\"" "FP4 serving should request the full 8 GPU instance"
+  assert_contains "${FP4_SERVING_MANIFEST}" "mountPath: /models" "FP4 serving should mount local model artifacts"
+  assert_contains "${FP4_SERVING_MANIFEST}" "claimName: model-artifacts" "FP4 serving should read quantized artifacts from the shared PVC"
 
   teardown_test_tmpdir
 }
@@ -598,6 +701,49 @@ run_render_cost_report_test() {
   assert_contains "${COST_JSON_CONTENT}" "\"successful_requests\": null" "cost JSON report should include successful requests"
   assert_contains "${COST_JSON_CONTENT}" "\"generated_tokens\": null" "cost JSON report should include generated tokens"
   assert_contains "${COST_JSON_CONTENT}" "\"passed\": null" "cost JSON report should include SLO pass/fail"
+
+  teardown_test_tmpdir
+}
+
+run_render_fp4_report_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-report \
+    --experiment fp4 \
+    --case steady-512-output-128 \
+    --profile nvfp4-smoothquant \
+    --report "${TEST_TMPDIR}/fp4-report.md" \
+    --json-report "${TEST_TMPDIR}/fp4-report.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-report should render the FP4 report scaffold"
+  assert_file_exists "${TEST_TMPDIR}/fp4-report.md" "render-report should write the FP4 Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/fp4-report.json" "render-report should write the FP4 JSON report"
+
+  FP4_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/fp4-report.md")
+  FP4_JSON_CONTENT=$(cat "${TEST_TMPDIR}/fp4-report.json")
+
+  assert_contains "${FP4_REPORT_CONTENT}" "# FP4 Quantization Optimization - steady-512-output-128" "FP4 report should include the experiment title and case"
+  assert_contains "${FP4_REPORT_CONTENT}" "| Dtype | auto |" "FP4 report should include dtype metadata"
+  assert_contains "${FP4_REPORT_CONTENT}" "| Tensor parallel size | 8 |" "FP4 report should include tensor parallel metadata"
+  assert_contains "${FP4_REPORT_CONTENT}" "| Node profile | blackwell |" "FP4 report should include Blackwell metadata"
+  assert_contains "${FP4_REPORT_CONTENT}" "| Method | nvfp4+smoothquant |" "FP4 report should include the quantization method"
+  assert_contains "${FP4_REPORT_CONTENT}" "| Calibration settings | dataset=HuggingFaceH4/ultrachat_200k split=train_sft samples=512 max_seq_len=2048 seed=42 |" "FP4 report should include calibration settings"
+  assert_contains "${FP4_REPORT_CONTENT}" "| Tasks | arc_easy, hellaswag, winogrande |" "FP4 report should include accuracy tasks"
+  assert_contains "${FP4_REPORT_CONTENT}" "| Cost source | aws-ec2-capacity-blocks-ml |" "FP4 report should include the configurable cost source"
+  assert_contains "${FP4_REPORT_CONTENT}" "| Instance hourly cost | 82.368 |" "FP4 report should include the p6-b200 instance cost"
+  assert_contains "${FP4_REPORT_CONTENT}" "| Accelerator hourly cost | 10.296 |" "FP4 report should include the B200 accelerator cost"
+  assert_contains "${FP4_REPORT_CONTENT}" "| Quantization build cost | 123.552000 |" "FP4 report should keep build cost separate"
+  assert_contains "${FP4_REPORT_CONTENT}" "| SmoothQuant gain vs plain NVFP4 | n/a |" "FP4 report should include SmoothQuant gain placeholder"
+  assert_contains "${FP4_JSON_CONTENT}" "\"name\": \"fp4\"" "FP4 JSON report should include the experiment name"
+  assert_contains "${FP4_JSON_CONTENT}" "\"dtype\": \"auto\"" "FP4 JSON report should include dtype metadata"
+  assert_contains "${FP4_JSON_CONTENT}" "\"tensor_parallel_size\": 8" "FP4 JSON report should include tensor parallel metadata"
+  assert_contains "${FP4_JSON_CONTENT}" "\"method\": \"nvfp4+smoothquant\"" "FP4 JSON report should include quantization method"
+  assert_contains "${FP4_JSON_CONTENT}" "\"recipe_hash\": \"sha256:a4da9963fc9cbbf4fc446015f586a6c0a8828f31a4314ec3c9e69775fad8a1a7\"" "FP4 JSON report should include the recipe hash"
+  assert_contains "${FP4_JSON_CONTENT}" "\"tasks\": \"arc_easy|hellaswag|winogrande\"" "FP4 JSON report should include accuracy tasks"
+  assert_contains "${FP4_JSON_CONTENT}" "\"instance_type\": \"p6-b200.48xlarge\"" "FP4 JSON report should include the cost instance type"
+  assert_contains "${FP4_JSON_CONTENT}" "\"cost_per_1k_successful_requests_usd\": null" "FP4 JSON report should include the requested request cost field"
+  assert_contains "${FP4_JSON_CONTENT}" "\"cost_per_accuracy_recovered_percent_usd\": null" "FP4 JSON report should include the requested recovery cost field"
+  assert_contains "${FP4_JSON_CONTENT}" "\"quantization_build_cost_usd\": 123.552000" "FP4 JSON report should include quantization build cost"
 
   teardown_test_tmpdir
 }
@@ -1296,16 +1442,20 @@ run_batching_show_test
 run_request_patterns_show_test
 run_autoscaling_show_test
 run_cost_show_test
+run_fp4_show_test
 run_render_load_test
 run_render_fractional_arrival_rate_load_test
 run_render_autoscaling_load_test
 run_render_request_pattern_load_test
 run_render_stream_test
 run_render_mixed_stream_test
+run_render_fp4_quantization_manifest_test
+run_render_fp4_accuracy_manifest_test
 run_render_unknown_case_test
 run_render_default_serving_profile_test
 run_render_long_context_serving_profile_test
 run_render_batching_serving_profile_test
+run_render_fp4_serving_profile_test
 run_render_unknown_serving_profile_test
 run_render_report_test
 run_render_report_incompatible_profile_test
@@ -1313,6 +1463,7 @@ run_render_batching_report_test
 run_render_request_pattern_report_test
 run_render_autoscaling_report_test
 run_render_cost_report_test
+run_render_fp4_report_test
 run_render_report_default_path_test
 run_summarize_reports_test
 run_live_experiment_runner_test

@@ -5,6 +5,8 @@ This directory contains the manifests for the public inference surface:
 - `vllm-openai.yaml`: GPU-bound vLLM deployment
 - `hpa.yaml`: running-request HPA baseline
 - `hpa-active-pressure.yaml`: active-pressure HPA baseline
+- `model-artifacts-pvc.yaml`: optional artifact storage for locally quantized
+  model outputs
 - `service.yaml`: stable in-cluster `ClusterIP` service
 - `ingress.yaml`: public ALB-backed `/v1` route
 
@@ -36,6 +38,11 @@ The deployment is intentionally strict:
 
 That forces the pod onto Karpenter-managed GPU capacity instead of allowing it
 to land on system nodes.
+
+Profiles that serve local artifact paths under `/models/` mount the
+`model-artifacts` PVC. The FP4 quantization jobs write NVFP4 artifacts there,
+and the matching serving manifests read those artifacts back from the same
+mount.
 
 ## Autoscaling Today
 

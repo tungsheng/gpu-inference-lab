@@ -1,0 +1,63 @@
+# Controlled Blackwell FP4 experiment with quantization optimization.
+
+name: fp4
+title: FP4 Quantization Optimization
+status: scaffolded
+owner: local
+
+question: Does SmoothQuant improve NVFP4 W4A4 accuracy recovery, and what does that cost in memory, latency, throughput, and dollars?
+
+serving_profile:
+  defaults: ../_profiles/serving-defaults.csv
+  profiles_file: serving-profiles.csv
+  extensions_file: serving-extensions.csv
+  notes:
+    - All profiles target AWS p6-b200.48xlarge capacity in us-west-2.
+    - Blackwell profiles use vllm/vllm-openai:v0.20.1, --dtype auto, and tensor parallel size 8.
+    - g4dn and g5 shared profiles are intentionally unchanged.
+
+workload:
+  generator: k6
+  endpoint: /v1/completions
+  cases_file: cases.csv
+  cost_profiles_file: cost-profiles.csv
+  cost_details_file: cost-details.csv
+  accuracy_cases_file: accuracy-cases.csv
+  quantization_jobs_file: quantization/quantization-jobs.csv
+  prompt_strategy: approximate-token-target
+
+metrics:
+  latency:
+    - p50_request_latency_seconds
+    - p95_request_latency_seconds
+    - p99_request_latency_seconds
+  serving:
+    - completed_requests
+    - successful_requests
+    - generated_tokens
+    - requests_per_second
+    - generation_tokens_per_second
+  gpu:
+    - average_gpu_utilization_percent
+    - max_gpu_utilization_percent
+    - gpu_memory_used_bytes
+    - gpu_memory_free_bytes
+  accuracy:
+    - arc_easy
+    - hellaswag
+    - winogrande
+    - average_score
+    - fp4_recovery_vs_bf16_percent
+    - smoothquant_gain_vs_plain_nvfp4_percent
+  cost:
+    - estimated_serving_cost_usd
+    - cost_per_1k_successful_requests_usd
+    - cost_per_1m_generated_tokens_usd
+    - cost_per_accuracy_point_usd
+    - cost_per_accuracy_recovered_percent_usd
+    - quantization_build_cost_usd
+
+artifacts:
+  readme: README.md
+  results: results.md
+  graphs_dir: graphs
