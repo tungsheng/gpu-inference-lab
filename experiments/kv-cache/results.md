@@ -85,6 +85,47 @@ concurrency or a larger batched-token budget improves tail latency.
 5. Use `./scripts/experiment summarize-reports --experiment kv-cache` after each
    batch to keep the latest case/profile comparison visible.
 
+## FP8 KV Cache Probe
+
+The FP8 KV profiles keep the existing one-GPU g4dn/g5 hardware path and only
+change KV cache storage or scheduler caps. The same-day
+`prompt-8192-output-300-rate-100` A/B and follow-up probes did not pass the
+"stable stays stable" gate:
+
+| Profile | KV cache dtype | Calculate scales | Max seqs | Successful requests | Failed requests | Delivery ratio | Dropped / interrupted | p95 latency | Generated tokens/sec | Peak waiting / running / active | GPU avg / max | GPU memory used / free | Outcome |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `long-context` | n/a | n/a | 32 | 599 | 0 | 1.000000 | 0 / 0 | 11.92s | 249.58 | 0 / 12 / 12 | 90% / 100% | 14.10 / 0.64 GiB | stable |
+| `long-context-fp8-kv` | fp8 | true | 32 | 414 | 0 | 0.691152 | 51 / 134 | 245.29s | 165.60 | 146 / 32 / 178 | 89% / 100% | 14.03 / 0.71 GiB | regressed |
+| `long-context-fp8-kv-static-scales` | fp8 | false | 32 | 285 | 65 | 0.475793 | 87 / 162 | 300.00s | 114.00 | 181 / 32 / 213 | 90% / 98% | 14.03 / 0.71 GiB | worse |
+| `long-context-fp8-kv-seqs-12` | fp8 | true | 12 | 402 | 0 | 0.671119 | 54 / 143 | 253.00s | 160.80 | 168 / 12 / 180 | 89% / 100% | 14.03 / 0.71 GiB | still regressed |
+
+The FP8 KV profiles save only about 0.07 GiB at this workload while reducing
+generation throughput from about 250 tokens/sec to 114-166 tokens/sec. Startup
+logs for the FP8 pods report CUDA compute capability below 8.0, fallback to the
+vLLM V0 engine, and XFormers attention. They also report a much larger FP8 KV
+block pool, with roughly 11.97 GiB reserved for KV cache and theoretical
+`226.98x` concurrency for 9216-token requests.
+
+Static scales were slower than dynamic scales, so `--calculate-kv-scales` is not
+the primary regression. Capping `max_num_seqs` to the baseline observed running
+depth avoided request timeouts but did not restore throughput or delivery, so
+the problem is not just over-admission to 32 running sequences. The practical
+conclusion is that FP8 KV is not useful for this T4/g4dn long-context profile:
+the baseline is compute-bound enough that the tiny memory gain does not offset
+FP8 KV overhead on the V0/XFormers path.
+
+Next FP8-specific probes:
+
+1. Stop the `8192/300` FP8 KV path on g4dn unless a newer vLLM image or g5/L4
+   backend is being tested.
+2. If FP8 must stay in scope on current hardware, run a smaller prompt case such
+   as `2048/200` against `long-context` and `long-context-fp8-kv` to find
+   whether FP8 only fails under long-prefill pressure.
+3. If testing newer serving software, keep `long-context-fp8-kv-seqs-12` as the
+   first canary before returning to the uncapped profile.
+4. Do not run `rate-125` or `rate-150` FP8 KV cases on the current
+   `vllm/vllm-openai:v0.9.0` g4dn path.
+
 ## Graphs
 
 Graphs should be generated from checked-in JSON reports and stored under

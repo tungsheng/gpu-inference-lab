@@ -45,6 +45,9 @@ tokenizer counts.
 | --- | --- |
 | `default` | cases that fit the checked-in 2048-token vLLM profile |
 | `long-context` | all cases in the comparable KV-cache result matrix |
+| `long-context-fp8-kv` | FP8 KV storage with dynamic KV scale calculation on the same long-context scheduler and one-GPU path |
+| `long-context-fp8-kv-static-scales` | FP8 KV storage without dynamic KV scale calculation for isolating scale overhead |
+| `long-context-fp8-kv-seqs-12` | FP8 KV storage capped to the baseline observed running request depth |
 | `long-context-seqs-16` | conservative scheduler variant that trades concurrency for lower tail latency |
 | `long-context-seqs-24` | midpoint scheduler variant for the saturation knee |
 | `long-context-batched-16384` | batched-token capacity probe for long prefill throughput |
@@ -93,12 +96,32 @@ After runs, summarize the latest report per case/profile:
 ./scripts/experiment summarize-reports --experiment kv-cache
 ```
 
+To compare FP8 KV cache storage without changing hardware or model artifacts,
+run the known single-replica knee cases against `long-context-fp8-kv` after the
+matching `long-context` baseline:
+
+```bash
+./scripts/experiment run \
+  --experiment kv-cache \
+  --case prompt-8192-output-300-rate-100 \
+  --profile long-context-fp8-kv
+
+./scripts/experiment run \
+  --experiment kv-cache \
+  --case prompt-8192-output-300-rate-125 \
+  --profile long-context-fp8-kv
+```
+
+Treat `prompt-8192-output-300-rate-150` as an optional overload probe once the
+`1.00` and `1.25 req/s` runs are healthy.
+
 ## Readout
 
 Compare request failures, offered iterations, unserved iterations, delivery
 ratio, dropped iterations, interrupted iterations, p95/p99 latency, generated
 tokens/sec, waiting/running/active request pressure, GPU memory, and GPU
-utilization. The result should explain where longer context shifts the
-latency/throughput envelope and whether failures look like client queue
-saturation, scheduler saturation, admission-control shedding, or memory
-pressure.
+utilization. For the FP8 KV comparison, also record the rendered KV cache dtype
+and whether dynamic KV scale calculation was enabled. The result should explain
+where longer context shifts the latency/throughput envelope and whether failures
+look like client queue saturation, scheduler saturation, admission-control
+shedding, or memory pressure.

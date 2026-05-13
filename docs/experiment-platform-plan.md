@@ -11,11 +11,14 @@ Each experiment lives under `experiments/<name>/` and uses the same basic shape:
 - `experiment.yaml`: title, description, metrics, and report intent
 - `cases.csv`: workload cases
 - `serving-profiles.csv`: optional vLLM profile overrides
+- `serving-extensions.csv`: optional advanced serving metadata and vLLM flags
 - `results.md`: curated conclusions or a result template
 
 Shared defaults live in `experiments/_profiles/serving-defaults.csv`.
 Experiment-specific profiles should only override fields that matter to the
-question being asked.
+question being asked. Use serving extensions for behavior that is orthogonal to
+the core resource and scheduler profile, such as tensor parallelism,
+quantization provenance, or KV-cache dtype.
 
 ## Local Commands
 

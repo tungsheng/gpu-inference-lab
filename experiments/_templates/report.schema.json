@@ -119,6 +119,8 @@
         "served_model_name": { "type": "string" },
         "vllm_image": { "type": "string" },
         "dtype": { "type": "string" },
+        "kv_cache_dtype": { "type": ["string", "null"] },
+        "calculate_kv_scales": { "type": ["boolean", "null"] },
         "tensor_parallel_size": { "type": ["integer", "null"] },
         "node_profile": { "type": ["string", "null"] },
         "max_model_len": { "type": "integer" },

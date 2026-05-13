@@ -8,8 +8,10 @@ question: How much stable concurrency is lost as prompt context grows and KV-cac
 serving_profile:
   defaults: ../_profiles/serving-defaults.csv
   profiles_file: serving-profiles.csv
+  extensions_file: serving-extensions.csv
   notes:
     - The 8192-token case requires a long-context serving profile before it can run.
+    - The long-context-fp8-kv profile keeps the same one-GPU hardware path and only changes KV cache storage to FP8.
 
 workload:
   generator: k6

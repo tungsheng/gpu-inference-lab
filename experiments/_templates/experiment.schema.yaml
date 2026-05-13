@@ -13,6 +13,7 @@ question: What systems tradeoff does this experiment make visible?
 serving_profile:
   defaults: ../_profiles/serving-defaults.csv
   profiles_file: serving-profiles.csv
+  extensions_file: serving-extensions.csv
   notes:
     - Put only experiment-specific serving overrides in serving-profiles.csv.
 

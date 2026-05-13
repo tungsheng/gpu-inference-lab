@@ -1,0 +1,4 @@
+profile_id,dtype,tensor_parallel_size,node_profile,quantization_method,model_artifact_path,model_artifact_hash,recipe_hash,calibration_dataset,calibration_split,calibration_samples,calibration_max_seq_len,calibration_seed,kv_cache_dtype,calculate_kv_scales,description
+long-context-fp8-kv,float16,,,,,,,,,,,,fp8,true,FP8 KV cache storage on the existing long-context one GPU serving profile
+long-context-fp8-kv-static-scales,float16,,,,,,,,,,,,fp8,false,FP8 KV cache storage without dynamic KV scale calculation
+long-context-fp8-kv-seqs-12,float16,,,,,,,,,,,,fp8,true,FP8 KV cache storage capped to the baseline observed running sequence depth

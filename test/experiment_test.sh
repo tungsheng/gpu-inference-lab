@@ -48,8 +48,11 @@ run_experiment_show_test() {
   assert_contains "${COMMAND_OUTPUT}" "prompt-8192-output-300-rate-125-admission-032/admission-control" "show output should include the admission-control policy"
   assert_contains "${COMMAND_OUTPUT}" "Serving profiles:" "show output should include serving profiles"
   assert_contains "${COMMAND_OUTPUT}" "long-context" "show output should include the long-context serving profile"
+  assert_contains "${COMMAND_OUTPUT}" "long-context-fp8-kv" "show output should include the FP8 KV cache profile"
   assert_contains "${COMMAND_OUTPUT}" "long-context-seqs-16" "show output should include conservative long-context scheduler variants"
   assert_contains "${COMMAND_OUTPUT}" "max_num_seqs=16 max_num_batched_tokens=9216" "show output should include scheduler settings for sequence-limit variants"
+  assert_contains "${COMMAND_OUTPUT}" "Serving extensions:" "show output should include KV-cache serving extension metadata"
+  assert_contains "${COMMAND_OUTPUT}" "long-context-fp8-kv: dtype=float16 tensor_parallel= node_profile= quantization= artifact= recipe_hash= kv_cache_dtype=fp8 calculate_kv_scales=true" "show output should include FP8 KV-cache settings"
 }
 
 run_prefill_decode_show_test() {
@@ -438,6 +441,35 @@ run_render_long_context_serving_profile_test() {
   assert_contains "${SERVING_MANIFEST}" '- "32"' "long-context manifest should include the max sequence value"
   assert_contains "${SERVING_MANIFEST}" '- --max-num-batched-tokens' "long-context manifest should include a batched-token limit"
   assert_contains "${SERVING_MANIFEST}" '- "9216"' "long-context manifest should include the batched-token value"
+  assert_not_contains "${SERVING_MANIFEST}" '--kv-cache-dtype' "baseline long-context manifest should not set KV cache dtype"
+  assert_not_contains "${SERVING_MANIFEST}" '--calculate-kv-scales' "baseline long-context manifest should not calculate KV scales"
+
+  teardown_test_tmpdir
+}
+
+run_render_fp8_kv_serving_profile_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-serving \
+    --experiment kv-cache \
+    --profile long-context-fp8-kv \
+    --output "${TEST_TMPDIR}/vllm-long-context-fp8-kv.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-serving should render the FP8 KV cache profile"
+  assert_file_exists "${TEST_TMPDIR}/vllm-long-context-fp8-kv.yaml" "render-serving should write the FP8 KV manifest"
+
+  FP8_KV_MANIFEST=$(cat "${TEST_TMPDIR}/vllm-long-context-fp8-kv.yaml")
+
+  assert_contains "${FP8_KV_MANIFEST}" '- --max-model-len' "FP8 KV manifest should keep the long-context model length"
+  assert_contains "${FP8_KV_MANIFEST}" '- "9216"' "FP8 KV manifest should keep the long-context length and token budget"
+  assert_contains "${FP8_KV_MANIFEST}" '- --max-num-seqs' "FP8 KV manifest should keep the long-context sequence limit"
+  assert_contains "${FP8_KV_MANIFEST}" '- "32"' "FP8 KV manifest should keep the long-context sequence value"
+  assert_contains "${FP8_KV_MANIFEST}" '- --max-num-batched-tokens' "FP8 KV manifest should keep the long-context batched-token limit"
+  assert_contains "${FP8_KV_MANIFEST}" '- --kv-cache-dtype' "FP8 KV manifest should set KV cache dtype"
+  assert_contains "${FP8_KV_MANIFEST}" '- fp8' "FP8 KV manifest should use fp8 KV storage"
+  assert_contains "${FP8_KV_MANIFEST}" '- --calculate-kv-scales' "FP8 KV manifest should calculate KV scales dynamically"
+  assert_contains "${FP8_KV_MANIFEST}" 'nvidia.com/gpu: "1"' "FP8 KV manifest should keep the existing one-GPU serving shape"
+  assert_not_contains "${FP8_KV_MANIFEST}" 'node.kubernetes.io/instance-type: p6-b200.48xlarge' "FP8 KV manifest should not select B200 capacity"
 
   teardown_test_tmpdir
 }
@@ -537,6 +569,8 @@ run_render_report_test() {
   assert_contains "${REPORT_CONTENT}" "Requires live cluster: true" "Markdown report should state that measured results require a live cluster"
   assert_contains "${REPORT_CONTENT}" "| Prompt token target | 8192 |" "Markdown report should include workload metadata"
   assert_contains "${REPORT_CONTENT}" "| Max model length | 9216 |" "Markdown report should include serving metadata"
+  assert_contains "${REPORT_CONTENT}" "| KV cache dtype | n/a |" "Markdown report should include blank KV cache dtype metadata"
+  assert_contains "${REPORT_CONTENT}" "| Calculate KV scales | n/a |" "Markdown report should include blank KV scale metadata"
   assert_contains "${REPORT_CONTENT}" "| p99 request latency | n/a |" "Markdown report should render unavailable metrics as n/a"
   assert_contains "${REPORT_CONTENT}" "| GPU memory used | n/a |" "Markdown report should render unavailable GPU memory metrics as n/a"
   assert_contains "${REPORT_CONTENT}" "Unavailable fields remain \`n/a\` when the runner did not collect that signal" "Markdown report should explain unavailable metrics conservatively"
@@ -545,6 +579,8 @@ run_render_report_test() {
   assert_contains "${JSON_REPORT_CONTENT}" "\"requires_live_cluster\": true" "JSON report should state that measured results require a live cluster"
   assert_contains "${JSON_REPORT_CONTENT}" "\"prompt_token_target\": 8192" "JSON report should include workload metadata"
   assert_contains "${JSON_REPORT_CONTENT}" "\"max_model_len\": 9216" "JSON report should include serving metadata"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"kv_cache_dtype\": null" "JSON report should include blank KV cache dtype metadata"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"calculate_kv_scales\": null" "JSON report should include blank KV scale metadata"
   assert_contains "${JSON_REPORT_CONTENT}" "\"max_num_seqs\": 32" "JSON report should include scheduler metadata"
   assert_contains "${JSON_REPORT_CONTENT}" "\"max_num_batched_tokens\": 9216" "JSON report should include batched-token metadata"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p99_request_latency_seconds\": null" "JSON report should render unavailable latency as null"
@@ -552,6 +588,35 @@ run_render_report_test() {
   assert_contains "${JSON_REPORT_CONTENT}" "\"p95_inter_token_latency_seconds\": null" "JSON report should render unavailable inter-token latency as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"gpu_memory_used_bytes\": null" "JSON report should render unavailable GPU memory as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"cost_per_1000_successful_requests_usd\": null" "JSON report should render unavailable cost as null"
+
+  teardown_test_tmpdir
+}
+
+run_render_fp8_kv_report_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-report \
+    --experiment kv-cache \
+    --case prompt-8192-output-300-rate-125 \
+    --profile long-context-fp8-kv \
+    --report "${TEST_TMPDIR}/kv-cache-fp8-kv-report.md" \
+    --json-report "${TEST_TMPDIR}/kv-cache-fp8-kv-report.json"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-report should write FP8 KV report scaffold artifacts"
+  assert_file_exists "${TEST_TMPDIR}/kv-cache-fp8-kv-report.md" "render-report should write the FP8 KV Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/kv-cache-fp8-kv-report.json" "render-report should write the FP8 KV JSON report"
+
+  FP8_KV_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/kv-cache-fp8-kv-report.md")
+  FP8_KV_JSON_CONTENT=$(cat "${TEST_TMPDIR}/kv-cache-fp8-kv-report.json")
+
+  assert_contains "${FP8_KV_REPORT_CONTENT}" "| Profile | long-context-fp8-kv |" "FP8 KV report should include the selected profile"
+  assert_contains "${FP8_KV_REPORT_CONTENT}" "| KV cache dtype | fp8 |" "FP8 KV report should include KV cache dtype"
+  assert_contains "${FP8_KV_REPORT_CONTENT}" "| Calculate KV scales | true |" "FP8 KV report should include dynamic scale metadata"
+  assert_contains "${FP8_KV_REPORT_CONTENT}" "| Max sequences | 32 |" "FP8 KV report should keep long-context sequence metadata"
+  assert_contains "${FP8_KV_JSON_CONTENT}" "\"id\": \"long-context-fp8-kv\"" "FP8 KV JSON report should include the profile id"
+  assert_contains "${FP8_KV_JSON_CONTENT}" "\"kv_cache_dtype\": \"fp8\"" "FP8 KV JSON report should include KV cache dtype"
+  assert_contains "${FP8_KV_JSON_CONTENT}" "\"calculate_kv_scales\": true" "FP8 KV JSON report should include dynamic scale metadata"
+  assert_contains "${FP8_KV_JSON_CONTENT}" "\"max_num_seqs\": 32" "FP8 KV JSON report should keep long-context sequence metadata"
 
   teardown_test_tmpdir
 }
@@ -1454,10 +1519,12 @@ run_render_fp4_accuracy_manifest_test
 run_render_unknown_case_test
 run_render_default_serving_profile_test
 run_render_long_context_serving_profile_test
+run_render_fp8_kv_serving_profile_test
 run_render_batching_serving_profile_test
 run_render_fp4_serving_profile_test
 run_render_unknown_serving_profile_test
 run_render_report_test
+run_render_fp8_kv_report_test
 run_render_report_incompatible_profile_test
 run_render_batching_report_test
 run_render_request_pattern_report_test

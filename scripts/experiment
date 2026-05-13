@@ -306,7 +306,7 @@ show_experiment() {
     awk -F',' '
       NR == 1 { next }
       NF > 0 && $1 !~ /^#/ {
-        printf "  - %s: dtype=%s tensor_parallel=%s node_profile=%s quantization=%s artifact=%s recipe_hash=%s\n", $1, $2, $3, $4, $5, $6, $8
+        printf "  - %s: dtype=%s tensor_parallel=%s node_profile=%s quantization=%s artifact=%s recipe_hash=%s kv_cache_dtype=%s calculate_kv_scales=%s\n", $1, $2, $3, $4, $5, $6, $8, $14, $15
       }
     ' "${serving_extensions_path}"
   fi
@@ -1024,6 +1024,8 @@ reset_serving_extension() {
   CALIBRATION_SAMPLES=""
   CALIBRATION_MAX_SEQ_LEN=""
   CALIBRATION_SEED=""
+  KV_CACHE_DTYPE=""
+  CALCULATE_KV_SCALES=""
 }
 
 validate_loaded_serving_extension() {
@@ -1060,6 +1062,20 @@ validate_loaded_serving_extension() {
   require_optional_non_negative_integer "${CALIBRATION_SAMPLES}" "calibration samples"
   require_optional_positive_integer "${CALIBRATION_MAX_SEQ_LEN}" "calibration max sequence length"
   require_optional_non_negative_integer "${CALIBRATION_SEED}" "calibration seed"
+  case "${KV_CACHE_DTYPE}" in
+    ""|auto|fp8|fp8_e4m3|fp8_e5m2)
+      ;;
+    *)
+      die "Invalid KV cache dtype: ${KV_CACHE_DTYPE}"
+      ;;
+  esac
+  case "${CALCULATE_KV_SCALES}" in
+    ""|true|false)
+      ;;
+    *)
+      die "Invalid calculate KV scales value: ${CALCULATE_KV_SCALES}"
+      ;;
+  esac
 }
 
 load_serving_extension() {
@@ -1075,7 +1091,7 @@ load_serving_extension() {
     return 0
   fi
 
-  while IFS=',' read -r row_profile_id SERVING_DTYPE SERVING_TENSOR_PARALLEL_SIZE SERVING_NODE_PROFILE QUANTIZATION_METHOD MODEL_ARTIFACT_PATH MODEL_ARTIFACT_HASH RECIPE_HASH CALIBRATION_DATASET CALIBRATION_SPLIT CALIBRATION_SAMPLES CALIBRATION_MAX_SEQ_LEN CALIBRATION_SEED _serving_extension_description; do
+  while IFS=',' read -r row_profile_id SERVING_DTYPE SERVING_TENSOR_PARALLEL_SIZE SERVING_NODE_PROFILE QUANTIZATION_METHOD MODEL_ARTIFACT_PATH MODEL_ARTIFACT_HASH RECIPE_HASH CALIBRATION_DATASET CALIBRATION_SPLIT CALIBRATION_SAMPLES CALIBRATION_MAX_SEQ_LEN CALIBRATION_SEED KV_CACHE_DTYPE CALCULATE_KV_SCALES _serving_extension_description; do
     if [[ -z "${row_profile_id}" || "${row_profile_id}" == "profile_id" || "${row_profile_id}" == \#* ]]; then
       continue
     fi
@@ -1085,6 +1101,8 @@ load_serving_extension() {
       return 0
     fi
   done < "${extensions_path}"
+
+  reset_serving_extension
 }
 
 load_default_serving_profile() {
@@ -1846,7 +1864,7 @@ validate_experiment() {
     validate_csv_field_count "${cost_details_path}" 11
   fi
   if [[ -f "${serving_extensions_path}" ]]; then
-    validate_csv_field_count "${serving_extensions_path}" 14
+    validate_csv_field_count "${serving_extensions_path}" 16
   fi
   if [[ -f "${accuracy_cases_path}" ]]; then
     validate_csv_field_count "${accuracy_cases_path}" 6
@@ -1980,6 +1998,21 @@ render_optional_vllm_parallel_args() {
     cat <<EOF
             - --tensor-parallel-size
             - "${SERVING_TENSOR_PARALLEL_SIZE}"
+EOF
+  fi
+}
+
+render_optional_vllm_kv_cache_args() {
+  if [[ -n "${KV_CACHE_DTYPE}" ]]; then
+    cat <<EOF
+            - --kv-cache-dtype
+            - ${KV_CACHE_DTYPE}
+EOF
+  fi
+
+  if [[ "${CALCULATE_KV_SCALES}" == "true" ]]; then
+    cat <<EOF
+            - --calculate-kv-scales
 EOF
   fi
 }
@@ -2167,6 +2200,7 @@ EOF
 EOF
   render_optional_vllm_parallel_args
   render_optional_vllm_scheduler_args
+  render_optional_vllm_kv_cache_args
   cat <<EOF
           env:
             - name: HF_HOME
@@ -2615,6 +2649,8 @@ render_report_markdown() {
   local max_num_seqs_display="n/a"
   local max_num_batched_tokens_display="n/a"
   local tensor_parallel_size_display="n/a"
+  local kv_cache_dtype_display
+  local calculate_kv_scales_display
   local run_status="${RUN_STATUS:-pending}"
   local run_source="${RUN_SOURCE:-scripts/experiment render-report}"
   local request_shapes_display_value
@@ -2745,6 +2781,8 @@ render_report_markdown() {
   max_gpu_utilization_display=$(display_optional_metric "${RESULT_MAX_GPU_UTILIZATION_PERCENT:-}")
   gpu_memory_used_display=$(display_optional_bytes_gib "${RESULT_GPU_MEMORY_USED_BYTES:-}")
   gpu_memory_free_display=$(display_optional_bytes_gib "${RESULT_GPU_MEMORY_FREE_BYTES:-}")
+  kv_cache_dtype_display=$(display_optional_metric "${KV_CACHE_DTYPE:-}")
+  calculate_kv_scales_display=$(display_optional_metric "${CALCULATE_KV_SCALES:-}")
   quantization_method_display=$(display_optional_metric "${QUANTIZATION_METHOD:-}")
   model_artifact_path_display=$(display_optional_metric "${MODEL_ARTIFACT_PATH:-}")
   model_artifact_hash_display=$(display_optional_metric "${MODEL_ARTIFACT_HASH:-}")
@@ -2835,6 +2873,8 @@ render_report_markdown() {
 | Served model name | ${SERVED_MODEL_NAME} |
 | vLLM image | ${VLLM_IMAGE} |
 | Dtype | ${SERVING_DTYPE} |
+| KV cache dtype | ${kv_cache_dtype_display} |
+| Calculate KV scales | ${calculate_kv_scales_display} |
 | Tensor parallel size | ${tensor_parallel_size_display} |
 | Node profile | $(display_optional_metric "${SERVING_NODE_PROFILE:-}") |
 | Max model length | ${MAX_MODEL_LEN} |
@@ -3005,6 +3045,8 @@ render_report_json() {
     "served_model_name": "${SERVED_MODEL_NAME}",
     "vllm_image": "${VLLM_IMAGE}",
     "dtype": "${SERVING_DTYPE}",
+    "kv_cache_dtype": $(json_optional_string "${KV_CACHE_DTYPE:-}"),
+    "calculate_kv_scales": $(json_optional_boolean "${CALCULATE_KV_SCALES:-}"),
     "tensor_parallel_size": ${tensor_parallel_size_json},
     "node_profile": $(json_optional_string "${SERVING_NODE_PROFILE:-}"),
     "max_model_len": ${MAX_MODEL_LEN},
