@@ -1,106 +1,53 @@
 # GPU Inference Lab
 
-GPU Inference Lab is a hands-on AWS EKS project for learning how an elastic GPU
-inference platform behaves under cold start, burst load, mixed-capacity serving,
-and operator-visible cost signals.
+GPU Inference Lab turns real serving measurements into inference architecture
+decisions.
 
-The repo has three main workflows:
+It runs an AWS EKS and vLLM platform to measure GPU warm capacity, admission
+control, autoscaling signals, context-length limits, scheduler shape, and
+quantization tradeoffs.
 
-- `./scripts/verify` proves the public inference path from zero GPU nodes.
-- `./scripts/evaluate` runs controlled burst evaluations and writes reports.
-- `./scripts/experiment` validates and runs focused ML-serving experiments.
+## What It Answers
 
-## Platform At A Glance
+| Question | Primary evidence |
+| --- | --- |
+| Zero-idle, warm baseline, or always-on serving? | burst evaluations and autoscaling results |
+| Running-request HPA or active-pressure HPA? | compare and sweep reports |
+| Direct traffic or bounded admission? | autoscaling direct vs queued cases |
+| Safe context length, rate, and concurrency? | KV-cache sweeps |
+| Scheduler, KV-cache, or quantization change? | experiment matrices |
+| Spot, on-demand, or specialized GPU capacity? | Karpenter capacity profiles and resilience drills |
 
-```text
-Internet
-   |
-   v
-AWS Application Load Balancer
-   |
-   v
-Ingress (/v1)
-   |
-   v
-ClusterIP Service
-   |
-   v
-vLLM Deployment
-   |
-   +--> HPA on vllm_requests_running or vllm_requests_active
-   |
-   +--> Prometheus / Grafana / Prometheus Adapter / Pushgateway / DCGM
-   |
-   v
-Karpenter-managed GPU nodes
-   |
-   +--> gpu-serving-ondemand
-   +--> gpu-serving-spot
+## Proven So Far
 
-EKS cluster
-   |
-   +--> managed system nodes
-   +--> no managed GPU node group
-```
+Current evidence shows:
 
-## Current Stack
+- scale-from-zero is dominated by container/image/model readiness, not by GPU
+  node creation
+- bounded admission protects delivery ratio and p95 latency during bursts, with
+  lower completed volume in the same wall-clock window
+- the `8192/300` long-context profile has a visible saturation knee, and
+  FP8 KV cache regresses that workload on the current g4dn/vLLM `v0.9.0` path
 
-- Terraform-managed VPC and EKS dev environment in `infra/env/dev`
-- managed system node group for controllers and shared services
-- Karpenter-owned GPU capacity with separate on-demand and spot serving pools
-- real vLLM serving with `vllm/vllm-openai:v0.9.0` and
-  `Qwen/Qwen2.5-0.5B-Instruct`
-- public ALB-backed `/v1` inference edge
-- Prometheus, Grafana, Prometheus Adapter, Pushgateway, DCGM exporter, and
-  dashboards
-- `zero-idle` and `warm-1` evaluation profiles
-- experiment catalog for KV cache, prefill/decode, batching, request patterns,
-  autoscaling, cost-per-useful-work, and Blackwell FP4 quantization questions
+See [Evidence](docs/evidence.md) for numbers, boundaries, and pending claims.
 
 ## Quick Start
 
-Local catalog checks and render-only commands do not require AWS access. These
-commands validate experiment definitions and generate manifests or empty report
-scaffolds; they do not run workloads or produce measured results.
+Local checks do not require AWS:
 
 ```bash
 ./scripts/experiment list
 ./scripts/experiment validate
-./scripts/experiment show kv-cache
-./scripts/experiment render-load \
-  --experiment kv-cache \
-  --case prompt-512-output-100 \
-  --output /tmp/kv-cache-load.yaml
-./scripts/experiment render-serving \
-  --experiment kv-cache \
-  --profile long-context \
-  --output /tmp/vllm-long-context.yaml
-./scripts/experiment render-report \
-  --experiment cost \
-  --case steady-cost-efficiency \
-  --profile optimized-batched
-./scripts/experiment render-quantization \
-  --experiment fp4 \
-  --profile nvfp4-plain \
-  --output /tmp/fp4-quantize.yaml
-./scripts/experiment render-accuracy \
-  --experiment fp4 \
-  --profile bf16-baseline \
-  --output /tmp/fp4-accuracy.yaml
 ./test/run.sh
 ```
 
-Measured validation and experiment runs require Terraform, AWS CLI, `kubectl`,
-`helm`, AWS credentials, access to `us-west-2`, and a live cluster from
-`./scripts/up`:
+Measured runs require Terraform, AWS CLI, `kubectl`, `helm`, AWS credentials,
+access to `us-west-2`, and a live cluster:
 
 ```bash
 ./scripts/up
 ./scripts/verify
 ./scripts/evaluate --profile zero-idle
-./scripts/evaluate --profile zero-idle --policy active-pressure --active-target 4
-./scripts/evaluate --profile warm-1 --policy compare --active-target 6
-./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8
 ./scripts/experiment run \
   --experiment kv-cache \
   --case prompt-512-output-100 \
@@ -108,43 +55,28 @@ Measured validation and experiment runs require Terraform, AWS CLI, `kubectl`,
 ./scripts/down
 ```
 
-Use `./scripts/down --cleanup-orphan-enis` only when `terraform destroy` fails
-because cleanup-eligible `aws-K8S` or `aws-node` ENIs remain in the VPC.
-Use `./scripts/down --terraform-only` only after Kubernetes cleanup has already
-finished or the cluster API is no longer reachable.
+Use [Runbook](docs/runbook.md) for render commands, live-run variants, manual
+checks, and teardown recovery.
 
 ## Documentation
 
-Start here:
-
-- [Operations](docs/operations.md): choose the right command and read results
-- [Dev environment workflow](docs/dev-environment.md): full setup, validation,
-  and teardown runbook
-- [Architecture](docs/architecture.md): platform shape and control loops
-- [Experiments summary](docs/experiments-summary.md): experiment catalog and
-  current status
-- [Reports](docs/reports/README.md): generated report format and artifact rules
+- [Decision engine](docs/decision-engine.md): measurement-to-architecture flow
+- [Evidence](docs/evidence.md): curated measured conclusions and gaps
+- [Runbook](docs/runbook.md): commands for local checks, live runs, and teardown
+- [Platform reference](docs/platform-reference.md): implementation details
+- [Experiment catalog](docs/experiment-catalog.md): experiment contracts and status
+- [Reports](docs/reports/README.md): generated report schema and artifact rules
+- [Roadmap](docs/roadmap.md): remaining work
 
 ## Repository Map
 
-- `infra/env/dev/`: active Terraform environment
-- `infra/modules/`: reusable VPC, EKS, and Karpenter Terraform modules
-- `platform/inference/`: vLLM deployment, service, ingress, and HPA manifests
-- `platform/karpenter/`: active GPU `EC2NodeClass` and `NodePool` manifests
-- `platform/observability/`: metrics, dashboards, adapter, exporter, and
-  Pushgateway assets
-- `platform/system/`: runtime prerequisites such as the NVIDIA device plugin
-- `platform/workloads/validation/`: smoke, load, and warm-placeholder workloads
-- `experiments/`: experiment definitions, cases, serving profiles, and results
-- `scripts/`: lifecycle and experiment commands
-- `test/`: shell tests for the public script and manifest contract
+| Path | Purpose |
+| --- | --- |
+| `infra/` | Terraform VPC, EKS, and Karpenter AWS prerequisites |
+| `platform/` | Kubernetes manifests for serving, capacity, observability, and validation |
+| `experiments/` | experiment definitions, cases, profiles, and curated results |
+| `scripts/` | lifecycle, evaluation, and experiment commands |
+| `test/` | shell tests for scripts and manifest contracts |
 
-## Dev Boundary
-
-The active environment is optimized for iteration, not production hardening:
-
-- `endpoint_public_access = true`
-- `endpoint_public_access_cidrs = ["0.0.0.0/0"]`
-
-A production variant should use private cluster access, a documented operator
-access path such as SSM, bastion, or VPN, and narrower public CIDR controls.
+The active environment favors iteration over production hardening. Use
+[Platform reference](docs/platform-reference.md) for production boundary notes.
