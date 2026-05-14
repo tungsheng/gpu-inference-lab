@@ -1,13 +1,15 @@
 # KV Cache Vs Concurrency Results
 
 Status: `8192/300` long-context rate sweep has a measured saturation knee; the
-new knee/repeat cases are ready for follow-up runs.
+1.05-1.20 req/s probes are populated and scheduler/admission follow-ups are
+ready.
 
 The latest populated reports show a single-replica long-context envelope that is
-usable through `1.00 req/s`, begins queueing hard by `1.25 req/s`, and is clearly
-overloaded at `1.50 req/s`. GPU/DCGM fields are now present in the newest
-reports, so memory and utilization can be used as supporting evidence for the
-long-context story.
+usable through `1.10 req/s` without waiting, starts queueing at `1.15 req/s`,
+and reaches the practical edge by `1.20 req/s`. It begins queueing hard by
+`1.25 req/s` and is clearly overloaded at `1.50 req/s`. GPU/DCGM fields are now
+present in the newest reports, so memory and utilization can be used as
+supporting evidence for the long-context story.
 
 ## Evidence Boundaries
 
@@ -34,7 +36,11 @@ iterations, high delivery ratio, and no sustained waiting-request pressure.
 | `prompt-8192-output-300-rate-025` | 0.25 req/s | 150 | 0 | n/a / 0 | 4.83s | 4.89s | 0.207 | 62.14 | 0 / 2 / 2 | n/a | n/a | stable |
 | `prompt-8192-output-300-rate-050` | 0.50 req/s | 299 | 0 | n/a / 0 | 5.28s | 5.31s | 0.415 | 124.58 | 0 / 3 / 3 | n/a | n/a | stable |
 | `prompt-8192-output-300-rate-075` | 0.75 req/s | 449 | 0 | 0 / 0 | 6.61s | 7.03s | 0.624 | 187.08 | 0 / 5 / 5 | 58% / 96% | 14.10 / 0.64 GiB | stable |
-| `prompt-8192-output-300-rate-100` | 1.00 req/s | 599 | 0 | 0 / 0 | 13.62s | 13.89s | 0.832 | 249.58 | 0 / 13 / 13 | 23% / 91% | 14.10 / 0.64 GiB | stable but slower |
+| `prompt-8192-output-300-rate-100` | 1.00 req/s | 599 | 0 | 0 / 0 | 11.92s | 12.69s | 0.832 | 249.58 | 0 / 12 / 12 | 90% / 100% | 14.10 / 0.64 GiB | stable |
+| `prompt-8192-output-300-rate-105` | 1.05 req/s | 630 | 0 | 0 / 0 | 14.31s | 15.00s | 0.870 | 260.97 | 0 / 16 / 16 | 80% / 100% | 14.03 / 0.71 GiB | stable |
+| `prompt-8192-output-300-rate-110` | 1.10 req/s | 659 | 0 | 0 / 0 | 21.67s | 21.87s | 0.915 | 274.58 | 0 / 24 / 24 | 82% / 100% | 14.10 / 0.64 GiB | stable but tail rising |
+| `prompt-8192-output-300-rate-115` | 1.15 req/s | 689 | 0 | 0 / 0 | 35.35s | 35.72s | 0.957 | 287.08 | 8 / 32 / 40 | 83% / 100% | 14.10 / 0.64 GiB | queueing begins |
+| `prompt-8192-output-300-rate-120` | 1.20 req/s | 719 | 0 | 0 / 0 | 54.35s | 55.25s | 0.999 | 299.58 | 30 / 32 / 62 | 83% / 100% | 14.10 / 0.64 GiB | practical edge |
 | `prompt-8192-output-300-rate-125` | 1.25 req/s | 749 | 0 | 0 / 0 | 93.78s | 95.84s | 1.010 | 303.05 | 72 / 32 / 104 | 75% / 100% | 12.16 / 2.58 GiB | saturation begins |
 | `prompt-8192-output-300-rate-150` | 1.50 req/s | 744 | 0 | 23 / 132+ | 180.27s | 185.01s | 0.992 | 297.60 | 181 / 32 / 213 | 80% / 100% | 13.98 / 0.76 GiB | overloaded |
 | `prompt-8192-output-300` | 2.00 req/s | 833 | 0 | 187 / 239 | 223.07s | 230.55s | 1.111 | 333.20 | 283 / 32 / 315 | n/a | n/a | saturated |
@@ -55,10 +61,12 @@ Observed that missing DCGM runtime wiring left GPU utilization and memory fields
 as `n/a`; mounted kubelet pod resources into dcgm-exporter and supplied
 `NODE_NAME`, restoring GPU metrics in the latest reports.
 
-Observed that `1.25 req/s` saturates the vLLM scheduler for `8192/300` requests,
-with `max_num_seqs=32`, 72 waiting requests, p95 latency near 94s, and GPU max at
-100%; added `1.05`, `1.10`, `1.15`, and `1.20 req/s` probes plus repeated knee
-runs to find the stable boundary more precisely.
+Observed that `1.15 req/s` is the first populated rate to show waiting pressure
+for `8192/300` requests, with peak waiting at 8 and p95 latency near 35s.
+Observed that `1.20 req/s` keeps full delivery but reaches the practical edge,
+with peak waiting at 30, `max_num_seqs=32`, and p95 latency near 54s.
+Observed that `1.25 req/s` saturates the vLLM scheduler, with 72 waiting
+requests, p95 latency near 94s, and GPU max at 100%.
 
 Observed that `1.50 req/s` lets excess demand turn into long tail latency and
 graceful-stop backlog; added an admission-control comparison capped at 32 k6 VUs
@@ -72,17 +80,15 @@ concurrency or a larger batched-token budget improves tail latency.
 
 ## Next Runs
 
-1. Run `prompt-8192-output-300-rate-105`, `rate-110`, `rate-115`, and
-   `rate-120` on `long-context`.
-2. Run `rate-110-r2/r3`, `rate-115-r2/r3`, and `rate-120-r2/r3` to quantify
+1. Run `rate-110-r2/r3`, `rate-115-r2/r3`, and `rate-120-r2/r3` to quantify
    variance near the knee.
-3. Run `prompt-8192-output-300-rate-125-admission-032` on `long-context` and
+2. Run `prompt-8192-output-300-rate-125-admission-032` on `long-context` and
    compare delivery ratio, p95 latency, dropped iterations, and unserved demand
    against the uncapped `rate-125` report.
-4. Re-run `rate-115`, `rate-120`, and `rate-125` against
+3. Re-run `rate-115`, `rate-120`, and `rate-125` against
    `long-context-seqs-16`, `long-context-seqs-24`, and
    `long-context-batched-16384`.
-5. Use `./scripts/experiment summarize-reports --experiment kv-cache` after each
+4. Use `./scripts/experiment summarize-reports --experiment kv-cache` after each
    batch to keep the latest case/profile comparison visible.
 
 ## FP8 KV Cache Probe
