@@ -52,6 +52,13 @@ The cluster also attempted spot capacity first, but spot replacement/launch was
 blocked by EC2 Spot service-linked-role permissions. On-demand capacity provided
 the successful GPU nodes for these runs.
 
+## Graphs
+
+- [Active-pressure sweep](graphs/active-pressure-sweep.svg) visualizes the
+  latest zero-idle target sweep. It is included here as an autoscaling decision
+  aid even though the source artifacts are evaluation reports rather than
+  `autoscaling` experiment reports.
+
 ## Result Template
 
 For each case, record:

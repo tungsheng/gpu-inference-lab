@@ -1,15 +1,17 @@
 # KV Cache Vs Concurrency Results
 
 Status: `8192/300` long-context rate sweep has a measured saturation knee; the
-1.05-1.20 req/s probes are populated and scheduler/admission follow-ups are
-ready.
+1.05-1.20 req/s probes and the `1.25 req/s` admission-control comparison are
+populated. Scheduler follow-ups remain ready.
 
 The latest populated reports show a single-replica long-context envelope that is
 usable through `1.10 req/s` without waiting, starts queueing at `1.15 req/s`,
 and reaches the practical edge by `1.20 req/s`. It begins queueing hard by
-`1.25 req/s` and is clearly overloaded at `1.50 req/s`. GPU/DCGM fields are now
-present in the newest reports, so memory and utilization can be used as
-supporting evidence for the long-context story.
+`1.25 req/s` and is clearly overloaded at `1.50 req/s`. The admission-capped
+`1.25 req/s` run converts that overload into explicit dropped demand and much
+lower tail latency. GPU/DCGM fields are now present in the newest reports, so
+memory and utilization can be used as supporting evidence for the long-context
+story.
 
 ## Evidence Boundaries
 
@@ -41,7 +43,8 @@ iterations, high delivery ratio, and no sustained waiting-request pressure.
 | `prompt-8192-output-300-rate-110` | 1.10 req/s | 659 | 0 | 0 / 0 | 21.67s | 21.87s | 0.915 | 274.58 | 0 / 24 / 24 | 82% / 100% | 14.10 / 0.64 GiB | stable but tail rising |
 | `prompt-8192-output-300-rate-115` | 1.15 req/s | 689 | 0 | 0 / 0 | 35.35s | 35.72s | 0.957 | 287.08 | 8 / 32 / 40 | 83% / 100% | 14.10 / 0.64 GiB | queueing begins |
 | `prompt-8192-output-300-rate-120` | 1.20 req/s | 719 | 0 | 0 / 0 | 54.35s | 55.25s | 0.999 | 299.58 | 30 / 32 / 62 | 83% / 100% | 14.10 / 0.64 GiB | practical edge |
-| `prompt-8192-output-300-rate-125` | 1.25 req/s | 749 | 0 | 0 / 0 | 93.78s | 95.84s | 1.010 | 303.05 | 72 / 32 / 104 | 75% / 100% | 12.16 / 2.58 GiB | saturation begins |
+| `prompt-8192-output-300-rate-125` | 1.25 req/s | 749 | 0 | 0 / 0 | 85.75s | 87.19s | 1.023 | 306.89 | 65 / 32 / 97 | 88% / 100% | 13.10 / 1.64 GiB | saturation begins |
+| `prompt-8192-output-300-rate-125-admission-032` | 1.25 req/s | 682 | 0 | 67 / 0 | 28.53s | 28.67s | 0.947 | 284.17 | 0 / 32 / 32 | 78% / 100% | 14.03 / 0.71 GiB | bounded admission |
 | `prompt-8192-output-300-rate-150` | 1.50 req/s | 744 | 0 | 23 / 132+ | 180.27s | 185.01s | 0.992 | 297.60 | 181 / 32 / 213 | 80% / 100% | 13.98 / 0.76 GiB | overloaded |
 | `prompt-8192-output-300` | 2.00 req/s | 833 | 0 | 187 / 239 | 223.07s | 230.55s | 1.111 | 333.20 | 283 / 32 / 315 | n/a | n/a | saturated |
 
@@ -65,13 +68,19 @@ Observed that `1.15 req/s` is the first populated rate to show waiting pressure
 for `8192/300` requests, with peak waiting at 8 and p95 latency near 35s.
 Observed that `1.20 req/s` keeps full delivery but reaches the practical edge,
 with peak waiting at 30, `max_num_seqs=32`, and p95 latency near 54s.
-Observed that `1.25 req/s` saturates the vLLM scheduler, with 72 waiting
-requests, p95 latency near 94s, and GPU max at 100%.
+Observed that `1.25 req/s` saturates the vLLM scheduler, with 65 waiting
+requests, p95 latency near 86s, and GPU max at 100%.
 
 Observed that `1.50 req/s` lets excess demand turn into long tail latency and
 graceful-stop backlog; added an admission-control comparison capped at 32 k6 VUs
 so overload is reported as explicit unmet demand instead of only as delayed
 completion.
+
+Observed that the `1.25 req/s` admission-control probe capped active work at 32
+requests, eliminated serving-side waiting pressure, reduced p95 latency from
+85.75s to 28.53s, and reported 67 dropped client iterations as explicit unserved
+demand. Generated throughput fell from 306.89 to 284.17 tokens/sec, so the trade
+is lower tail latency and clearer backpressure at lower completed volume.
 
 Observed that the checked-in `long-context` profile may be too aggressive at
 `max_num_seqs=32`; added `long-context-seqs-16`, `long-context-seqs-24`, and
@@ -82,13 +91,10 @@ concurrency or a larger batched-token budget improves tail latency.
 
 1. Run `rate-110-r2/r3`, `rate-115-r2/r3`, and `rate-120-r2/r3` to quantify
    variance near the knee.
-2. Run `prompt-8192-output-300-rate-125-admission-032` on `long-context` and
-   compare delivery ratio, p95 latency, dropped iterations, and unserved demand
-   against the uncapped `rate-125` report.
-3. Re-run `rate-115`, `rate-120`, and `rate-125` against
+2. Re-run `rate-115`, `rate-120`, and `rate-125` against
    `long-context-seqs-16`, `long-context-seqs-24`, and
    `long-context-batched-16384`.
-4. Use `./scripts/experiment summarize-reports --experiment kv-cache` after each
+3. Use `./scripts/experiment summarize-reports --experiment kv-cache` after each
    batch to keep the latest case/profile comparison visible.
 
 ## FP8 KV Cache Probe
@@ -134,12 +140,11 @@ Next FP8-specific probes:
 
 ## Graphs
 
-Graphs should be generated from checked-in JSON reports and stored under
-`graphs/` once the comparable matrix has representative `long-context` reports.
+- [Long-context knee](graphs/long-context-knee.svg) visualizes the `8192/300`
+  p95-latency knee and the `1.25 req/s` admission-control comparison.
 
-Planned graphs:
+Remaining planned graphs:
 
-- target rate versus p95/p99 latency for `8192/300`
 - target rate versus delivery ratio and unserved iterations for `8192/300`
 - target rate versus peak waiting/running/active requests for `8192/300`
 - prompt length versus max stable rate after the `512`, `2048`, and `8192`

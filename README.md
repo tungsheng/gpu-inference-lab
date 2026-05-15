@@ -28,8 +28,21 @@ Current evidence shows:
   lower completed volume in the same wall-clock window
 - the `8192/300` long-context profile has a visible saturation knee, and
   FP8 KV cache regresses that workload on the current g4dn/vLLM `v0.9.0` path
+- active admission at the long-context knee cuts tail latency by turning excess
+  demand into explicit backpressure
+- for `512/128` steady and burst traffic, vLLM dynamic scheduler defaults beat
+  the tested explicit sequence and batched-token caps
+- request shape matters: steady traffic stayed clean, while burst and
+  spike-to-zero traffic converted excess direct-client demand into dropped work
+- optimized batching sharply reduces cost per useful request, but burst traffic
+  still needs admission, autoscaling, or more capacity to meet latency SLOs
+- active-pressure HPA is measurable end to end; the latest zero-idle sweep
+  recommends target `8` only as the highest underutilized tested target
+- streamed workloads need separate TTFT, inter-token, and total-latency budgets
 
-See [Evidence](docs/evidence.md) for numbers, boundaries, and pending claims.
+See [Recommendations](docs/recommendations.md) for the current architecture
+readout and [Evidence](docs/evidence.md) for numbers, boundaries, and pending
+claims.
 
 ## Quick Start
 
@@ -61,6 +74,7 @@ checks, and teardown recovery.
 ## Documentation
 
 - [Decision engine](docs/decision-engine.md): measurement-to-architecture flow
+- [Recommendations](docs/recommendations.md): current supported, partial, and rejected choices
 - [Evidence](docs/evidence.md): curated measured conclusions and gaps
 - [Runbook](docs/runbook.md): commands for local checks, live runs, and teardown
 - [Platform reference](docs/platform-reference.md): implementation details

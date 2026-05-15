@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="440" viewBox="0 0 880 440" role="img" aria-labelledby="title desc">
+  <title id="title">Cost per useful work</title>
+  <desc id="desc">Optimized batching reduces cost per 1000 successful requests for both steady and burst traffic, but burst latency still misses the SLO.</desc>
+  <rect width="880" height="440" fill="#ffffff"/>
+  <text x="32" y="38" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#111827">Cost per useful work</text>
+  <text x="32" y="64" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">Purple bars: USD per 1K successful requests. Orange bars: p95 latency seconds.</text>
+  <text x="330" y="96" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">cost / 1K successful</text>
+  <text x="650" y="96" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">p95 latency</text>
+
+  <text x="32" y="126" font-family="Arial, sans-serif" font-size="13" fill="#111827">steady naive-single</text>
+  <rect x="320" y="111" width="244" height="18" rx="3" fill="#7c3aed"/>
+  <text x="575" y="125" font-family="Arial, sans-serif" font-size="12" fill="#111827">$0.137976</text>
+  <rect x="650" y="111" width="111" height="18" rx="3" fill="#f59e0b"/>
+  <text x="772" y="125" font-family="Arial, sans-serif" font-size="12" fill="#111827">60.31s</text>
+
+  <text x="32" y="176" font-family="Arial, sans-serif" font-size="13" fill="#111827">steady optimized-batched</text>
+  <rect x="320" y="161" width="35" height="18" rx="3" fill="#7c3aed"/>
+  <text x="366" y="175" font-family="Arial, sans-serif" font-size="12" fill="#111827">$0.019752</text>
+  <rect x="650" y="161" width="4" height="18" rx="3" fill="#f59e0b"/>
+  <text x="665" y="175" font-family="Arial, sans-serif" font-size="12" fill="#111827">1.61s SLO pass</text>
+
+  <text x="32" y="226" font-family="Arial, sans-serif" font-size="13" fill="#111827">burst naive-single</text>
+  <rect x="320" y="211" width="290" height="18" rx="3" fill="#7c3aed"/>
+  <text x="621" y="225" font-family="Arial, sans-serif" font-size="12" fill="#111827">$0.164137</text>
+  <rect x="650" y="211" width="220" height="18" rx="3" fill="#f59e0b"/>
+  <text x="760" y="247" font-family="Arial, sans-serif" font-size="12" fill="#111827">120.00s</text>
+
+  <text x="32" y="276" font-family="Arial, sans-serif" font-size="13" fill="#111827">burst optimized-batched</text>
+  <rect x="320" y="261" width="23" height="18" rx="3" fill="#7c3aed"/>
+  <text x="354" y="275" font-family="Arial, sans-serif" font-size="12" fill="#111827">$0.012768</text>
+  <rect x="650" y="261" width="20" height="18" rx="3" fill="#f59e0b"/>
+  <text x="681" y="275" font-family="Arial, sans-serif" font-size="12" fill="#111827">10.91s SLO miss</text>
+
+  <rect x="32" y="322" width="816" height="58" rx="6" fill="#f9fafb" stroke="#e5e7eb"/>
+  <text x="52" y="347" font-family="Arial, sans-serif" font-size="13" fill="#111827">Readout: optimized batching sharply improves cost per useful request.</text>
+  <text x="52" y="369" font-family="Arial, sans-serif" font-size="13" fill="#111827">The burst optimized run is cheap but not latency-safe, so admission, autoscaling, or more capacity remains required.</text>
+  <text x="32" y="414" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">Source: curated reports in experiments/cost/results.md</text>
+</svg>

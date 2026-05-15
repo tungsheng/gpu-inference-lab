@@ -54,5 +54,7 @@ fields when present in source JSON.
 - Force-add a generated report only when it belongs in the project narrative.
 - Promote stable conclusions into curated docs instead of linking every local
   run.
+- Store derived comparison visuals under the owning experiment's `graphs/`
+  directory, not under `docs/reports/`.
 - Treat reports with missing GPU, queue, cost, or accuracy fields as partial
   evidence for those topics.

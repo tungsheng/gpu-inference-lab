@@ -1,33 +1,52 @@
 # Cost Per Useful Work Results
 
-No curated live-cluster run has been recorded yet.
+Curated live-cluster run: 2026-05-15 UTC, one serving GPU, cost scope
+`serving-gpu-only`, hourly serving cost `$0.526`.
 
-## Planned Comparison
+Generated report artifacts:
 
-Run each workload case against:
+- `docs/reports/experiment-cost-steady-cost-efficiency-naive-single-20260514-171552.json`
+- `docs/reports/experiment-cost-steady-cost-efficiency-optimized-batched-20260514-172916.json`
+- `docs/reports/experiment-cost-burst-cost-efficiency-naive-single-20260514-172403.json`
+- `docs/reports/experiment-cost-burst-cost-efficiency-optimized-batched-20260514-173650.json`
 
-| Profile | Hourly serving cost | p95 SLO | p99 SLO | Result status |
-| --- | ---: | ---: | ---: | --- |
-| `naive-single` | 0.526 | 2.0s | 5.0s | pending |
-| `optimized-batched` | 0.526 | 2.0s | 5.0s | pending |
+## Result Matrix
 
-## Result Template
+| Case | Profile | Status | Successful | Dropped | Failed | p95 latency | p99 latency | SLO passed | Cost | Cost/1K successful | Cost/1M tokens | Avg GPU |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| `steady-cost-efficiency` | `naive-single` | complete | 413 | 2227 | 0 | 60.31s | 60.35s | false | $0.056984 | $0.137976 | $1.077936 | 87.0% |
+| `steady-cost-efficiency` | `optimized-batched` | complete | 2670 | 0 | 0 | 1.61s | 1.62s | true | $0.052738 | $0.019752 | $0.154313 | 82.5% |
+| `burst-cost-efficiency` | `naive-single` | failed | 227 | 2882 | 43 | 120.00s | 120.00s | false | $0.037259 | $0.164137 | $1.282317 | 86.5% |
+| `burst-cost-efficiency` | `optimized-batched` | complete | 2570 | 677 | 0 | 10.91s | 11.07s | false | $0.032813 | $0.012768 | $0.099748 | n/a |
 
-For each case/profile pair, record:
+## Interpretation
 
-- completed, successful, and failed requests
-- generated tokens
-- run duration
-- p95 and p99 request latency
-- SLO pass/fail
-- estimated serving burst cost
-- cost per 1K successful requests
-- cost per 1M generated tokens
-- average and max GPU utilization
+For steady traffic, the optimized batched profile is both cheaper and much more
+useful: 2670 successful requests versus 413, no dropped work versus 2227
+dropped iterations, and `$0.019752` per 1K successful requests versus
+`$0.137976`. It is also the only steady case that passed the 2s p95 and 5s p99
+SLO.
 
-## Interpretation Template
+For burst traffic, batching still produced far more useful work per dollar, but
+it did not satisfy the latency SLO. The optimized burst case delivered 2570
+successful requests at `$0.012768` per 1K successful requests, while the naive
+case failed with 227 successes, 43 failed requests, and a 120s tail.
 
-Summarize whether the optimized profile produced more useful work per dollar
-without violating the latency SLO. Failed requests must stay out of the useful
-request denominator, and the cost scope must remain serving-GPU-only unless a
-later change intentionally expands the model.
+Decision impact: keep batching enabled for small-request economics, but do not
+read the burst result as SLO-safe. Burst SLO compliance still needs admission,
+autoscaling, or a different capacity shape.
+
+## Graphs
+
+- [Cost efficiency](graphs/cost-efficiency.svg) compares cost per 1K successful
+  requests with p95 latency for the naive and optimized profiles.
+
+## Boundaries
+
+- Costs include only the serving GPU cost modeled by the experiment. They do not
+  include control plane, networking, storage, observability, idle platform cost,
+  or operator time.
+- Failed requests are excluded from the useful-work denominator.
+- The optimized burst report did not capture queue or GPU rollups, so its cost
+  conclusion is based on successful work, generated tokens, latency, and serving
+  cost rather than DCGM utilization.

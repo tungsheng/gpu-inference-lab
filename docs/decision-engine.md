@@ -15,7 +15,9 @@ rejection, or documented gap.
 5. Promote supported conclusions into [Evidence](evidence.md) or the
    matching `experiments/<name>/results.md`.
 
-Generated reports are inputs. Curated conclusions are the product.
+Generated reports are inputs. Curated conclusions are the product. Use
+[Recommendations](recommendations.md) for the current operator-facing readout
+once a conclusion passes the evidence gate.
 
 ## Inputs
 

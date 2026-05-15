@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="390" viewBox="0 0 820 390" role="img" aria-labelledby="title desc">
+  <title id="title">Streaming prefill and decode timing</title>
+  <desc id="desc">Prefill-heavy traffic raises TTFT, while decode-heavy and mixed workloads raise total request latency.</desc>
+  <rect width="820" height="390" fill="#ffffff"/>
+  <text x="32" y="38" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#111827">Streaming timing split</text>
+  <text x="32" y="64" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">Blue bars: p95 TTFT. Orange bars: p95 total request latency.</text>
+  <text x="260" y="96" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">p95 TTFT</text>
+  <text x="515" y="96" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">p95 total latency</text>
+
+  <text x="32" y="126" font-family="Arial, sans-serif" font-size="13" fill="#111827">prefill-heavy</text>
+  <rect x="250" y="111" width="201" height="18" rx="3" fill="#2563eb"/>
+  <text x="462" y="125" font-family="Arial, sans-serif" font-size="12" fill="#111827">1.371s</text>
+  <rect x="515" y="111" width="54" height="18" rx="3" fill="#f59e0b"/>
+  <text x="580" y="125" font-family="Arial, sans-serif" font-size="12" fill="#111827">2.245s</text>
+
+  <text x="32" y="176" font-family="Arial, sans-serif" font-size="13" fill="#111827">decode-heavy</text>
+  <rect x="250" y="161" width="22" height="18" rx="3" fill="#2563eb"/>
+  <text x="283" y="175" font-family="Arial, sans-serif" font-size="12" fill="#111827">0.149s</text>
+  <rect x="515" y="161" width="201" height="18" rx="3" fill="#f59e0b"/>
+  <text x="727" y="175" font-family="Arial, sans-serif" font-size="12" fill="#111827">8.408s</text>
+
+  <text x="32" y="226" font-family="Arial, sans-serif" font-size="13" fill="#111827">mixed-prefill-decode</text>
+  <rect x="250" y="211" width="66" height="18" rx="3" fill="#2563eb"/>
+  <text x="327" y="225" font-family="Arial, sans-serif" font-size="12" fill="#111827">0.454s</text>
+  <rect x="515" y="211" width="300" height="18" rx="3" fill="#f59e0b"/>
+  <text x="680" y="247" font-family="Arial, sans-serif" font-size="12" fill="#111827">12.524s</text>
+
+  <rect x="32" y="278" width="756" height="48" rx="6" fill="#f9fafb" stroke="#e5e7eb"/>
+  <text x="52" y="306" font-family="Arial, sans-serif" font-size="13" fill="#111827">Readout: total latency alone hides why streamed requests feel slow; TTFT and decode budgets need separate gates.</text>
+  <text x="32" y="365" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">Source: curated reports in experiments/prefill-decode/results.md</text>
+</svg>

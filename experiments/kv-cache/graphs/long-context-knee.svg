@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="450" viewBox="0 0 860 450" role="img" aria-labelledby="title desc">
+  <title id="title">8192/300 long-context latency knee</title>
+  <desc id="desc">P95 request latency rises sharply after 1.10 requests per second; admission at 1.25 requests per second lowers p95 latency while reporting dropped demand.</desc>
+  <rect width="860" height="450" fill="#ffffff"/>
+  <text x="32" y="38" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#111827">8192/300 long-context knee</text>
+  <text x="32" y="64" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">P95 latency seconds, with peak waiting requests shown at right</text>
+  <text x="178" y="94" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">0s</text>
+  <text x="351" y="94" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">30s</text>
+  <text x="525" y="94" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">60s</text>
+  <text x="696" y="94" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">90s</text>
+  <line x1="184" y1="102" x2="184" y2="374" stroke="#e5e7eb"/>
+  <line x1="358" y1="102" x2="358" y2="374" stroke="#e5e7eb"/>
+  <line x1="531" y1="102" x2="531" y2="374" stroke="#e5e7eb"/>
+  <line x1="704" y1="102" x2="704" y2="374" stroke="#e5e7eb"/>
+
+  <text x="32" y="124" font-family="Arial, sans-serif" font-size="13" fill="#111827">1.00 req/s</text>
+  <rect x="184" y="109" width="69" height="18" rx="3" fill="#2563eb"/>
+  <text x="264" y="123" font-family="Arial, sans-serif" font-size="13" fill="#111827">11.92s</text>
+  <text x="742" y="123" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">waiting 0</text>
+
+  <text x="32" y="164" font-family="Arial, sans-serif" font-size="13" fill="#111827">1.05 req/s</text>
+  <rect x="184" y="149" width="83" height="18" rx="3" fill="#2563eb"/>
+  <text x="278" y="163" font-family="Arial, sans-serif" font-size="13" fill="#111827">14.31s</text>
+  <text x="742" y="163" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">waiting 0</text>
+
+  <text x="32" y="204" font-family="Arial, sans-serif" font-size="13" fill="#111827">1.10 req/s</text>
+  <rect x="184" y="189" width="125" height="18" rx="3" fill="#2563eb"/>
+  <text x="320" y="203" font-family="Arial, sans-serif" font-size="13" fill="#111827">21.67s</text>
+  <text x="742" y="203" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">waiting 0</text>
+
+  <text x="32" y="244" font-family="Arial, sans-serif" font-size="13" fill="#111827">1.15 req/s</text>
+  <rect x="184" y="229" width="204" height="18" rx="3" fill="#f59e0b"/>
+  <text x="399" y="243" font-family="Arial, sans-serif" font-size="13" fill="#111827">35.35s</text>
+  <text x="742" y="243" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">waiting 8</text>
+
+  <text x="32" y="284" font-family="Arial, sans-serif" font-size="13" fill="#111827">1.20 req/s</text>
+  <rect x="184" y="269" width="314" height="18" rx="3" fill="#f59e0b"/>
+  <text x="509" y="283" font-family="Arial, sans-serif" font-size="13" fill="#111827">54.35s</text>
+  <text x="742" y="283" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">waiting 30</text>
+
+  <text x="32" y="324" font-family="Arial, sans-serif" font-size="13" fill="#111827">1.25 req/s direct</text>
+  <rect x="184" y="309" width="496" height="18" rx="3" fill="#dc2626"/>
+  <text x="691" y="323" font-family="Arial, sans-serif" font-size="13" fill="#111827">85.75s</text>
+  <text x="742" y="323" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">waiting 65</text>
+
+  <text x="32" y="364" font-family="Arial, sans-serif" font-size="13" fill="#111827">1.25 req/s admission</text>
+  <rect x="184" y="349" width="165" height="18" rx="3" fill="#059669"/>
+  <text x="360" y="363" font-family="Arial, sans-serif" font-size="13" fill="#111827">28.53s</text>
+  <text x="742" y="363" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">waiting 0</text>
+
+  <text x="32" y="412" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">Source: curated reports in experiments/kv-cache/results.md</text>
+</svg>
