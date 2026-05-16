@@ -27,6 +27,12 @@ Treat queueing as part of the user-facing result. Long-context runs show that a
 case can report zero request failures while still crossing the practical edge
 through rising waiting depth and tail latency.
 
+Use client timing as a sanity check, not as proof of server queue delay. The
+latest long-context admission rerun shows p95 client waiting equal to p95 request
+latency while other client HTTP phases stay near zero, which rules out
+client/network overhead for that case but still does not split queue, prefill,
+and decode inside vLLM.
+
 Treat traffic shape as a first-class input. Steady, burst, uneven-size, and
 spike-to-zero traffic produce different delivery, memory, latency, and active
 concurrency behavior on the same serving profile.
@@ -43,8 +49,7 @@ recommendations:
 | Goal | Run | Promotion gate |
 | --- | --- | --- |
 | Active-pressure target | Repeat the zero-idle active-pressure sweep under higher offered pressure or a smaller capacity shape. | at least one target reaches the balanced band without missing queue, TTFT, GPU, or cost fields |
-| Queue precision | Add a dedicated queue-wait histogram or equivalent client/server timing split before optimizing queue-sensitive policies. | reports separate queue delay from prefill, decode, and client timeout behavior |
+| Queue precision | Add dedicated server-side queue, prefill, and decode timing now that client HTTP phase timing is captured. | reports separate queue delay from prefill, decode, and client timeout behavior |
 | Scheduler breadth | Run mixed-size and fairness-oriented scheduler profiles beyond homogeneous `512/128`. | explicit caps beat dynamic defaults on a documented fairness or latency objective |
 | GPU efficiency | Compare node size, pod packing, placement, and cost instead of only one pod per GPU. | useful work, failure rate, latency, GPU utilization, and cost are captured for each capacity shape |
 | FP4 | Re-run BF16, plain NVFP4, and SmoothQuant when `p6-b200.48xlarge` capacity is available. | accuracy, memory, latency, throughput, serving cost, and build cost are populated for all profiles |
-

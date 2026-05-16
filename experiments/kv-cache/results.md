@@ -9,9 +9,10 @@ usable through `1.10 req/s` without waiting, starts queueing at `1.15 req/s`,
 and reaches the practical edge by `1.20 req/s`. It begins queueing hard by
 `1.25 req/s` and is clearly overloaded at `1.50 req/s`. The admission-capped
 `1.25 req/s` run converts that overload into explicit dropped demand and much
-lower tail latency. GPU/DCGM fields are now present in the newest reports, so
-memory and utilization can be used as supporting evidence for the long-context
-story.
+lower tail latency. Its latest rerun also captures k6 HTTP phase timing, which
+shows negligible client/network overhead at the p95 tail. GPU/DCGM fields are
+now present in the newest reports, so memory and utilization can be used as
+supporting evidence for the long-context story.
 
 ## Evidence Boundaries
 
@@ -24,6 +25,9 @@ story.
   knee so far is the `8192/300` sweep.
 - New reports will include offered iterations, unserved iterations, delivery
   ratio, and buffering pressure derived from both dropped and interrupted work.
+- Reports generated after the client-timing instrumentation include k6 HTTP
+  phase timing. Treat `client_waiting` as time to first byte, not as a
+  dedicated server-side queue histogram.
 
 ## 8192/300 Long-Context Sweep
 
@@ -44,7 +48,7 @@ iterations, high delivery ratio, and no sustained waiting-request pressure.
 | `prompt-8192-output-300-rate-115` | 1.15 req/s | 689 | 0 | 0 / 0 | 35.35s | 35.72s | 0.957 | 287.08 | 8 / 32 / 40 | 83% / 100% | 14.10 / 0.64 GiB | queueing begins |
 | `prompt-8192-output-300-rate-120` | 1.20 req/s | 719 | 0 | 0 / 0 | 54.35s | 55.25s | 0.999 | 299.58 | 30 / 32 / 62 | 83% / 100% | 14.10 / 0.64 GiB | practical edge |
 | `prompt-8192-output-300-rate-125` | 1.25 req/s | 749 | 0 | 0 / 0 | 85.75s | 87.19s | 1.023 | 306.89 | 65 / 32 / 97 | 88% / 100% | 13.10 / 1.64 GiB | saturation begins |
-| `prompt-8192-output-300-rate-125-admission-032` | 1.25 req/s | 682 | 0 | 67 / 0 | 28.53s | 28.67s | 0.947 | 284.17 | 0 / 32 / 32 | 78% / 100% | 14.03 / 0.71 GiB | bounded admission |
+| `prompt-8192-output-300-rate-125-admission-032` | 1.25 req/s | 698 | 0 | 52 / 0 | 27.83s | 27.97s | 0.964 | 289.15 | 0 / 32 / 32 | 85% / 100% | 14.03 / 0.71 GiB | bounded admission |
 | `prompt-8192-output-300-rate-150` | 1.50 req/s | 744 | 0 | 23 / 132+ | 180.27s | 185.01s | 0.992 | 297.60 | 181 / 32 / 213 | 80% / 100% | 13.98 / 0.76 GiB | overloaded |
 | `prompt-8192-output-300` | 2.00 req/s | 833 | 0 | 187 / 239 | 223.07s | 230.55s | 1.111 | 333.20 | 283 / 32 / 315 | n/a | n/a | saturated |
 
@@ -78,9 +82,13 @@ completion.
 
 Observed that the `1.25 req/s` admission-control probe capped active work at 32
 requests, eliminated serving-side waiting pressure, reduced p95 latency from
-85.75s to 28.53s, and reported 67 dropped client iterations as explicit unserved
-demand. Generated throughput fell from 306.89 to 284.17 tokens/sec, so the trade
-is lower tail latency and clearer backpressure at lower completed volume.
+85.75s to 27.83s, and reported 52 dropped client iterations as explicit unserved
+demand. Generated throughput fell from 306.89 to 289.15 tokens/sec, so the trade
+is lower tail latency and clearer backpressure at lower completed volume. The
+client-timing rerun reports p95 request latency at 27.831s and p95 client
+waiting at 27.831s, while p95 blocked, connect, send, and receive phases are all
+below 2 ms. That makes the tail a service-side/model-time issue, not a
+client/network artifact.
 
 Observed that the checked-in `long-context` profile may be too aggressive at
 `max_num_seqs=32`; added `long-context-seqs-16`, `long-context-seqs-24`, and
