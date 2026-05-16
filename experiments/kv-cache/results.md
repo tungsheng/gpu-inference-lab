@@ -2,7 +2,8 @@
 
 Status: `8192/300` long-context rate sweep has a measured saturation knee; the
 1.05-1.20 req/s probes and the `1.25 req/s` admission-control comparison are
-populated. Scheduler follow-ups remain ready.
+populated. The `1.20 req/s` scheduler follow-up is populated and did not beat
+the default long-context profile.
 
 The latest populated reports show a single-replica long-context envelope that is
 usable through `1.10 req/s` without waiting, starts queueing at `1.15 req/s`,
@@ -13,6 +14,11 @@ lower tail latency. Its latest rerun also captures k6 HTTP phase timing, which
 shows negligible client/network overhead at the p95 tail. GPU/DCGM fields are
 now present in the newest reports, so memory and utilization can be used as
 supporting evidence for the long-context story.
+
+Scheduler variants at `1.20 req/s` did not improve the practical edge. Lowering
+`max_num_seqs` to 16 or 24 increased waiting pressure and tail latency, and
+raising `max_num_batched_tokens` to 16384 was roughly baseline-shaped but still
+slightly worse on p95/p99 latency.
 
 ## Evidence Boundaries
 
@@ -52,6 +58,19 @@ iterations, high delivery ratio, and no sustained waiting-request pressure.
 | `prompt-8192-output-300-rate-150` | 1.50 req/s | 744 | 0 | 23 / 132+ | 180.27s | 185.01s | 0.992 | 297.60 | 181 / 32 / 213 | 80% / 100% | 13.98 / 0.76 GiB | overloaded |
 | `prompt-8192-output-300` | 2.00 req/s | 833 | 0 | 187 / 239 | 223.07s | 230.55s | 1.111 | 333.20 | 283 / 32 / 315 | n/a | n/a | saturated |
 
+## Scheduler Profile Follow-Up At 1.20 Req/s
+
+All `1.20 req/s` scheduler profiles delivered the same 719 successful requests
+with zero failures or dropped/interrupted work, so the decision is about tail
+latency and pressure shape.
+
+| Profile | Max seqs | Max batched tokens | Successful requests | p95 latency | p99 latency | Requests/sec | Generated tokens/sec | Peak waiting / running / active | GPU avg / max | Outcome |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `long-context` | 32 | 9216 | 719 | 54.35s | 55.25s | 0.999 | 299.58 | 30 / 32 / 62 | 83% / 100% | baseline practical edge |
+| `long-context-seqs-16` | 16 | 9216 | 719 | 76.24s | 77.39s | 0.980 | 293.99 | 66 / 16 / 82 | 83% / 97% | worse tail and waiting |
+| `long-context-seqs-24` | 24 | 9216 | 719 | 61.36s | 62.50s | 0.999 | 299.58 | 45 / 24 / 69 | 82% / 100% | worse tail and waiting |
+| `long-context-batched-16384` | 32 | 16384 | 719 | 55.58s | 56.76s | 0.999 | 299.58 | 31 / 32 / 63 | 88% / 100% | no improvement |
+
 ## Failure To Fix To Result
 
 Observed that the original 8192-token prompt generator could overshoot the
@@ -90,18 +109,23 @@ waiting at 27.831s, while p95 blocked, connect, send, and receive phases are all
 below 2 ms. That makes the tail a service-side/model-time issue, not a
 client/network artifact.
 
-Observed that the checked-in `long-context` profile may be too aggressive at
+Observed that the checked-in `long-context` profile might be too aggressive at
 `max_num_seqs=32`; added `long-context-seqs-16`, `long-context-seqs-24`, and
 `long-context-batched-16384` variants to measure whether lower sequence
-concurrency or a larger batched-token budget improves tail latency.
+concurrency or a larger batched-token budget improves tail latency. The
+`1.20 req/s` follow-up rejected that path: `seqs-16` increased p95 latency to
+76.24s with peak active pressure 82, `seqs-24` increased p95 to 61.36s with
+peak active pressure 69, and `batched-16384` landed near baseline but still
+worse at 55.58s p95 with peak active pressure 63. Use admission/backpressure
+for this knee before pursuing scheduler caps further on the current g4dn/vLLM
+`v0.9.0` path.
 
 ## Next Runs
 
 1. Run `rate-110-r2/r3`, `rate-115-r2/r3`, and `rate-120-r2/r3` to quantify
    variance near the knee.
-2. Re-run `rate-115`, `rate-120`, and `rate-125` against
-   `long-context-seqs-16`, `long-context-seqs-24`, and
-   `long-context-batched-16384`.
+2. Add server-side timing that separates queue wait, prefill, and decode before
+   making deeper queue-sensitive scheduler changes.
 3. Use `./scripts/experiment summarize-reports --experiment kv-cache` after each
    batch to keep the latest case/profile comparison visible.
 
