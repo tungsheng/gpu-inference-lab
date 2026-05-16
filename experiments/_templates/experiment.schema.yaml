@@ -31,6 +31,15 @@ metrics:
     - p50_request_latency_seconds
     - p95_request_latency_seconds
     - p99_request_latency_seconds
+  client_timing:
+    - p50_client_waiting_seconds
+    - p95_client_waiting_seconds
+    - p99_client_waiting_seconds
+    - p95_client_blocked_seconds
+    - p95_client_connecting_seconds
+    - p95_client_tls_handshaking_seconds
+    - p95_client_sending_seconds
+    - p95_client_receiving_seconds
   serving:
     - p95_ttft_seconds
     - requests_per_second

@@ -165,6 +165,9 @@ run_render_load_test() {
   assert_contains "${RENDERED_MANIFEST}" 'const completionTokens = new Counter("completion_tokens");' "rendered manifest should track completion tokens"
   assert_contains "${RENDERED_MANIFEST}" "GPU_LAB_K6_SUMMARY_BEGIN" "rendered manifest should emit a parseable k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "p99_request_latency_seconds=" "rendered manifest should include p99 latency in the k6 summary"
+  assert_contains "${RENDERED_MANIFEST}" "p95_client_waiting_seconds=" "rendered manifest should include client waiting timing in the k6 summary"
+  assert_contains "${RENDERED_MANIFEST}" "p95_client_blocked_seconds=" "rendered manifest should include client blocked timing in the k6 summary"
+  assert_contains "${RENDERED_MANIFEST}" "p95_client_receiving_seconds=" "rendered manifest should include client receiving timing in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "dropped_iterations=" "rendered manifest should include dropped iterations in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "interrupted_iterations=" "rendered manifest should include interrupted iterations in the k6 summary"
   assert_contains "${RENDERED_MANIFEST}" "const bufferingRequiredRequests = String(Number(droppedIterations) + Number(interruptedIterations));" "rendered manifest should count dropped and interrupted iterations as buffering pressure"
@@ -572,8 +575,10 @@ run_render_report_test() {
   assert_contains "${REPORT_CONTENT}" "| KV cache dtype | n/a |" "Markdown report should include blank KV cache dtype metadata"
   assert_contains "${REPORT_CONTENT}" "| Calculate KV scales | n/a |" "Markdown report should include blank KV scale metadata"
   assert_contains "${REPORT_CONTENT}" "| p99 request latency | n/a |" "Markdown report should render unavailable metrics as n/a"
+  assert_contains "${REPORT_CONTENT}" "| p95 client waiting | n/a |" "Markdown report should render unavailable client timing as n/a"
   assert_contains "${REPORT_CONTENT}" "| GPU memory used | n/a |" "Markdown report should render unavailable GPU memory metrics as n/a"
   assert_contains "${REPORT_CONTENT}" "Unavailable fields remain \`n/a\` when the runner did not collect that signal" "Markdown report should explain unavailable metrics conservatively"
+  assert_contains "${REPORT_CONTENT}" "Client timing fields use k6 HTTP phases" "Markdown report should explain client timing semantics"
   assert_contains "${JSON_REPORT_CONTENT}" "\"schema_version\": \"experiment-report/v1\"" "JSON report should include the schema version"
   assert_contains "${JSON_REPORT_CONTENT}" "\"status\": \"pending\"" "JSON report should mark the scaffold as pending"
   assert_contains "${JSON_REPORT_CONTENT}" "\"requires_live_cluster\": true" "JSON report should state that measured results require a live cluster"
@@ -584,6 +589,8 @@ run_render_report_test() {
   assert_contains "${JSON_REPORT_CONTENT}" "\"max_num_seqs\": 32" "JSON report should include scheduler metadata"
   assert_contains "${JSON_REPORT_CONTENT}" "\"max_num_batched_tokens\": 9216" "JSON report should include batched-token metadata"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p99_request_latency_seconds\": null" "JSON report should render unavailable latency as null"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"client_timing\": {" "JSON report should include the client timing block"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"p95_client_waiting_seconds\": null" "JSON report should render unavailable client waiting timing as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p50_ttft_seconds\": null" "JSON report should render unavailable TTFT as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p95_inter_token_latency_seconds\": null" "JSON report should render unavailable inter-token latency as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"gpu_memory_used_bytes\": null" "JSON report should render unavailable GPU memory as null"
@@ -893,6 +900,14 @@ write_experiment_run_kubectl_stub() {
 "    printf '%s\n' 'p50_request_latency_seconds=0.25'" \
 "    printf '%s\n' 'p95_request_latency_seconds=0.75'" \
 "    printf '%s\n' 'p99_request_latency_seconds=1.5'" \
+"    printf '%s\n' 'p50_client_waiting_seconds=0.20'" \
+"    printf '%s\n' 'p95_client_waiting_seconds=0.70'" \
+"    printf '%s\n' 'p99_client_waiting_seconds=1.40'" \
+"    printf '%s\n' 'p95_client_blocked_seconds=0.001'" \
+"    printf '%s\n' 'p95_client_connecting_seconds=0.002'" \
+"    printf '%s\n' 'p95_client_tls_handshaking_seconds=0'" \
+"    printf '%s\n' 'p95_client_sending_seconds=0.003'" \
+"    printf '%s\n' 'p95_client_receiving_seconds=0.004'" \
 "    printf '%s\n' 'requests_per_second=5.5'" \
 "    printf '%s\n' 'generation_tokens_per_second=704'" \
 	"    printf '%s\n' 'run_duration_seconds=120'" \
@@ -979,6 +994,8 @@ run_live_experiment_runner_test() {
   assert_contains "${RUN_REPORT_CONTENT}" "| Delivery ratio | 0.788462 |" "experiment run should derive a successful-delivery ratio"
   assert_contains "${RUN_REPORT_CONTENT}" "| Interrupted client iterations | 7 |" "experiment run should prefer the final k6 footer interrupted count when it exceeds the summary"
   assert_contains "${RUN_REPORT_CONTENT}" "| p99 request latency | 1.5 |" "experiment run should parse p99 latency from k6 logs"
+  assert_contains "${RUN_REPORT_CONTENT}" "| p95 client waiting | 0.70 |" "experiment run should parse k6 waiting timing from logs"
+  assert_contains "${RUN_REPORT_CONTENT}" "| p95 client receiving | 0.004 |" "experiment run should parse k6 receive timing from logs"
   assert_contains "${RUN_REPORT_CONTENT}" "| Generated tokens | 4096 |" "experiment run should parse generated token totals from k6 logs"
   assert_contains "${RUN_REPORT_CONTENT}" "| Run duration | 120 |" "experiment run should parse run duration from k6 logs"
   assert_contains "${RUN_JSON_CONTENT}" "\"status\": \"complete\"" "experiment run should mark the JSON report complete"
@@ -995,6 +1012,9 @@ run_live_experiment_runner_test() {
   assert_contains "${RUN_JSON_CONTENT}" "\"failure_attribution\": \"client_queue_limit\"" "experiment run should attribute dropped iterations to the client queue limit"
   assert_contains "${RUN_JSON_CONTENT}" "\"oom_events\": null" "experiment run should leave OOM events null when pod status has no termination reason"
   assert_contains "${RUN_JSON_CONTENT}" "\"p95_request_latency_seconds\": 0.75" "experiment run should write p95 latency to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"p95_client_waiting_seconds\": 0.70" "experiment run should write client waiting timing to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"p95_client_blocked_seconds\": 0.001" "experiment run should write client blocked timing to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"p95_client_receiving_seconds\": 0.004" "experiment run should write client receiving timing to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"requests_per_second\": 5.5" "experiment run should write request throughput to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"generated_tokens\": 4096" "experiment run should write generated tokens to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"generation_tokens_per_second\": 704" "experiment run should write generation token throughput to JSON"

@@ -24,8 +24,8 @@ and small-request useful-work cost. The current operator-facing readout lives in
 ## Known Limits
 
 - The active environment is dev-oriented and keeps the EKS API public.
-- Queue wait is derived from waiting depth over completion rate, not a dedicated
-  queue-wait histogram.
+- Non-streaming runs capture k6 HTTP phase timing, including client waiting,
+  but queue wait is still not a dedicated server-side histogram.
 - Active-pressure target `8` is the current zero-idle sweep recommendation, but
   the sweep was underutilized and does not prove an optimal production target.
 - GPU efficiency is measured for the current one-pod-per-GPU shape, but the repo

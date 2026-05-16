@@ -222,6 +222,20 @@
           },
           "additionalProperties": false
         },
+        "client_timing": {
+          "type": "object",
+          "properties": {
+            "p50_client_waiting_seconds": { "type": ["number", "null"] },
+            "p95_client_waiting_seconds": { "type": ["number", "null"] },
+            "p99_client_waiting_seconds": { "type": ["number", "null"] },
+            "p95_client_blocked_seconds": { "type": ["number", "null"] },
+            "p95_client_connecting_seconds": { "type": ["number", "null"] },
+            "p95_client_tls_handshaking_seconds": { "type": ["number", "null"] },
+            "p95_client_sending_seconds": { "type": ["number", "null"] },
+            "p95_client_receiving_seconds": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        },
         "serving": {
           "type": "object",
           "properties": {

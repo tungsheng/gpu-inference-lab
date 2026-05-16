@@ -2669,6 +2669,14 @@ render_report_markdown() {
   local p50_latency_display
   local p95_latency_display
   local p99_latency_display
+  local p50_client_waiting_display
+  local p95_client_waiting_display
+  local p99_client_waiting_display
+  local p95_client_blocked_display
+  local p95_client_connecting_display
+  local p95_client_tls_handshaking_display
+  local p95_client_sending_display
+  local p95_client_receiving_display
   local p50_ttft_display
   local p95_ttft_display
   local p50_inter_token_latency_display
@@ -2766,6 +2774,14 @@ render_report_markdown() {
   p50_latency_display=$(display_optional_metric "${RESULT_P50_REQUEST_LATENCY_SECONDS:-}")
   p95_latency_display=$(display_optional_metric "${RESULT_P95_REQUEST_LATENCY_SECONDS:-}")
   p99_latency_display=$(display_optional_metric "${RESULT_P99_REQUEST_LATENCY_SECONDS:-}")
+  p50_client_waiting_display=$(display_optional_metric "${RESULT_P50_CLIENT_WAITING_SECONDS:-}")
+  p95_client_waiting_display=$(display_optional_metric "${RESULT_P95_CLIENT_WAITING_SECONDS:-}")
+  p99_client_waiting_display=$(display_optional_metric "${RESULT_P99_CLIENT_WAITING_SECONDS:-}")
+  p95_client_blocked_display=$(display_optional_metric "${RESULT_P95_CLIENT_BLOCKED_SECONDS:-}")
+  p95_client_connecting_display=$(display_optional_metric "${RESULT_P95_CLIENT_CONNECTING_SECONDS:-}")
+  p95_client_tls_handshaking_display=$(display_optional_metric "${RESULT_P95_CLIENT_TLS_HANDSHAKING_SECONDS:-}")
+  p95_client_sending_display=$(display_optional_metric "${RESULT_P95_CLIENT_SENDING_SECONDS:-}")
+  p95_client_receiving_display=$(display_optional_metric "${RESULT_P95_CLIENT_RECEIVING_SECONDS:-}")
   p50_ttft_display=$(display_optional_metric "${RESULT_P50_TTFT_SECONDS:-}")
   p95_ttft_display=$(display_optional_metric "${RESULT_P95_TTFT_SECONDS:-}")
   p50_inter_token_latency_display=$(display_optional_metric "${RESULT_P50_INTER_TOKEN_LATENCY_SECONDS:-}")
@@ -2931,6 +2947,14 @@ render_report_markdown() {
 | p50 request latency | ${p50_latency_display} |
 | p95 request latency | ${p95_latency_display} |
 | p99 request latency | ${p99_latency_display} |
+| p50 client waiting | ${p50_client_waiting_display} |
+| p95 client waiting | ${p95_client_waiting_display} |
+| p99 client waiting | ${p99_client_waiting_display} |
+| p95 client blocked | ${p95_client_blocked_display} |
+| p95 client connecting | ${p95_client_connecting_display} |
+| p95 client TLS handshaking | ${p95_client_tls_handshaking_display} |
+| p95 client sending | ${p95_client_sending_display} |
+| p95 client receiving | ${p95_client_receiving_display} |
 | p50 TTFT | ${p50_ttft_display} |
 | p95 TTFT | ${p95_ttft_display} |
 | p50 inter-token latency | ${p50_inter_token_latency_display} |
@@ -2973,6 +2997,8 @@ ${stream_shape_summary_section}
 - This report records the workload and serving contract for the selected case.
 - Unavailable fields remain \`n/a\` when the runner did not collect that signal;
   do not treat missing GPU, queue, scaling, or cost fields as measured evidence.
+- Client timing fields use k6 HTTP phases; client waiting is time to first byte,
+  not a dedicated server-side queue histogram.
 EOF
 }
 
@@ -3109,6 +3135,16 @@ render_report_json() {
       "p95_request_latency_seconds": $(json_optional_number "${RESULT_P95_REQUEST_LATENCY_SECONDS:-}"),
       "p99_request_latency_seconds": $(json_optional_number "${RESULT_P99_REQUEST_LATENCY_SECONDS:-}")
     },
+    "client_timing": {
+      "p50_client_waiting_seconds": $(json_optional_number "${RESULT_P50_CLIENT_WAITING_SECONDS:-}"),
+      "p95_client_waiting_seconds": $(json_optional_number "${RESULT_P95_CLIENT_WAITING_SECONDS:-}"),
+      "p99_client_waiting_seconds": $(json_optional_number "${RESULT_P99_CLIENT_WAITING_SECONDS:-}"),
+      "p95_client_blocked_seconds": $(json_optional_number "${RESULT_P95_CLIENT_BLOCKED_SECONDS:-}"),
+      "p95_client_connecting_seconds": $(json_optional_number "${RESULT_P95_CLIENT_CONNECTING_SECONDS:-}"),
+      "p95_client_tls_handshaking_seconds": $(json_optional_number "${RESULT_P95_CLIENT_TLS_HANDSHAKING_SECONDS:-}"),
+      "p95_client_sending_seconds": $(json_optional_number "${RESULT_P95_CLIENT_SENDING_SECONDS:-}"),
+      "p95_client_receiving_seconds": $(json_optional_number "${RESULT_P95_CLIENT_RECEIVING_SECONDS:-}")
+    },
     "serving": {
       "p50_ttft_seconds": $(json_optional_number "${RESULT_P50_TTFT_SECONDS:-}"),
       "p95_ttft_seconds": $(json_optional_number "${RESULT_P95_TTFT_SECONDS:-}"),
@@ -3180,7 +3216,8 @@ render_report_json() {
   },
   "notes": [
     "This report records the workload and serving contract for the selected case.",
-    "Unavailable fields remain null when the runner did not collect that signal; do not treat missing GPU, queue, scaling, or cost fields as measured evidence."
+    "Unavailable fields remain null when the runner did not collect that signal; do not treat missing GPU, queue, scaling, or cost fields as measured evidence.",
+    "Client timing fields use k6 HTTP phases; client waiting is time to first byte, not a dedicated server-side queue histogram."
   ]
 }
 EOF
@@ -3440,6 +3477,14 @@ parse_k6_summary_log() {
   RESULT_P50_REQUEST_LATENCY_SECONDS=""
   RESULT_P95_REQUEST_LATENCY_SECONDS=""
   RESULT_P99_REQUEST_LATENCY_SECONDS=""
+  RESULT_P50_CLIENT_WAITING_SECONDS=""
+  RESULT_P95_CLIENT_WAITING_SECONDS=""
+  RESULT_P99_CLIENT_WAITING_SECONDS=""
+  RESULT_P95_CLIENT_BLOCKED_SECONDS=""
+  RESULT_P95_CLIENT_CONNECTING_SECONDS=""
+  RESULT_P95_CLIENT_TLS_HANDSHAKING_SECONDS=""
+  RESULT_P95_CLIENT_SENDING_SECONDS=""
+  RESULT_P95_CLIENT_RECEIVING_SECONDS=""
   RESULT_REQUESTS_PER_SECOND=""
   RESULT_GENERATED_TOKENS=""
   RESULT_GENERATION_TOKENS_PER_SECOND=""
@@ -3490,6 +3535,30 @@ parse_k6_summary_log() {
         ;;
       p99_request_latency_seconds)
         RESULT_P99_REQUEST_LATENCY_SECONDS=${value}
+        ;;
+      p50_client_waiting_seconds)
+        RESULT_P50_CLIENT_WAITING_SECONDS=${value}
+        ;;
+      p95_client_waiting_seconds)
+        RESULT_P95_CLIENT_WAITING_SECONDS=${value}
+        ;;
+      p99_client_waiting_seconds)
+        RESULT_P99_CLIENT_WAITING_SECONDS=${value}
+        ;;
+      p95_client_blocked_seconds)
+        RESULT_P95_CLIENT_BLOCKED_SECONDS=${value}
+        ;;
+      p95_client_connecting_seconds)
+        RESULT_P95_CLIENT_CONNECTING_SECONDS=${value}
+        ;;
+      p95_client_tls_handshaking_seconds)
+        RESULT_P95_CLIENT_TLS_HANDSHAKING_SECONDS=${value}
+        ;;
+      p95_client_sending_seconds)
+        RESULT_P95_CLIENT_SENDING_SECONDS=${value}
+        ;;
+      p95_client_receiving_seconds)
+        RESULT_P95_CLIENT_RECEIVING_SECONDS=${value}
         ;;
       requests_per_second)
         RESULT_REQUESTS_PER_SECOND=${value}
@@ -3555,6 +3624,14 @@ parse_stream_summary_log() {
   RESULT_P50_REQUEST_LATENCY_SECONDS=""
   RESULT_P95_REQUEST_LATENCY_SECONDS=""
   RESULT_P99_REQUEST_LATENCY_SECONDS=""
+  RESULT_P50_CLIENT_WAITING_SECONDS=""
+  RESULT_P95_CLIENT_WAITING_SECONDS=""
+  RESULT_P99_CLIENT_WAITING_SECONDS=""
+  RESULT_P95_CLIENT_BLOCKED_SECONDS=""
+  RESULT_P95_CLIENT_CONNECTING_SECONDS=""
+  RESULT_P95_CLIENT_TLS_HANDSHAKING_SECONDS=""
+  RESULT_P95_CLIENT_SENDING_SECONDS=""
+  RESULT_P95_CLIENT_RECEIVING_SECONDS=""
   RESULT_P50_TTFT_SECONDS=""
   RESULT_P95_TTFT_SECONDS=""
   RESULT_P50_INTER_TOKEN_LATENCY_SECONDS=""
