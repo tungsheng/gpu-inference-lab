@@ -236,6 +236,24 @@
           },
           "additionalProperties": false
         },
+        "server_timing": {
+          "type": "object",
+          "properties": {
+            "p50_queue_seconds": { "type": ["number", "null"] },
+            "p95_queue_seconds": { "type": ["number", "null"] },
+            "p50_prefill_seconds": { "type": ["number", "null"] },
+            "p95_prefill_seconds": { "type": ["number", "null"] },
+            "p50_decode_seconds": { "type": ["number", "null"] },
+            "p95_decode_seconds": { "type": ["number", "null"] },
+            "p50_ttft_seconds": { "type": ["number", "null"] },
+            "p95_ttft_seconds": { "type": ["number", "null"] },
+            "p50_inter_token_latency_seconds": { "type": ["number", "null"] },
+            "p95_inter_token_latency_seconds": { "type": ["number", "null"] },
+            "p50_e2e_request_latency_seconds": { "type": ["number", "null"] },
+            "p95_e2e_request_latency_seconds": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        },
         "serving": {
           "type": "object",
           "properties": {

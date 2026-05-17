@@ -192,6 +192,7 @@ latency checks.
 | Area | State | Recommendation needs |
 | --- | --- | --- |
 | Active-pressure HPA target | fresh compare and zero-idle sweep reports are complete, but all tested targets were underutilized | repeat under higher pressure or alternate capacity shapes before selecting a production target |
+| Server-side timing split | report generation now includes nullable vLLM Prometheus histogram fields for queue, prefill, decode, TTFT, inter-token, and e2e timing | live long-context rerun before using the split as evidence |
 | Batching scheduler breadth | steady and burst matrices support dynamic default for homogeneous `512/128`; fairness and richer mixed-size cases remain pending | mixed request-size and fairness runs before generalizing scheduler caps |
 | Prefill/decode profile tuning | default and mixed scheduler reports exist; repeat or variant sweeps remain pending | variance checks or new profiles before making broad scheduler claims |
 | Blackwell FP4 | renderers and cost model exist; live p6-b200 attempt blocked by `UnfulfillableCapacity` | BF16, NVFP4, and SmoothQuant runs with accuracy, latency, throughput, memory, and cost |

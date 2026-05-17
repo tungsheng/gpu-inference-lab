@@ -576,9 +576,14 @@ run_render_report_test() {
   assert_contains "${REPORT_CONTENT}" "| Calculate KV scales | n/a |" "Markdown report should include blank KV scale metadata"
   assert_contains "${REPORT_CONTENT}" "| p99 request latency | n/a |" "Markdown report should render unavailable metrics as n/a"
   assert_contains "${REPORT_CONTENT}" "| p95 client waiting | n/a |" "Markdown report should render unavailable client timing as n/a"
+  assert_contains "${REPORT_CONTENT}" "| p95 server queue delay | n/a |" "Markdown report should render unavailable server queue timing as n/a"
+  assert_contains "${REPORT_CONTENT}" "| p95 server prefill | n/a |" "Markdown report should render unavailable server prefill timing as n/a"
+  assert_contains "${REPORT_CONTENT}" "| p95 server decode | n/a |" "Markdown report should render unavailable server decode timing as n/a"
+  assert_contains "${REPORT_CONTENT}" "| p95 server inter-token latency | n/a |" "Markdown report should render unavailable server inter-token timing as n/a"
   assert_contains "${REPORT_CONTENT}" "| GPU memory used | n/a |" "Markdown report should render unavailable GPU memory metrics as n/a"
   assert_contains "${REPORT_CONTENT}" "Unavailable fields remain \`n/a\` when the runner did not collect that signal" "Markdown report should explain unavailable metrics conservatively"
   assert_contains "${REPORT_CONTENT}" "Client timing fields use k6 HTTP phases" "Markdown report should explain client timing semantics"
+  assert_contains "${REPORT_CONTENT}" "Server timing fields use vLLM Prometheus histograms" "Markdown report should explain server timing semantics"
   assert_contains "${JSON_REPORT_CONTENT}" "\"schema_version\": \"experiment-report/v1\"" "JSON report should include the schema version"
   assert_contains "${JSON_REPORT_CONTENT}" "\"status\": \"pending\"" "JSON report should mark the scaffold as pending"
   assert_contains "${JSON_REPORT_CONTENT}" "\"requires_live_cluster\": true" "JSON report should state that measured results require a live cluster"
@@ -591,6 +596,10 @@ run_render_report_test() {
   assert_contains "${JSON_REPORT_CONTENT}" "\"p99_request_latency_seconds\": null" "JSON report should render unavailable latency as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"client_timing\": {" "JSON report should include the client timing block"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p95_client_waiting_seconds\": null" "JSON report should render unavailable client waiting timing as null"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"server_timing\": {" "JSON report should include the server timing block"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"p95_queue_seconds\": null" "JSON report should render unavailable server queue timing as null"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"p95_prefill_seconds\": null" "JSON report should render unavailable server prefill timing as null"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"p95_decode_seconds\": null" "JSON report should render unavailable server decode timing as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p50_ttft_seconds\": null" "JSON report should render unavailable TTFT as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p95_inter_token_latency_seconds\": null" "JSON report should render unavailable inter-token latency as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"gpu_memory_used_bytes\": null" "JSON report should render unavailable GPU memory as null"
@@ -936,6 +945,30 @@ write_experiment_run_curl_stub() {
   "    value='1'" \
   "  elif [[ \"\$cmd\" == *'count(DCGM_FI_DEV_FB_FREE)'* ]]; then" \
   "    value='1'" \
+  "  elif [[ \"\$cmd\" == *'request_queue_time_seconds_bucket'* && \"\$cmd\" == *'0.50'* ]]; then" \
+  "    value='0.050'" \
+  "  elif [[ \"\$cmd\" == *'request_queue_time_seconds_bucket'* ]]; then" \
+  "    value='0.150'" \
+  "  elif [[ \"\$cmd\" == *'request_prefill_time_seconds_bucket'* && \"\$cmd\" == *'0.50'* ]]; then" \
+  "    value='0.300'" \
+  "  elif [[ \"\$cmd\" == *'request_prefill_time_seconds_bucket'* ]]; then" \
+  "    value='0.900'" \
+  "  elif [[ \"\$cmd\" == *'request_decode_time_seconds_bucket'* && \"\$cmd\" == *'0.50'* ]]; then" \
+  "    value='2.000'" \
+  "  elif [[ \"\$cmd\" == *'request_decode_time_seconds_bucket'* ]]; then" \
+  "    value='4.500'" \
+  "  elif [[ \"\$cmd\" == *'time_to_first_token_seconds_bucket'* && \"\$cmd\" == *'0.50'* ]]; then" \
+  "    value='0.450'" \
+  "  elif [[ \"\$cmd\" == *'time_to_first_token_seconds_bucket'* ]]; then" \
+  "    value='1.100'" \
+  "  elif [[ \"\$cmd\" == *'time_per_output_token_seconds_bucket'* && \"\$cmd\" == *'0.50'* ]]; then" \
+  "    value='0.010'" \
+  "  elif [[ \"\$cmd\" == *'time_per_output_token_seconds_bucket'* ]]; then" \
+  "    value='0.025'" \
+  "  elif [[ \"\$cmd\" == *'e2e_request_latency_seconds_bucket'* && \"\$cmd\" == *'0.50'* ]]; then" \
+  "    value='3.200'" \
+  "  elif [[ \"\$cmd\" == *'e2e_request_latency_seconds_bucket'* ]]; then" \
+  "    value='6.400'" \
   "  elif [[ \"\$cmd\" == *'num_requests_running'* && \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
   "    value='11'" \
   "  elif [[ \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
@@ -996,6 +1029,11 @@ run_live_experiment_runner_test() {
   assert_contains "${RUN_REPORT_CONTENT}" "| p99 request latency | 1.5 |" "experiment run should parse p99 latency from k6 logs"
   assert_contains "${RUN_REPORT_CONTENT}" "| p95 client waiting | 0.70 |" "experiment run should parse k6 waiting timing from logs"
   assert_contains "${RUN_REPORT_CONTENT}" "| p95 client receiving | 0.004 |" "experiment run should parse k6 receive timing from logs"
+  assert_contains "${RUN_REPORT_CONTENT}" "| p95 server queue delay | 0.150 |" "experiment run should collect server queue timing when vLLM histograms are available"
+  assert_contains "${RUN_REPORT_CONTENT}" "| p95 server prefill | 0.900 |" "experiment run should collect server prefill timing when vLLM histograms are available"
+  assert_contains "${RUN_REPORT_CONTENT}" "| p95 server decode | 4.500 |" "experiment run should collect server decode timing when vLLM histograms are available"
+  assert_contains "${RUN_REPORT_CONTENT}" "| p95 server inter-token latency | 0.025 |" "experiment run should collect server inter-token timing when vLLM histograms are available"
+  assert_contains "${RUN_REPORT_CONTENT}" "| p95 server e2e latency | 6.400 |" "experiment run should collect server e2e timing when vLLM histograms are available"
   assert_contains "${RUN_REPORT_CONTENT}" "| Generated tokens | 4096 |" "experiment run should parse generated token totals from k6 logs"
   assert_contains "${RUN_REPORT_CONTENT}" "| Run duration | 120 |" "experiment run should parse run duration from k6 logs"
   assert_contains "${RUN_JSON_CONTENT}" "\"status\": \"complete\"" "experiment run should mark the JSON report complete"
@@ -1015,6 +1053,11 @@ run_live_experiment_runner_test() {
   assert_contains "${RUN_JSON_CONTENT}" "\"p95_client_waiting_seconds\": 0.70" "experiment run should write client waiting timing to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"p95_client_blocked_seconds\": 0.001" "experiment run should write client blocked timing to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"p95_client_receiving_seconds\": 0.004" "experiment run should write client receiving timing to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"p95_queue_seconds\": 0.150" "experiment run should write server queue timing to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"p95_prefill_seconds\": 0.900" "experiment run should write server prefill timing to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"p95_decode_seconds\": 4.500" "experiment run should write server decode timing to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"p95_inter_token_latency_seconds\": 0.025" "experiment run should write server inter-token timing to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"p95_e2e_request_latency_seconds\": 6.400" "experiment run should write server e2e timing to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"requests_per_second\": 5.5" "experiment run should write request throughput to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"generated_tokens\": 4096" "experiment run should write generated tokens to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"generation_tokens_per_second\": 704" "experiment run should write generation token throughput to JSON"

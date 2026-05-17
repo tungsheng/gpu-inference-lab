@@ -2677,6 +2677,18 @@ render_report_markdown() {
   local p95_client_tls_handshaking_display
   local p95_client_sending_display
   local p95_client_receiving_display
+  local p50_server_queue_display
+  local p95_server_queue_display
+  local p50_server_prefill_display
+  local p95_server_prefill_display
+  local p50_server_decode_display
+  local p95_server_decode_display
+  local p50_server_ttft_display
+  local p95_server_ttft_display
+  local p50_server_inter_token_latency_display
+  local p95_server_inter_token_latency_display
+  local p50_server_e2e_latency_display
+  local p95_server_e2e_latency_display
   local p50_ttft_display
   local p95_ttft_display
   local p50_inter_token_latency_display
@@ -2782,6 +2794,18 @@ render_report_markdown() {
   p95_client_tls_handshaking_display=$(display_optional_metric "${RESULT_P95_CLIENT_TLS_HANDSHAKING_SECONDS:-}")
   p95_client_sending_display=$(display_optional_metric "${RESULT_P95_CLIENT_SENDING_SECONDS:-}")
   p95_client_receiving_display=$(display_optional_metric "${RESULT_P95_CLIENT_RECEIVING_SECONDS:-}")
+  p50_server_queue_display=$(display_optional_metric "${RESULT_P50_SERVER_QUEUE_SECONDS:-}")
+  p95_server_queue_display=$(display_optional_metric "${RESULT_P95_SERVER_QUEUE_SECONDS:-}")
+  p50_server_prefill_display=$(display_optional_metric "${RESULT_P50_SERVER_PREFILL_SECONDS:-}")
+  p95_server_prefill_display=$(display_optional_metric "${RESULT_P95_SERVER_PREFILL_SECONDS:-}")
+  p50_server_decode_display=$(display_optional_metric "${RESULT_P50_SERVER_DECODE_SECONDS:-}")
+  p95_server_decode_display=$(display_optional_metric "${RESULT_P95_SERVER_DECODE_SECONDS:-}")
+  p50_server_ttft_display=$(display_optional_metric "${RESULT_P50_SERVER_TTFT_SECONDS:-}")
+  p95_server_ttft_display=$(display_optional_metric "${RESULT_P95_SERVER_TTFT_SECONDS:-}")
+  p50_server_inter_token_latency_display=$(display_optional_metric "${RESULT_P50_SERVER_INTER_TOKEN_LATENCY_SECONDS:-}")
+  p95_server_inter_token_latency_display=$(display_optional_metric "${RESULT_P95_SERVER_INTER_TOKEN_LATENCY_SECONDS:-}")
+  p50_server_e2e_latency_display=$(display_optional_metric "${RESULT_P50_SERVER_E2E_REQUEST_LATENCY_SECONDS:-}")
+  p95_server_e2e_latency_display=$(display_optional_metric "${RESULT_P95_SERVER_E2E_REQUEST_LATENCY_SECONDS:-}")
   p50_ttft_display=$(display_optional_metric "${RESULT_P50_TTFT_SECONDS:-}")
   p95_ttft_display=$(display_optional_metric "${RESULT_P95_TTFT_SECONDS:-}")
   p50_inter_token_latency_display=$(display_optional_metric "${RESULT_P50_INTER_TOKEN_LATENCY_SECONDS:-}")
@@ -2955,6 +2979,18 @@ render_report_markdown() {
 | p95 client TLS handshaking | ${p95_client_tls_handshaking_display} |
 | p95 client sending | ${p95_client_sending_display} |
 | p95 client receiving | ${p95_client_receiving_display} |
+| p50 server queue delay | ${p50_server_queue_display} |
+| p95 server queue delay | ${p95_server_queue_display} |
+| p50 server prefill | ${p50_server_prefill_display} |
+| p95 server prefill | ${p95_server_prefill_display} |
+| p50 server decode | ${p50_server_decode_display} |
+| p95 server decode | ${p95_server_decode_display} |
+| p50 server TTFT | ${p50_server_ttft_display} |
+| p95 server TTFT | ${p95_server_ttft_display} |
+| p50 server inter-token latency | ${p50_server_inter_token_latency_display} |
+| p95 server inter-token latency | ${p95_server_inter_token_latency_display} |
+| p50 server e2e latency | ${p50_server_e2e_latency_display} |
+| p95 server e2e latency | ${p95_server_e2e_latency_display} |
 | p50 TTFT | ${p50_ttft_display} |
 | p95 TTFT | ${p95_ttft_display} |
 | p50 inter-token latency | ${p50_inter_token_latency_display} |
@@ -2999,6 +3035,9 @@ ${stream_shape_summary_section}
   do not treat missing GPU, queue, scaling, or cost fields as measured evidence.
 - Client timing fields use k6 HTTP phases; client waiting is time to first byte,
   not a dedicated server-side queue histogram.
+- Server timing fields use vLLM Prometheus histograms when the active vLLM image
+  exposes them; missing queue, prefill, decode, TTFT, or inter-token histograms
+  remain \`n/a\`.
 EOF
 }
 
@@ -3145,6 +3184,20 @@ render_report_json() {
       "p95_client_sending_seconds": $(json_optional_number "${RESULT_P95_CLIENT_SENDING_SECONDS:-}"),
       "p95_client_receiving_seconds": $(json_optional_number "${RESULT_P95_CLIENT_RECEIVING_SECONDS:-}")
     },
+    "server_timing": {
+      "p50_queue_seconds": $(json_optional_number "${RESULT_P50_SERVER_QUEUE_SECONDS:-}"),
+      "p95_queue_seconds": $(json_optional_number "${RESULT_P95_SERVER_QUEUE_SECONDS:-}"),
+      "p50_prefill_seconds": $(json_optional_number "${RESULT_P50_SERVER_PREFILL_SECONDS:-}"),
+      "p95_prefill_seconds": $(json_optional_number "${RESULT_P95_SERVER_PREFILL_SECONDS:-}"),
+      "p50_decode_seconds": $(json_optional_number "${RESULT_P50_SERVER_DECODE_SECONDS:-}"),
+      "p95_decode_seconds": $(json_optional_number "${RESULT_P95_SERVER_DECODE_SECONDS:-}"),
+      "p50_ttft_seconds": $(json_optional_number "${RESULT_P50_SERVER_TTFT_SECONDS:-}"),
+      "p95_ttft_seconds": $(json_optional_number "${RESULT_P95_SERVER_TTFT_SECONDS:-}"),
+      "p50_inter_token_latency_seconds": $(json_optional_number "${RESULT_P50_SERVER_INTER_TOKEN_LATENCY_SECONDS:-}"),
+      "p95_inter_token_latency_seconds": $(json_optional_number "${RESULT_P95_SERVER_INTER_TOKEN_LATENCY_SECONDS:-}"),
+      "p50_e2e_request_latency_seconds": $(json_optional_number "${RESULT_P50_SERVER_E2E_REQUEST_LATENCY_SECONDS:-}"),
+      "p95_e2e_request_latency_seconds": $(json_optional_number "${RESULT_P95_SERVER_E2E_REQUEST_LATENCY_SECONDS:-}")
+    },
     "serving": {
       "p50_ttft_seconds": $(json_optional_number "${RESULT_P50_TTFT_SECONDS:-}"),
       "p95_ttft_seconds": $(json_optional_number "${RESULT_P95_TTFT_SECONDS:-}"),
@@ -3217,7 +3270,8 @@ render_report_json() {
   "notes": [
     "This report records the workload and serving contract for the selected case.",
     "Unavailable fields remain null when the runner did not collect that signal; do not treat missing GPU, queue, scaling, or cost fields as measured evidence.",
-    "Client timing fields use k6 HTTP phases; client waiting is time to first byte, not a dedicated server-side queue histogram."
+    "Client timing fields use k6 HTTP phases; client waiting is time to first byte, not a dedicated server-side queue histogram.",
+    "Server timing fields use vLLM Prometheus histograms when the active vLLM image exposes them; missing queue, prefill, decode, TTFT, or inter-token histograms remain null."
   ]
 }
 EOF
@@ -3353,6 +3407,28 @@ experiment_scalar_is_positive() {
   awk -v value="${value}" 'BEGIN { exit !((value + 0) > 0) }'
 }
 
+collect_experiment_histogram_quantile_metric() {
+  local destination_var=$1
+  local quantile=$2
+  local window=$3
+  local query_time=$4
+  local metric_name
+  local query
+  local value
+
+  shift 4
+  printf -v "${destination_var}" '%s' ""
+
+  for metric_name in "$@"; do
+    query="histogram_quantile(${quantile}, sum by (le) (increase(${metric_name}{namespace=\"${APP_NAMESPACE}\"}[${window}])))"
+    value=$(experiment_prometheus_query_scalar "${query}" "${query_time}") || return 1
+    if [[ -n "${value}" ]]; then
+      printf -v "${destination_var}" '%s' "${value}"
+      return 0
+    fi
+  done
+}
+
 print_experiment_dcgm_diagnostics() {
   printf 'DCGM diagnostics:\n' >&2
   kubectl get daemonset "${DCGM_EXPORTER_DAEMONSET_NAME}" -n "${MONITORING_NAMESPACE}" -o wide >&2 || true
@@ -3451,6 +3527,18 @@ collect_experiment_observability_metrics() {
   RESULT_PEAK_WAITING_REQUESTS=$(experiment_prometheus_query_scalar "max_over_time((sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" "${query_time}")
   RESULT_PEAK_RUNNING_REQUESTS=$(experiment_prometheus_query_scalar "max_over_time((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" "${query_time}")
   RESULT_PEAK_ACTIVE_REQUESTS=$(experiment_prometheus_query_scalar "max_over_time(((sum(vllm:num_requests_running{namespace=\"${APP_NAMESPACE}\"}) + sum(vllm:num_requests_waiting{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s]))" "${query_time}")
+  collect_experiment_histogram_quantile_metric RESULT_P50_SERVER_QUEUE_SECONDS 0.50 "${window}" "${query_time}" vllm:request_queue_time_seconds_bucket vllm_request_queue_time_seconds_bucket
+  collect_experiment_histogram_quantile_metric RESULT_P95_SERVER_QUEUE_SECONDS 0.95 "${window}" "${query_time}" vllm:request_queue_time_seconds_bucket vllm_request_queue_time_seconds_bucket
+  collect_experiment_histogram_quantile_metric RESULT_P50_SERVER_PREFILL_SECONDS 0.50 "${window}" "${query_time}" vllm:request_prefill_time_seconds_bucket vllm_request_prefill_time_seconds_bucket
+  collect_experiment_histogram_quantile_metric RESULT_P95_SERVER_PREFILL_SECONDS 0.95 "${window}" "${query_time}" vllm:request_prefill_time_seconds_bucket vllm_request_prefill_time_seconds_bucket
+  collect_experiment_histogram_quantile_metric RESULT_P50_SERVER_DECODE_SECONDS 0.50 "${window}" "${query_time}" vllm:request_decode_time_seconds_bucket vllm_request_decode_time_seconds_bucket
+  collect_experiment_histogram_quantile_metric RESULT_P95_SERVER_DECODE_SECONDS 0.95 "${window}" "${query_time}" vllm:request_decode_time_seconds_bucket vllm_request_decode_time_seconds_bucket
+  collect_experiment_histogram_quantile_metric RESULT_P50_SERVER_TTFT_SECONDS 0.50 "${window}" "${query_time}" vllm:time_to_first_token_seconds_bucket vllm_time_to_first_token_seconds_bucket
+  collect_experiment_histogram_quantile_metric RESULT_P95_SERVER_TTFT_SECONDS 0.95 "${window}" "${query_time}" vllm:time_to_first_token_seconds_bucket vllm_time_to_first_token_seconds_bucket
+  collect_experiment_histogram_quantile_metric RESULT_P50_SERVER_INTER_TOKEN_LATENCY_SECONDS 0.50 "${window}" "${query_time}" vllm:time_per_output_token_seconds_bucket vllm_time_per_output_token_seconds_bucket
+  collect_experiment_histogram_quantile_metric RESULT_P95_SERVER_INTER_TOKEN_LATENCY_SECONDS 0.95 "${window}" "${query_time}" vllm:time_per_output_token_seconds_bucket vllm_time_per_output_token_seconds_bucket
+  collect_experiment_histogram_quantile_metric RESULT_P50_SERVER_E2E_REQUEST_LATENCY_SECONDS 0.50 "${window}" "${query_time}" vllm:e2e_request_latency_seconds_bucket vllm_e2e_request_latency_seconds_bucket
+  collect_experiment_histogram_quantile_metric RESULT_P95_SERVER_E2E_REQUEST_LATENCY_SECONDS 0.95 "${window}" "${query_time}" vllm:e2e_request_latency_seconds_bucket vllm_e2e_request_latency_seconds_bucket
   RESULT_AVERAGE_GPU_UTILIZATION_PERCENT=$(experiment_prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])" "${query_time}")
   RESULT_MAX_GPU_UTILIZATION_PERCENT=$(experiment_prometheus_query_scalar "max_over_time((max(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])" "${query_time}")
   RESULT_GPU_MEMORY_USED_BYTES=$(experiment_prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_FB_USED) * 1048576)[${window}:1m])" "${query_time}")

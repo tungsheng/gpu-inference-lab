@@ -24,8 +24,10 @@ and small-request useful-work cost. The current operator-facing readout lives in
 ## Known Limits
 
 - The active environment is dev-oriented and keeps the EKS API public.
-- Non-streaming runs capture k6 HTTP phase timing, including client waiting,
-  but queue wait is still not a dedicated server-side histogram.
+- Non-streaming reports now have nullable vLLM server-side timing fields for
+  queue, prefill, decode, TTFT, inter-token, and e2e latency, but curated
+  evidence still needs a live rerun that populates the queue/prefill/decode
+  split.
 - Active-pressure target `8` is the current zero-idle sweep recommendation, but
   the sweep was underutilized and does not prove an optimal production target.
 - GPU efficiency is measured for the current one-pod-per-GPU shape, but the repo

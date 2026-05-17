@@ -101,6 +101,10 @@ POLICY_FINISH_TIME=""
 P95_REQUEST_LATENCY_SECONDS=""
 P95_ESTIMATED_QUEUE_WAIT_SECONDS=""
 P95_TTFT_SECONDS=""
+P95_SERVER_QUEUE_SECONDS=""
+P95_SERVER_PREFILL_SECONDS=""
+P95_SERVER_DECODE_SECONDS=""
+P95_SERVER_INTER_TOKEN_LATENCY_SECONDS=""
 PEAK_WAITING_REQUESTS=""
 PEAK_ACTIVE_REQUESTS=""
 PEAK_RUNNING_REQUESTS=""
@@ -565,6 +569,10 @@ reset_policy_measurements() {
   P95_REQUEST_LATENCY_SECONDS=""
   P95_ESTIMATED_QUEUE_WAIT_SECONDS=""
   P95_TTFT_SECONDS=""
+  P95_SERVER_QUEUE_SECONDS=""
+  P95_SERVER_PREFILL_SECONDS=""
+  P95_SERVER_DECODE_SECONDS=""
+  P95_SERVER_INTER_TOKEN_LATENCY_SECONDS=""
   PEAK_WAITING_REQUESTS=""
   PEAK_ACTIVE_REQUESTS=""
   PEAK_RUNNING_REQUESTS=""
@@ -1585,6 +1593,27 @@ prometheus_query_scalar() {
   printf '%s\n' "${scalar_value}"
 }
 
+prometheus_histogram_quantile_metric() {
+  local quantile=$1
+  local window=$2
+  local metric_name
+  local query
+  local value
+
+  shift 2
+
+  for metric_name in "$@"; do
+    query="histogram_quantile(${quantile}, sum by (le) (increase(${metric_name}{namespace=\"${APP_NAMESPACE}\"}[${window}])))"
+    value=$(prometheus_query_scalar "${query}") || return 1
+    if [[ -n "${value}" ]]; then
+      printf '%s\n' "${value}"
+      return 0
+    fi
+  done
+
+  printf '%s\n' ""
+}
+
 wait_for_prometheus_series() {
   local query=$1
   local timeout_seconds=$2
@@ -1848,6 +1877,10 @@ collect_production_metrics() {
   P95_REQUEST_LATENCY_SECONDS=$(prometheus_query_scalar "${latency_query}") || return 1
   P95_ESTIMATED_QUEUE_WAIT_SECONDS=$(prometheus_query_scalar "${queue_wait_query}") || return 1
   P95_TTFT_SECONDS=$(prometheus_query_scalar "${ttft_query}") || return 1
+  P95_SERVER_QUEUE_SECONDS=$(prometheus_histogram_quantile_metric 0.95 "${window}" vllm:request_queue_time_seconds_bucket vllm_request_queue_time_seconds_bucket) || return 1
+  P95_SERVER_PREFILL_SECONDS=$(prometheus_histogram_quantile_metric 0.95 "${window}" vllm:request_prefill_time_seconds_bucket vllm_request_prefill_time_seconds_bucket) || return 1
+  P95_SERVER_DECODE_SECONDS=$(prometheus_histogram_quantile_metric 0.95 "${window}" vllm:request_decode_time_seconds_bucket vllm_request_decode_time_seconds_bucket) || return 1
+  P95_SERVER_INTER_TOKEN_LATENCY_SECONDS=$(prometheus_histogram_quantile_metric 0.95 "${window}" vllm:time_per_output_token_seconds_bucket vllm_time_per_output_token_seconds_bucket) || return 1
   PEAK_WAITING_REQUESTS=$(prometheus_query_scalar "${waiting_query}") || return 1
   PEAK_ACTIVE_REQUESTS=$(prometheus_query_scalar "${active_query}") || return 1
   PEAK_RUNNING_REQUESTS=$(prometheus_query_scalar "${running_query}") || return 1
@@ -1913,6 +1946,10 @@ push_summary_metrics() {
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_request_latency_seconds" "${P95_REQUEST_LATENCY_SECONDS}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_estimated_queue_wait_seconds" "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_ttft_seconds" "${P95_TTFT_SECONDS}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_server_queue_seconds" "${P95_SERVER_QUEUE_SECONDS}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_server_prefill_seconds" "${P95_SERVER_PREFILL_SECONDS}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_server_decode_seconds" "${P95_SERVER_DECODE_SECONDS}"
+  append_pushgateway_metric "${payload_file}" "gpu_serving_measure_p95_server_inter_token_latency_seconds" "${P95_SERVER_INTER_TOKEN_LATENCY_SECONDS}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_peak_waiting_requests" "${PEAK_WAITING_REQUESTS}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_peak_active_requests" "${PEAK_ACTIVE_REQUESTS}"
   append_pushgateway_metric "${payload_file}" "gpu_serving_measure_average_completed_requests_per_second" "${AVG_COMPLETED_REQUESTS_PER_SECOND}"
@@ -2298,6 +2335,10 @@ write_reports() {
 - p95 request latency during burst: $(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")
 - p95 estimated queue wait during burst: $(display_metric "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}" "s")
 - p95 time to first token during burst: $(display_metric "${P95_TTFT_SECONDS}" "s")
+- p95 server queue histogram during burst: $(display_metric "${P95_SERVER_QUEUE_SECONDS}" "s")
+- p95 server prefill histogram during burst: $(display_metric "${P95_SERVER_PREFILL_SECONDS}" "s")
+- p95 server decode histogram during burst: $(display_metric "${P95_SERVER_DECODE_SECONDS}" "s")
+- p95 server inter-token histogram during burst: $(display_metric "${P95_SERVER_INTER_TOKEN_LATENCY_SECONDS}" "s")
 - Peak waiting requests: $(display_metric "${PEAK_WAITING_REQUESTS}")
 - Peak active requests: $(display_metric "${PEAK_ACTIVE_REQUESTS}")
 - Peak running requests: $(display_metric "${PEAK_RUNNING_REQUESTS}")
@@ -2334,6 +2375,7 @@ write_reports() {
 
 - \`Container started -> Ready\` is reported as the model-load proxy because the baseline experiment does not rely on a separate vLLM model-load completion metric.
 - \`p95 estimated queue wait\` is derived from waiting-request depth divided by request completion rate, so it is a capacity estimate rather than a dedicated queue histogram.
+- Server queue, prefill, decode, and inter-token timing fields are populated from vLLM Prometheus histograms when the active vLLM image exposes them.
 - The HPA is validated from the custom metric \`${CURRENT_HPA_METRIC_NAME}\` with target average value \`${CURRENT_HPA_TARGET_AVERAGE_VALUE}\`, not CPU utilization.
 - Final Prometheus and DCGM collection is best-effort; if the Kubernetes API is unavailable after workload cleanup, the report keeps timeline, cost, and resilience data while metric fields remain \`n/a\` or \`null\`.
 - \`${EVALUATION_RESILIENCE}\` controls whether the preferred spot burst path stays available, is withdrawn before the run, or is interrupted mid-burst and forced to recover on replacement capacity.
@@ -2397,6 +2439,10 @@ EOF
     "p95_request_latency_seconds": $(json_nullable_number "${P95_REQUEST_LATENCY_SECONDS}"),
     "p95_estimated_queue_wait_seconds": $(json_nullable_number "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}"),
     "p95_ttft_seconds": $(json_nullable_number "${P95_TTFT_SECONDS}"),
+    "p95_server_queue_seconds": $(json_nullable_number "${P95_SERVER_QUEUE_SECONDS}"),
+    "p95_server_prefill_seconds": $(json_nullable_number "${P95_SERVER_PREFILL_SECONDS}"),
+    "p95_server_decode_seconds": $(json_nullable_number "${P95_SERVER_DECODE_SECONDS}"),
+    "p95_server_inter_token_latency_seconds": $(json_nullable_number "${P95_SERVER_INTER_TOKEN_LATENCY_SECONDS}"),
     "peak_waiting_requests": $(json_nullable_number "${PEAK_WAITING_REQUESTS}"),
     "peak_active_requests": $(json_nullable_number "${PEAK_ACTIVE_REQUESTS}"),
     "peak_running_requests": $(json_nullable_number "${PEAK_RUNNING_REQUESTS}"),
@@ -2478,6 +2524,10 @@ capture_compare_policy_result() {
   set_policy_snapshot_value "${policy}" P95_REQUEST_LATENCY_SECONDS "${P95_REQUEST_LATENCY_SECONDS}"
   set_policy_snapshot_value "${policy}" P95_ESTIMATED_QUEUE_WAIT_SECONDS "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}"
   set_policy_snapshot_value "${policy}" P95_TTFT_SECONDS "${P95_TTFT_SECONDS}"
+  set_policy_snapshot_value "${policy}" P95_SERVER_QUEUE_SECONDS "${P95_SERVER_QUEUE_SECONDS}"
+  set_policy_snapshot_value "${policy}" P95_SERVER_PREFILL_SECONDS "${P95_SERVER_PREFILL_SECONDS}"
+  set_policy_snapshot_value "${policy}" P95_SERVER_DECODE_SECONDS "${P95_SERVER_DECODE_SECONDS}"
+  set_policy_snapshot_value "${policy}" P95_SERVER_INTER_TOKEN_LATENCY_SECONDS "${P95_SERVER_INTER_TOKEN_LATENCY_SECONDS}"
   set_policy_snapshot_value "${policy}" PEAK_WAITING_REQUESTS "${PEAK_WAITING_REQUESTS}"
   set_policy_snapshot_value "${policy}" PEAK_ACTIVE_REQUESTS "${PEAK_ACTIVE_REQUESTS}"
   set_policy_snapshot_value "${policy}" PEAK_ACTIVE_REQUESTS_PER_GPU_NODE "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}"
@@ -2690,6 +2740,10 @@ capture_sweep_target_result() {
   set_sweep_target_value "${target}" P95_REQUEST_LATENCY_SECONDS "${P95_REQUEST_LATENCY_SECONDS}"
   set_sweep_target_value "${target}" P95_ESTIMATED_QUEUE_WAIT_SECONDS "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}"
   set_sweep_target_value "${target}" P95_TTFT_SECONDS "${P95_TTFT_SECONDS}"
+  set_sweep_target_value "${target}" P95_SERVER_QUEUE_SECONDS "${P95_SERVER_QUEUE_SECONDS}"
+  set_sweep_target_value "${target}" P95_SERVER_PREFILL_SECONDS "${P95_SERVER_PREFILL_SECONDS}"
+  set_sweep_target_value "${target}" P95_SERVER_DECODE_SECONDS "${P95_SERVER_DECODE_SECONDS}"
+  set_sweep_target_value "${target}" P95_SERVER_INTER_TOKEN_LATENCY_SECONDS "${P95_SERVER_INTER_TOKEN_LATENCY_SECONDS}"
   set_sweep_target_value "${target}" PEAK_WAITING_REQUESTS "${PEAK_WAITING_REQUESTS}"
   set_sweep_target_value "${target}" PEAK_ACTIVE_REQUESTS "${PEAK_ACTIVE_REQUESTS}"
   set_sweep_target_value "${target}" PEAK_ACTIVE_REQUESTS_PER_GPU_NODE "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}"
@@ -2857,6 +2911,10 @@ write_compare_reports() {
 | p95 request latency | $(compare_metric_value running P95_REQUEST_LATENCY_SECONDS "s") | $(compare_metric_value active-pressure P95_REQUEST_LATENCY_SECONDS "s") |
 | p95 estimated queue wait | $(compare_metric_value running P95_ESTIMATED_QUEUE_WAIT_SECONDS "s") | $(compare_metric_value active-pressure P95_ESTIMATED_QUEUE_WAIT_SECONDS "s") |
 | p95 TTFT | $(compare_metric_value running P95_TTFT_SECONDS "s") | $(compare_metric_value active-pressure P95_TTFT_SECONDS "s") |
+| p95 server queue histogram | $(compare_metric_value running P95_SERVER_QUEUE_SECONDS "s") | $(compare_metric_value active-pressure P95_SERVER_QUEUE_SECONDS "s") |
+| p95 server prefill histogram | $(compare_metric_value running P95_SERVER_PREFILL_SECONDS "s") | $(compare_metric_value active-pressure P95_SERVER_PREFILL_SECONDS "s") |
+| p95 server decode histogram | $(compare_metric_value running P95_SERVER_DECODE_SECONDS "s") | $(compare_metric_value active-pressure P95_SERVER_DECODE_SECONDS "s") |
+| p95 server inter-token histogram | $(compare_metric_value running P95_SERVER_INTER_TOKEN_LATENCY_SECONDS "s") | $(compare_metric_value active-pressure P95_SERVER_INTER_TOKEN_LATENCY_SECONDS "s") |
 | Peak waiting requests | $(compare_metric_value running PEAK_WAITING_REQUESTS "") | $(compare_metric_value active-pressure PEAK_WAITING_REQUESTS "") |
 | Peak active requests | $(compare_metric_value running PEAK_ACTIVE_REQUESTS "") | $(compare_metric_value active-pressure PEAK_ACTIVE_REQUESTS "") |
 | Peak active requests per GPU node | $(compare_metric_value running PEAK_ACTIVE_REQUESTS_PER_GPU_NODE "") | $(compare_metric_value active-pressure PEAK_ACTIVE_REQUESTS_PER_GPU_NODE "") |
@@ -2895,6 +2953,10 @@ EOF
       "p95_request_latency_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_REQUEST_LATENCY_SECONDS)"),
       "p95_estimated_queue_wait_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_ESTIMATED_QUEUE_WAIT_SECONDS)"),
       "p95_ttft_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_TTFT_SECONDS)"),
+      "p95_server_queue_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_SERVER_QUEUE_SECONDS)"),
+      "p95_server_prefill_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_SERVER_PREFILL_SECONDS)"),
+      "p95_server_decode_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_SERVER_DECODE_SECONDS)"),
+      "p95_server_inter_token_latency_seconds": $(json_nullable_number "$(get_policy_snapshot_value running P95_SERVER_INTER_TOKEN_LATENCY_SECONDS)"),
       "peak_waiting_requests": $(json_nullable_number "$(get_policy_snapshot_value running PEAK_WAITING_REQUESTS)"),
       "peak_active_requests": $(json_nullable_number "$(get_policy_snapshot_value running PEAK_ACTIVE_REQUESTS)"),
       "peak_active_requests_per_gpu_node": $(json_nullable_number "$(get_policy_snapshot_value running PEAK_ACTIVE_REQUESTS_PER_GPU_NODE)"),
@@ -2926,6 +2988,10 @@ EOF
       "p95_request_latency_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_REQUEST_LATENCY_SECONDS)"),
       "p95_estimated_queue_wait_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_ESTIMATED_QUEUE_WAIT_SECONDS)"),
       "p95_ttft_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_TTFT_SECONDS)"),
+      "p95_server_queue_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_SERVER_QUEUE_SECONDS)"),
+      "p95_server_prefill_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_SERVER_PREFILL_SECONDS)"),
+      "p95_server_decode_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_SERVER_DECODE_SECONDS)"),
+      "p95_server_inter_token_latency_seconds": $(json_nullable_number "$(get_policy_snapshot_value active-pressure P95_SERVER_INTER_TOKEN_LATENCY_SECONDS)"),
       "peak_waiting_requests": $(json_nullable_number "$(get_policy_snapshot_value active-pressure PEAK_WAITING_REQUESTS)"),
       "peak_active_requests": $(json_nullable_number "$(get_policy_snapshot_value active-pressure PEAK_ACTIVE_REQUESTS)"),
       "peak_active_requests_per_gpu_node": $(json_nullable_number "$(get_policy_snapshot_value active-pressure PEAK_ACTIVE_REQUESTS_PER_GPU_NODE)"),
@@ -2973,18 +3039,22 @@ write_sweep_reports() {
 
 ## Target Summary
 
-| Active target | Status | Metrics collection | p95 request latency | p95 estimated queue wait | p95 TTFT | Peak waiting requests | Peak active requests | Peak active/GPU node | Average GPU utilization | Max GPU utilization | Peak active NodeClaims | Second ready replica | Recovery ready after interruption | Burst cost | Markdown report |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Active target | Status | Metrics collection | p95 request latency | p95 estimated queue wait | p95 TTFT | p95 server queue | p95 server prefill | p95 server decode | p95 server inter-token | Peak waiting requests | Peak active requests | Peak active/GPU node | Average GPU utilization | Max GPU utilization | Peak active NodeClaims | Second ready replica | Recovery ready after interruption | Burst cost | Markdown report |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 EOF
 
   for target in "${ACTIVE_TARGET_SWEEP_VALUES[@]}"; do
-    printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+    printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
       "${target}" \
       "$(get_sweep_target_value "${target}" STATUS)" \
       "$(get_sweep_target_value "${target}" METRICS_COLLECTION_STATUS)" \
       "$(sweep_metric_value "${target}" P95_REQUEST_LATENCY_SECONDS "s")" \
       "$(sweep_metric_value "${target}" P95_ESTIMATED_QUEUE_WAIT_SECONDS "s")" \
       "$(sweep_metric_value "${target}" P95_TTFT_SECONDS "s")" \
+      "$(sweep_metric_value "${target}" P95_SERVER_QUEUE_SECONDS "s")" \
+      "$(sweep_metric_value "${target}" P95_SERVER_PREFILL_SECONDS "s")" \
+      "$(sweep_metric_value "${target}" P95_SERVER_DECODE_SECONDS "s")" \
+      "$(sweep_metric_value "${target}" P95_SERVER_INTER_TOKEN_LATENCY_SECONDS "s")" \
       "$(sweep_metric_value "${target}" PEAK_WAITING_REQUESTS)" \
       "$(sweep_metric_value "${target}" PEAK_ACTIVE_REQUESTS)" \
       "$(sweep_metric_value "${target}" PEAK_ACTIVE_REQUESTS_PER_GPU_NODE)" \
@@ -3072,6 +3142,10 @@ EOF
       printf '        "p95_request_latency_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_REQUEST_LATENCY_SECONDS)")"
       printf '        "p95_estimated_queue_wait_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_ESTIMATED_QUEUE_WAIT_SECONDS)")"
       printf '        "p95_ttft_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_TTFT_SECONDS)")"
+      printf '        "p95_server_queue_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_SERVER_QUEUE_SECONDS)")"
+      printf '        "p95_server_prefill_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_SERVER_PREFILL_SECONDS)")"
+      printf '        "p95_server_decode_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_SERVER_DECODE_SECONDS)")"
+      printf '        "p95_server_inter_token_latency_seconds": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" P95_SERVER_INTER_TOKEN_LATENCY_SECONDS)")"
       printf '        "peak_waiting_requests": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" PEAK_WAITING_REQUESTS)")"
       printf '        "peak_active_requests": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" PEAK_ACTIVE_REQUESTS)")"
       printf '        "peak_active_requests_per_gpu_node": %s,\n' "$(json_nullable_number "$(get_sweep_target_value "${target}" PEAK_ACTIVE_REQUESTS_PER_GPU_NODE)")"
@@ -3207,6 +3281,9 @@ print_single_policy_summary() {
   printf '  Recovery ready replica after interruption: %s\n' "$(display_duration "$(seconds_since_start "${RECOVERY_READY_TIME}")")"
   printf '  p95 request latency: %s\n' "$(display_metric "${P95_REQUEST_LATENCY_SECONDS}" "s")"
   printf '  p95 estimated queue wait: %s\n' "$(display_metric "${P95_ESTIMATED_QUEUE_WAIT_SECONDS}" "s")"
+  printf '  p95 server queue: %s\n' "$(display_metric "${P95_SERVER_QUEUE_SECONDS}" "s")"
+  printf '  p95 server prefill: %s\n' "$(display_metric "${P95_SERVER_PREFILL_SECONDS}" "s")"
+  printf '  p95 server decode: %s\n' "$(display_metric "${P95_SERVER_DECODE_SECONDS}" "s")"
   printf '  Peak waiting requests: %s\n' "$(display_metric "${PEAK_WAITING_REQUESTS}")"
   printf '  Peak active requests: %s\n' "$(display_metric "${PEAK_ACTIVE_REQUESTS}")"
   printf '  Peak active requests per GPU node: %s\n' "$(display_metric "${PEAK_ACTIVE_REQUESTS_PER_GPU_NODE}")"

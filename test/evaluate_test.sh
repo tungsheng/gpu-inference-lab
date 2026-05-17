@@ -289,6 +289,14 @@ write_evaluate_curl_stub() {
 "    value='320'" \
 "  elif [[ \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
 "    value='64'" \
+"  elif [[ \"\$cmd\" == *'request_queue_time_seconds_bucket'* ]]; then" \
+"    value='0.155'" \
+"  elif [[ \"\$cmd\" == *'request_prefill_time_seconds_bucket'* ]]; then" \
+"    value='0.875'" \
+"  elif [[ \"\$cmd\" == *'request_decode_time_seconds_bucket'* ]]; then" \
+"    value='3.750'" \
+"  elif [[ \"\$cmd\" == *'time_per_output_token_seconds_bucket'* ]]; then" \
+"    value='0.021'" \
 "  elif [[ \"\$cmd\" == *'time_to_first_token_seconds_bucket'* ]]; then" \
 "    value='0.61'" \
 "  elif [[ \"\$cmd\" == *'num_requests_running'* ]]; then" \
@@ -342,6 +350,8 @@ run_running_policy_test() {
   assert_contains "${REPORT_CONTENT}" "HPA metric name: vllm_requests_running" "the Markdown report should include the running metric name"
   assert_contains "${REPORT_CONTENT}" "HPA target average value: 128" "the Markdown report should include the running metric target"
   assert_contains "${REPORT_CONTENT}" "p95 estimated queue wait during burst" "the Markdown report should include the derived queue-wait estimate"
+  assert_contains "${REPORT_CONTENT}" "p95 server queue histogram during burst" "the Markdown report should include the dedicated server queue histogram when available"
+  assert_contains "${REPORT_CONTENT}" "p95 server decode histogram during burst" "the Markdown report should include the dedicated server decode histogram when available"
   assert_contains "${REPORT_CONTENT}" "Peak active requests per active GPU node" "the Markdown report should include the per-GPU active-request readout"
   assert_contains "${REPORT_CONTENT}" "Capacity assessment: balanced" "the Markdown report should summarize the capacity assessment"
   assert_contains "${REPORT_CONTENT}" "Peak waiting requests" "the Markdown report should include peak waiting requests"
@@ -351,6 +361,10 @@ run_running_policy_test() {
   assert_contains "${JSON_REPORT_CONTENT}" "\"hpa_metric_name\": \"vllm_requests_running\"" "the JSON report should include the running metric name"
   assert_contains "${JSON_REPORT_CONTENT}" "\"hpa_target_average_value\": \"128\"" "the JSON report should include the running target"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p95_estimated_queue_wait_seconds\": 0.420" "the JSON report should include the derived queue-wait estimate"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"p95_server_queue_seconds\": 0.155" "the JSON report should include the dedicated server queue histogram"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"p95_server_prefill_seconds\": 0.875" "the JSON report should include the dedicated server prefill histogram"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"p95_server_decode_seconds\": 3.750" "the JSON report should include the dedicated server decode histogram"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"p95_server_inter_token_latency_seconds\": 0.021" "the JSON report should include the dedicated server inter-token histogram"
   assert_contains "${JSON_REPORT_CONTENT}" "\"peak_active_requests_per_gpu_node\": 160.000" "the JSON report should include the per-GPU active-request readout"
   assert_contains "${JSON_REPORT_CONTENT}" "\"status\": \"balanced\"" "the JSON report should include the capacity assessment status"
   assert_contains "${JSON_REPORT_CONTENT}" "\"peak_waiting_requests\": 64" "the JSON report should include peak waiting requests"
