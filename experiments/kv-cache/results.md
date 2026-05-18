@@ -10,9 +10,11 @@ usable through `1.10 req/s` without waiting, starts queueing at `1.15 req/s`,
 and reaches the practical edge by `1.20 req/s`. It begins queueing hard by
 `1.25 req/s` and is clearly overloaded at `1.50 req/s`. The admission-capped
 `1.25 req/s` run converts that overload into explicit dropped demand and much
-lower tail latency. Its latest rerun also captures k6 HTTP phase timing, which
-shows negligible client/network overhead at the p95 tail. GPU/DCGM fields are
-now present in the newest reports, so memory and utilization can be used as
+lower tail latency. The latest direct and admission-control reruns also capture
+k6 HTTP phase timing and vLLM server timing: the direct run shows large
+server-side queue and TTFT inflation, while the admission-capped run keeps
+queue delay near zero and leaves decode time roughly unchanged. GPU/DCGM fields
+are now present in the newest reports, so memory and utilization can be used as
 supporting evidence for the long-context story.
 
 Scheduler variants at `1.20 req/s` did not improve the practical edge. Lowering
@@ -29,11 +31,14 @@ slightly worse on p95/p99 latency.
   show 132-134 interrupted iterations after the summary block.
 - `512/100` and `2048/200` have long-context reports, but the clearest capacity
   knee so far is the `8192/300` sweep.
-- New reports will include offered iterations, unserved iterations, delivery
-  ratio, and buffering pressure derived from both dropped and interrupted work.
+- New reports include offered iterations, unserved iterations, delivery ratio,
+  and buffering pressure derived from both dropped and interrupted work.
 - Reports generated after the client-timing instrumentation include k6 HTTP
   phase timing. Treat `client_waiting` as time to first byte, not as a
   dedicated server-side queue histogram.
+- Reports generated after the server-timing instrumentation include vLLM
+  queue, prefill, decode, TTFT, inter-token, and end-to-end histograms when the
+  active vLLM image exposes them.
 
 ## 8192/300 Long-Context Sweep
 
@@ -53,8 +58,8 @@ iterations, high delivery ratio, and no sustained waiting-request pressure.
 | `prompt-8192-output-300-rate-110` | 1.10 req/s | 659 | 0 | 0 / 0 | 21.67s | 21.87s | 0.915 | 274.58 | 0 / 24 / 24 | 82% / 100% | 14.10 / 0.64 GiB | stable but tail rising |
 | `prompt-8192-output-300-rate-115` | 1.15 req/s | 689 | 0 | 0 / 0 | 35.35s | 35.72s | 0.957 | 287.08 | 8 / 32 / 40 | 83% / 100% | 14.10 / 0.64 GiB | queueing begins |
 | `prompt-8192-output-300-rate-120` | 1.20 req/s | 719 | 0 | 0 / 0 | 54.35s | 55.25s | 0.999 | 299.58 | 30 / 32 / 62 | 83% / 100% | 14.10 / 0.64 GiB | practical edge |
-| `prompt-8192-output-300-rate-125` | 1.25 req/s | 749 | 0 | 0 / 0 | 85.75s | 87.19s | 1.023 | 306.89 | 65 / 32 / 97 | 88% / 100% | 13.10 / 1.64 GiB | saturation begins |
-| `prompt-8192-output-300-rate-125-admission-032` | 1.25 req/s | 698 | 0 | 52 / 0 | 27.83s | 27.97s | 0.964 | 289.15 | 0 / 32 / 32 | 85% / 100% | 14.03 / 0.71 GiB | bounded admission |
+| `prompt-8192-output-300-rate-125` | 1.25 req/s | 749 | 0 | 0 / 0 | 77.51s | 78.59s | 1.036 | 310.66 | 57 / 32 / 89 | 88% / 100% | 14.10 / 0.64 GiB | saturation begins |
+| `prompt-8192-output-300-rate-125-admission-032` | 1.25 req/s | 690 | 0 | 59 / 0 | 27.98s | 28.02s | 0.958 | 287.50 | 0 / 32 / 32 | 91% / 100% | 14.10 / 0.64 GiB | bounded admission |
 | `prompt-8192-output-300-rate-150` | 1.50 req/s | 744 | 0 | 23 / 132+ | 180.27s | 185.01s | 0.992 | 297.60 | 181 / 32 / 213 | 80% / 100% | 13.98 / 0.76 GiB | overloaded |
 | `prompt-8192-output-300` | 2.00 req/s | 833 | 0 | 187 / 239 | 223.07s | 230.55s | 1.111 | 333.20 | 283 / 32 / 315 | n/a | n/a | saturated |
 
@@ -91,8 +96,9 @@ Observed that `1.15 req/s` is the first populated rate to show waiting pressure
 for `8192/300` requests, with peak waiting at 8 and p95 latency near 35s.
 Observed that `1.20 req/s` keeps full delivery but reaches the practical edge,
 with peak waiting at 30, `max_num_seqs=32`, and p95 latency near 54s.
-Observed that `1.25 req/s` saturates the vLLM scheduler, with 65 waiting
-requests, p95 latency near 86s, and GPU max at 100%.
+Observed that `1.25 req/s` saturates the vLLM scheduler, with 57 waiting
+requests, p95 latency near 78s, p95 server queue delay near 48s, and GPU max at
+100%.
 
 Observed that `1.50 req/s` lets excess demand turn into long tail latency and
 graceful-stop backlog; added an admission-control comparison capped at 32 k6 VUs
@@ -101,13 +107,14 @@ completion.
 
 Observed that the `1.25 req/s` admission-control probe capped active work at 32
 requests, eliminated serving-side waiting pressure, reduced p95 latency from
-85.75s to 27.83s, and reported 52 dropped client iterations as explicit unserved
-demand. Generated throughput fell from 306.89 to 289.15 tokens/sec, so the trade
-is lower tail latency and clearer backpressure at lower completed volume. The
-client-timing rerun reports p95 request latency at 27.831s and p95 client
-waiting at 27.831s, while p95 blocked, connect, send, and receive phases are all
-below 2 ms. That makes the tail a service-side/model-time issue, not a
-client/network artifact.
+77.51s to 27.98s, and reported 59 dropped client iterations as explicit
+unserved demand. Generated throughput fell from 310.66 to 287.50 tokens/sec, so
+the trade is lower tail latency and clearer backpressure at lower completed
+volume. The server-timing rerun reports p95 queue delay dropping from 48.11s to
+0.285s and p95 TTFT dropping from 71.24s to 0.718s, while p95 decode is
+effectively unchanged at about 29.4s. Client timing shows negligible network
+overhead, with p95 blocked, connect, send, and receive phases all below 2 ms.
+That makes the tail a server-side queueing issue, not a client/network artifact.
 
 Observed that the checked-in `long-context` profile might be too aggressive at
 `max_num_seqs=32`; added `long-context-seqs-16`, `long-context-seqs-24`, and
@@ -124,8 +131,9 @@ for this knee before pursuing scheduler caps further on the current g4dn/vLLM
 
 1. Run `rate-110-r2/r3`, `rate-115-r2/r3`, and `rate-120-r2/r3` to quantify
    variance near the knee.
-2. Add server-side timing that separates queue wait, prefill, and decode before
-   making deeper queue-sensitive scheduler changes.
+2. Add admission-cap variants only when selecting a production backpressure
+   target; compare delivery ratio, dropped demand, p95 queue delay, and p95
+   request latency rather than decode time.
 3. Use `./scripts/experiment summarize-reports --experiment kv-cache` after each
    batch to keep the latest case/profile comparison visible.
 
