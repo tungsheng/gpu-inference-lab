@@ -109,7 +109,7 @@ write_stub kubectl \
 "  *) printf 'unexpected kubectl command: %s\n' \"\$*\" >&2; exit 1 ;;" \
 "esac"
 
-run_and_capture env PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" /bin/bash "${REPO_ROOT}/scripts/down" --cleanup-orphan-enis -auto-approve
+run_and_capture env PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" /bin/bash "${REPO_ROOT}/scripts/down" -auto-approve
 
 assert_status 0 "${COMMAND_STATUS}" "scripts/down should remove the platform stack and destroy terraform state"
 assert_contains "${COMMAND_OUTPUT}" "OK 4/8 remove inference and load artifacts" "down should remove runtime artifacts first"

@@ -9,7 +9,7 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "${SCRIPT_DIR}/lib/destroy-recovery.sh"
 
 TOTAL_STAGES=8
-CLEANUP_ORPHAN_NETWORK_DEPENDENCIES=0
+CLEANUP_ORPHAN_NETWORK_DEPENDENCIES=1
 ORPHAN_ENI_DELETE_COUNT=0
 ORPHAN_SECURITY_GROUP_DELETE_COUNT=0
 TERRAFORM_ONLY=0
@@ -18,13 +18,12 @@ DESTROY_ARGS=()
 usage() {
   cat <<EOF
 Usage:
-  ./scripts/down [--cleanup-orphan-enis|--cleanup-orphan-network-dependencies] [--terraform-only|--skip-kubernetes-cleanup] [terraform destroy args]
+  ./scripts/down [--cleanup-orphan-enis|--cleanup-orphan-network-dependencies|--skip-orphan-network-cleanup] [--terraform-only|--skip-kubernetes-cleanup] [terraform destroy args]
 
 Examples:
   ./scripts/down
   ./scripts/down -auto-approve
-  ./scripts/down --cleanup-orphan-enis -auto-approve
-  ./scripts/down --cleanup-orphan-network-dependencies -auto-approve
+  ./scripts/down --skip-orphan-network-cleanup -auto-approve
   ./scripts/down --terraform-only -auto-approve
 EOF
 }
@@ -56,6 +55,9 @@ parse_args() {
         ;;
       --cleanup-orphan-enis|--cleanup-orphan-network-dependencies)
         CLEANUP_ORPHAN_NETWORK_DEPENDENCIES=1
+        ;;
+      --skip-orphan-network-cleanup)
+        CLEANUP_ORPHAN_NETWORK_DEPENDENCIES=0
         ;;
       --terraform-only|--skip-kubernetes-cleanup)
         TERRAFORM_ONLY=1

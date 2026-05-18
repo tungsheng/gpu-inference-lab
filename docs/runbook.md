@@ -148,10 +148,12 @@ kubectl delete -f platform/workloads/validation/gpu-test.yaml
 ./scripts/down -auto-approve
 ./scripts/down --cleanup-orphan-network-dependencies -auto-approve
 ./scripts/down --cleanup-orphan-enis -auto-approve
+./scripts/down --skip-orphan-network-cleanup -auto-approve
 ./scripts/down --terraform-only -auto-approve
 ```
 
-Use `--cleanup-orphan-network-dependencies` only when destroy fails because
-cleanup-eligible CNI ENIs or owned orphan EKS node security groups remain in the
-VPC. Use `--terraform-only` only after cluster cleanup has completed or the API
-is gone.
+Normal teardown automatically retries once after deleting cleanup-eligible
+available CNI ENIs and owned orphan EKS node security groups when Terraform
+destroy fails on a VPC dependency. Use `--skip-orphan-network-cleanup` for a
+diagnostic-only failure, and use `--terraform-only` only after cluster cleanup
+has completed or the API is gone.

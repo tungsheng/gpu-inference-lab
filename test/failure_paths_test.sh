@@ -1174,6 +1174,7 @@ run_down_destroy_dependency_diagnostics_test() {
   write_stub terraform \
 "#!/usr/bin/env bash" \
 "set -euo pipefail" \
+"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/terraform.log\"" \
 "case \"\$2\" in" \
 "  init) exit 0 ;;" \
 "  destroy) exit 1 ;;" \
@@ -1207,7 +1208,7 @@ run_down_destroy_dependency_diagnostics_test() {
 "  *) exit 1 ;;" \
 "esac"
 
-  run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash "${REPO_ROOT}/scripts/down" -auto-approve
+  run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash "${REPO_ROOT}/scripts/down" --skip-orphan-network-cleanup -auto-approve
 
   assert_status 1 "${COMMAND_STATUS}" "down should fail when terraform destroy hits a dependency violation"
   assert_contains "${COMMAND_OUTPUT}" "FAIL 8/8 terraform destroy" "down should report the terraform destroy stage failure"
@@ -1220,8 +1221,11 @@ run_down_destroy_dependency_diagnostics_test() {
   assert_contains "${COMMAND_OUTPUT}" "delete candidate: aws ec2 delete-security-group --region us-west-2 --group-id sg-0529cabea643ce150" "down diagnostics should print the manual security-group cleanup command"
 
   AWS_LOG=$(cat "${TEST_TMPDIR}/aws.log")
+  TERRAFORM_LOG=$(cat "${TEST_TMPDIR}/terraform.log")
   assert_contains "${AWS_LOG}" "ec2 describe-network-interfaces --region us-west-2 --filters Name=vpc-id,Values=vpc-12345 Name=status,Values=available" "down should query available ENIs in the VPC when destroy fails"
   assert_contains "${AWS_LOG}" "ec2 describe-security-groups --region us-west-2 --filters Name=vpc-id,Values=vpc-12345" "down should query non-default security groups in the VPC when destroy fails"
+  assert_not_contains "${AWS_LOG}" "ec2 delete-network-interface" "skip cleanup should leave orphan ENIs for manual recovery"
+  assert_not_contains "${TERRAFORM_LOG}" "destroy --skip-orphan-network-cleanup -auto-approve" "down should not pass the cleanup skip flag through to terraform destroy"
   teardown_test_tmpdir
 }
 
@@ -1337,9 +1341,9 @@ run_down_orphan_eni_cleanup_retry_test() {
 "  *) exit 1 ;;" \
 "esac"
 
-  run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash "${REPO_ROOT}/scripts/down" --cleanup-orphan-enis -auto-approve
+  run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash "${REPO_ROOT}/scripts/down" -auto-approve
 
-  assert_status 0 "${COMMAND_STATUS}" "down should recover from orphan aws-K8S ENIs when cleanup is enabled"
+  assert_status 0 "${COMMAND_STATUS}" "down should recover from orphan aws-K8S ENIs by default"
   assert_contains "${COMMAND_OUTPUT}" "terraform destroy failed; checking for cleanup-eligible orphan network dependencies." "down should explain the cleanup retry path"
   assert_contains "${COMMAND_OUTPUT}" "cleanup eligible: yes" "down diagnostics should mark the orphan aws-K8S ENI as cleanup eligible"
   assert_contains "${COMMAND_OUTPUT}" "cleanup eligible: no" "down diagnostics should leave unrelated ENIs out of automatic cleanup"
@@ -1353,7 +1357,7 @@ run_down_orphan_eni_cleanup_retry_test() {
   DESTROY_COUNT=$(printf '%s\n' "${TERRAFORM_LOG}" | awk 'index($0, "destroy -auto-approve") { count++ } END { print count + 0 }')
 
   assert_eq "2" "${DESTROY_COUNT}" "down should invoke terraform destroy twice around orphan ENI cleanup"
-  assert_not_contains "${TERRAFORM_LOG}" "destroy --cleanup-orphan-enis -auto-approve" "down should not pass the cleanup flag through to terraform destroy during retry"
+  assert_not_contains "${TERRAFORM_LOG}" "destroy --cleanup-orphan-enis -auto-approve" "down should not pass cleanup control flags through to terraform destroy during retry"
   assert_contains "${AWS_LOG}" "ec2 delete-network-interface --region us-west-2 --network-interface-id eni-03c6a627c2ce46d98" "down should delete the cleanup-eligible aws-K8S ENI"
   assert_not_contains "${AWS_LOG}" "ec2 delete-network-interface --region us-west-2 --network-interface-id eni-09999999999999999" "down should not delete unrelated available ENIs automatically"
   assert_contains "${DELETED_ENIS}" "eni-03c6a627c2ce46d98" "down should record the cleanup-eligible ENI deletion"
@@ -1421,9 +1425,9 @@ run_down_orphan_security_group_cleanup_retry_test() {
 "  *) exit 1 ;;" \
 "esac"
 
-  run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash "${REPO_ROOT}/scripts/down" --cleanup-orphan-network-dependencies -auto-approve
+  run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash "${REPO_ROOT}/scripts/down" -auto-approve
 
-  assert_status 0 "${COMMAND_STATUS}" "down should recover from orphan EKS node security groups when cleanup is enabled"
+  assert_status 0 "${COMMAND_STATUS}" "down should recover from orphan EKS node security groups by default"
   assert_contains "${COMMAND_OUTPUT}" "terraform destroy failed; checking for cleanup-eligible orphan network dependencies." "down should explain the broader cleanup retry path"
   assert_contains "${COMMAND_OUTPUT}" "sg-0529cabea643ce150 name=gpu-inference-node-20260502063109959500000005 description=EKS node shared security group" "down diagnostics should include the orphaned node security group"
   assert_contains "${COMMAND_OUTPUT}" "deleted 1 cleanup-eligible orphan EKS node security group(s)." "down should report the automatic security group cleanup count"
@@ -1436,7 +1440,7 @@ run_down_orphan_security_group_cleanup_retry_test() {
   DESTROY_COUNT=$(printf '%s\n' "${TERRAFORM_LOG}" | awk 'index($0, "destroy -auto-approve") { count++ } END { print count + 0 }')
 
   assert_eq "2" "${DESTROY_COUNT}" "down should invoke terraform destroy twice around orphan security group cleanup"
-  assert_not_contains "${TERRAFORM_LOG}" "destroy --cleanup-orphan-network-dependencies -auto-approve" "down should not pass the cleanup flag through to terraform destroy during retry"
+  assert_not_contains "${TERRAFORM_LOG}" "destroy --cleanup-orphan-network-dependencies -auto-approve" "down should not pass cleanup control flags through to terraform destroy during retry"
   assert_contains "${AWS_LOG}" "ec2 delete-security-group --region us-west-2 --group-id sg-0529cabea643ce150" "down should delete the cleanup-eligible orphan EKS node security group"
   assert_not_contains "${AWS_LOG}" "ec2 delete-security-group --region us-west-2 --group-id sg-09999999999999999" "down should not delete unrelated security groups automatically"
   assert_contains "${DELETED_SECURITY_GROUPS}" "sg-0529cabea643ce150" "down should record the cleanup-eligible security group deletion"
