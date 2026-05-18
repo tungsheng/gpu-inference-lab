@@ -1,21 +1,28 @@
 # KV Cache Vs Concurrency Results
 
 Status: `8192/300` long-context rate sweep has a measured saturation knee; the
-1.05-1.20 req/s probes and the `1.25 req/s` admission-control comparison are
-populated. The `1.20 req/s` scheduler follow-up is populated and did not beat
-the default long-context profile.
+1.05-1.20 req/s probes, 1.10-1.20 req/s variance repeats, and the `1.25 req/s`
+admission-control comparison are populated. The `1.20 req/s` scheduler
+follow-up is populated and did not beat the default long-context profile.
 
 The latest populated reports show a single-replica long-context envelope that is
-usable through `1.10 req/s` without waiting, starts queueing at `1.15 req/s`,
-and reaches the practical edge by `1.20 req/s`. It begins queueing hard by
-`1.25 req/s` and is clearly overloaded at `1.50 req/s`. The admission-capped
-`1.25 req/s` run converts that overload into explicit dropped demand and much
-lower tail latency. The latest direct and admission-control reruns also capture
-k6 HTTP phase timing and vLLM server timing: the direct run shows large
-server-side queue and TTFT inflation, while the admission-capped run keeps
-queue delay near zero and leaves decode time roughly unchanged. GPU/DCGM fields
-are now present in the newest reports, so memory and utilization can be used as
-supporting evidence for the long-context story.
+usable through `1.10 req/s` without waiting, starts queueing repeatably at
+`1.15 req/s`, and is clearly queue-dominated by `1.20 req/s`. It begins queueing
+hard by `1.25 req/s` and is clearly overloaded at `1.50 req/s`. The
+admission-capped `1.25 req/s` run converts that overload into explicit dropped
+demand and much lower tail latency. The latest direct and admission-control
+reruns also capture k6 HTTP phase timing and vLLM server timing: the direct run
+shows large server-side queue and TTFT inflation, while the admission-capped run
+keeps queue delay near zero and leaves decode time roughly unchanged. GPU/DCGM
+fields are now present in the newest reports, so memory and utilization can be
+used as supporting evidence for the long-context story.
+
+The variance repeats are low-noise at the decision boundary. The `1.10 req/s`
+r2/r3 runs both delivered all 659 requests with zero waiting and p95 latency
+near 25.23s. The `1.15 req/s` r2/r3 runs both delivered all 689 requests but
+repeated p95 queue delay near 14.02s and peak active pressure near 47-48. The
+`1.20 req/s` r2/r3 runs both delivered all 719 requests but repeated p95 queue
+delay near 36.8s and peak active pressure at 71.
 
 Scheduler variants at `1.20 req/s` did not improve the practical edge. Lowering
 `max_num_seqs` to 16 or 24 increased waiting pressure and tail latency, and
@@ -56,8 +63,14 @@ iterations, high delivery ratio, and no sustained waiting-request pressure.
 | `prompt-8192-output-300-rate-100` | 1.00 req/s | 599 | 0 | 0 / 0 | 11.92s | 12.69s | 0.832 | 249.58 | 0 / 12 / 12 | 90% / 100% | 14.10 / 0.64 GiB | stable |
 | `prompt-8192-output-300-rate-105` | 1.05 req/s | 630 | 0 | 0 / 0 | 14.31s | 15.00s | 0.870 | 260.97 | 0 / 16 / 16 | 80% / 100% | 14.03 / 0.71 GiB | stable |
 | `prompt-8192-output-300-rate-110` | 1.10 req/s | 659 | 0 | 0 / 0 | 21.67s | 21.87s | 0.915 | 274.58 | 0 / 24 / 24 | 82% / 100% | 14.10 / 0.64 GiB | stable but tail rising |
+| `prompt-8192-output-300-rate-110-r2` | 1.10 req/s | 659 | 0 | 0 / 0 | 25.23s | 25.54s | 0.915 | 274.58 | 0 / 28 / 28 | 91% / 100% | 14.09 / 0.65 GiB | stable repeat |
+| `prompt-8192-output-300-rate-110-r3` | 1.10 req/s | 659 | 0 | 0 / 0 | 25.23s | 25.37s | 0.915 | 274.58 | 0 / 28 / 28 | 84% / 100% | 14.10 / 0.64 GiB | stable repeat |
 | `prompt-8192-output-300-rate-115` | 1.15 req/s | 689 | 0 | 0 / 0 | 35.35s | 35.72s | 0.957 | 287.08 | 8 / 32 / 40 | 83% / 100% | 14.10 / 0.64 GiB | queueing begins |
+| `prompt-8192-output-300-rate-115-r2` | 1.15 req/s | 689 | 0 | 0 / 0 | 42.44s | 42.91s | 0.957 | 287.08 | 15 / 32 / 47 | 83% / 100% | 14.10 / 0.64 GiB | queueing repeats |
+| `prompt-8192-output-300-rate-115-r3` | 1.15 req/s | 689 | 0 | 0 / 0 | 42.49s | 42.90s | 0.957 | 287.08 | 16 / 32 / 48 | 85% / 100% | 14.10 / 0.64 GiB | queueing repeats |
 | `prompt-8192-output-300-rate-120` | 1.20 req/s | 719 | 0 | 0 / 0 | 54.35s | 55.25s | 0.999 | 299.58 | 30 / 32 / 62 | 83% / 100% | 14.10 / 0.64 GiB | practical edge |
+| `prompt-8192-output-300-rate-120-r2` | 1.20 req/s | 719 | 0 | 0 / 0 | 62.66s | 63.27s | 0.999 | 299.58 | 39 / 32 / 71 | 89% / 100% | 14.10 / 0.64 GiB | queue-dominated |
+| `prompt-8192-output-300-rate-120-r3` | 1.20 req/s | 719 | 0 | 0 / 0 | 63.40s | 64.03s | 0.999 | 299.58 | 39 / 32 / 71 | 94% / 100% | 14.10 / 0.64 GiB | queue-dominated |
 | `prompt-8192-output-300-rate-125` | 1.25 req/s | 749 | 0 | 0 / 0 | 77.51s | 78.59s | 1.036 | 310.66 | 57 / 32 / 89 | 88% / 100% | 14.10 / 0.64 GiB | saturation begins |
 | `prompt-8192-output-300-rate-125-admission-032` | 1.25 req/s | 690 | 0 | 59 / 0 | 27.98s | 28.02s | 0.958 | 287.50 | 0 / 32 / 32 | 91% / 100% | 14.10 / 0.64 GiB | bounded admission |
 | `prompt-8192-output-300-rate-150` | 1.50 req/s | 744 | 0 | 23 / 132+ | 180.27s | 185.01s | 0.992 | 297.60 | 181 / 32 / 213 | 80% / 100% | 13.98 / 0.76 GiB | overloaded |
@@ -93,9 +106,13 @@ as `n/a`; mounted kubelet pod resources into dcgm-exporter and supplied
 `NODE_NAME`, restoring GPU metrics in the latest reports.
 
 Observed that `1.15 req/s` is the first populated rate to show waiting pressure
-for `8192/300` requests, with peak waiting at 8 and p95 latency near 35s.
-Observed that `1.20 req/s` keeps full delivery but reaches the practical edge,
-with peak waiting at 30, `max_num_seqs=32`, and p95 latency near 54s.
+for `8192/300` requests. The original run showed peak waiting at 8 and p95
+latency near 35s; r2/r3 repeated the queueing signal with peak waiting 15-16,
+p95 server queue delay near 14.02s, and p95 request latency near 42.5s.
+Observed that `1.20 req/s` keeps full delivery but is queue-dominated. The
+original run showed peak waiting at 30 and p95 latency near 54s; r2/r3 repeated
+the practical-edge signal with peak waiting 39, p95 server queue delay near
+36.8s, and p95 request latency near 63s.
 Observed that `1.25 req/s` saturates the vLLM scheduler, with 57 waiting
 requests, p95 latency near 78s, p95 server queue delay near 48s, and GPU max at
 100%.
@@ -129,11 +146,11 @@ for this knee before pursuing scheduler caps further on the current g4dn/vLLM
 
 ## Next Runs
 
-1. Run `rate-110-r2/r3`, `rate-115-r2/r3`, and `rate-120-r2/r3` to quantify
-   variance near the knee.
-2. Add admission-cap variants only when selecting a production backpressure
-   target; compare delivery ratio, dropped demand, p95 queue delay, and p95
-   request latency rather than decode time.
+1. Add admission-cap variants for `1.15-1.20 req/s` only when selecting a
+   production backpressure target; compare delivery ratio, dropped demand, p95
+   queue delay, and p95 request latency rather than decode time.
+2. If an uncapped service-rate target is needed, narrow between `1.10` and
+   `1.15 req/s` before treating the boundary as production-safe.
 3. Use `./scripts/experiment summarize-reports --experiment kv-cache` after each
    batch to keep the latest case/profile comparison visible.
 

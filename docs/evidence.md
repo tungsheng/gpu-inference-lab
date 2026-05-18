@@ -81,9 +81,9 @@ single-replica, one-GPU `long-context` profile:
 | Target rate | Outcome | Signal |
 | ---: | --- | --- |
 | `1.00 req/s` | stable | p95 `11.92s`, peak active `12`, GPU max `100%` |
-| `1.10 req/s` | stable but tail rising | p95 `21.67s`, peak active `24` |
-| `1.15 req/s` | queueing begins | p95 `35.35s`, peak waiting `8`, active `40` |
-| `1.20 req/s` | practical edge | p95 `54.35s`, peak waiting `30`, active `62` |
+| `1.10 req/s` | stable but tail rising | repeats p95 `25.23s`, p95 queue `0.286s`, peak active `28` |
+| `1.15 req/s` | queueing begins | repeats p95 `42.44-42.49s`, p95 queue `14.02s`, peak waiting `15-16`, active `47-48` |
+| `1.20 req/s` | queue-dominated practical edge | repeats p95 `62.66-63.40s`, p95 queue `36.73-36.93s`, peak waiting `39`, active `71` |
 | `1.25 req/s` | saturation begins | p95 `77.51s`, p95 queue `48.11s`, peak waiting `57`, active `89` |
 | `1.25 req/s, active capped at 32` | bounded admission | p95 `27.98s`, p95 queue `0.285s`, dropped `59`, peak active `32` |
 | `1.50 req/s` | overloaded | p95 `180.27s`, dropped/interrupted backlog |
@@ -93,7 +93,9 @@ boundary. A profile can have zero request failures and still miss the SLO
 because queueing and tail latency explode. Capping active long-context work
 turns some demand into explicit backpressure while materially reducing tail
 latency. The server-timing rerun shows the mechanism: admission removes queue
-and TTFT inflation while decode time remains roughly unchanged.
+and TTFT inflation while decode time remains roughly unchanged. The 1.10-1.20
+req/s variance repeats were low-noise, so the knee is stable enough to move from
+discovery sweeps to targeted admission-cap selection.
 
 ### FP8 KV Cache On Current g4dn Path
 
@@ -193,7 +195,7 @@ latency checks.
 | Area | State | Recommendation needs |
 | --- | --- | --- |
 | Active-pressure HPA target | fresh compare and zero-idle sweep reports are complete, but all tested targets were underutilized | repeat under higher pressure or alternate capacity shapes before selecting a production target |
-| Server-side timing breadth | direct and admission-capped `1.25 req/s` long-context reruns now separate queue, prefill, decode, TTFT, inter-token, and e2e timing; older reports still predate those histograms | repeat targeted cases when changing vLLM versions, scheduler profiles, or admission caps |
+| Server-side timing breadth | direct and admission-capped `1.25 req/s` long-context reruns plus 1.10-1.20 variance repeats now separate queue, prefill, decode, TTFT, inter-token, and e2e timing; older reports still predate those histograms | repeat targeted cases when changing vLLM versions, scheduler profiles, or admission caps |
 | Batching scheduler breadth | steady and burst matrices support dynamic default for homogeneous `512/128`; fairness and richer mixed-size cases remain pending | mixed request-size and fairness runs before generalizing scheduler caps |
 | Prefill/decode profile tuning | default and mixed scheduler reports exist; repeat or variant sweeps remain pending | variance checks or new profiles before making broad scheduler claims |
 | Blackwell FP4 | renderers and cost model exist; live p6-b200 attempt blocked by `UnfulfillableCapacity` | BF16, NVFP4, and SmoothQuant runs with accuracy, latency, throughput, memory, and cost |
