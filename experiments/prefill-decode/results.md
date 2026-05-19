@@ -64,14 +64,11 @@ latency budget.
   p95 total request latency for the default prefill-heavy, decode-heavy, and
   mixed runs.
 
-Remaining planned graphs:
+## Boundaries
 
-- case versus p95 inter-token latency
-- case versus p99 request latency
-- case versus streamed chunk throughput
-
-## Conclusion
-
-For the current default profile, prefill-heavy traffic primarily raises TTFT,
-while decode-heavy traffic primarily raises total request latency. The default
-scheduler is the best mixed-profile baseline among the tested variants.
+- The conclusion is scoped to the checked-in default model and vLLM `v0.9.0`
+  path.
+- Scheduler variants were tested only for the mixed case, not for each
+  standalone prefill-heavy or decode-heavy workload.
+- Treat the default scheduler as the mixed-profile baseline until a new profile
+  improves TTFT and total latency together.

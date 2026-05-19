@@ -11,7 +11,7 @@ Use this page as the docs front door.
 | Read current measured conclusions | [Evidence](evidence.md) |
 | Run the lab or recover teardown | [Runbook](runbook.md) |
 | Understand the platform implementation | [Platform reference](platform-reference.md) |
-| Add or inspect experiments | [Experiment catalog](experiment-catalog.md) |
+| Add or inspect experiments | [Experiments](../experiments/README.md), [Experiment catalog](experiment-catalog.md) |
 | Understand generated reports | [Reports](reports/README.md) |
 | See remaining work | [Roadmap](roadmap.md) |
 
@@ -21,5 +21,5 @@ Use this page as the docs front door.
 - Curated conclusions belong in `experiments/<name>/results.md`.
 - Cross-experiment decision narrative belongs in [Evidence](evidence.md).
 - Operator-facing choices belong in [Recommendations](recommendations.md).
-- Experiment definitions, cases, profiles, and validation rules are described in
-  [Experiment catalog](experiment-catalog.md).
+- Experiment directory conventions live in [Experiments](../experiments/README.md);
+  validation rules and catalog status live in [Experiment catalog](experiment-catalog.md).

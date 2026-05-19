@@ -3286,6 +3286,28 @@ default_report_prefix() {
   printf '%s/experiment-%s-%s-%s-%s' "${REPORTS_DIR}" "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}"
 }
 
+resolve_report_paths_for_case() {
+  local experiment_name=$1
+  local case_id=$2
+  local profile_id=$3
+  local timestamp=$4
+  local report_path=$5
+  local json_report_path=$6
+  local report_prefix
+
+  if [[ -z "${report_path}" || -z "${json_report_path}" ]]; then
+    report_prefix=$(default_report_prefix "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}")
+    if [[ -z "${report_path}" ]]; then
+      report_path="${report_prefix}.md"
+    fi
+    if [[ -z "${json_report_path}" ]]; then
+      json_report_path="${report_prefix}.json"
+    fi
+  fi
+
+  printf '%s\n%s\n' "${report_path}" "${json_report_path}"
+}
+
 write_report_files() {
   local experiment_name=$1
   local case_id=$2
@@ -4392,7 +4414,6 @@ render_report_command() {
   local json_report_path=""
   local timestamp
   local generated_at
-  local report_prefix
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -4441,15 +4462,10 @@ render_report_command() {
   timestamp=$(date +%Y%m%d-%H%M%S)
   generated_at=$(utc_timestamp)
 
-  if [[ -z "${report_path}" || -z "${json_report_path}" ]]; then
-    report_prefix=$(default_report_prefix "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}")
-    if [[ -z "${report_path}" ]]; then
-      report_path="${report_prefix}.md"
-    fi
-    if [[ -z "${json_report_path}" ]]; then
-      json_report_path="${report_prefix}.json"
-    fi
-  fi
+  {
+    IFS= read -r report_path
+    IFS= read -r json_report_path
+  } < <(resolve_report_paths_for_case "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}" "${report_path}" "${json_report_path}")
 
   write_report_files "${experiment_name}" "${case_id}" "${profile_id}" "${report_path}" "${json_report_path}" "${generated_at}"
   printf 'Rendered Markdown report: %s\n' "${report_path}"
@@ -4566,7 +4582,6 @@ run_command() {
   local preserve_serving=0
   local preserve_load=0
   local timestamp
-  local report_prefix
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -4621,15 +4636,10 @@ run_command() {
   fi
 
   timestamp=$(date +%Y%m%d-%H%M%S)
-  if [[ -z "${report_path}" || -z "${json_report_path}" ]]; then
-    report_prefix=$(default_report_prefix "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}")
-    if [[ -z "${report_path}" ]]; then
-      report_path="${report_prefix}.md"
-    fi
-    if [[ -z "${json_report_path}" ]]; then
-      json_report_path="${report_prefix}.json"
-    fi
-  fi
+  {
+    IFS= read -r report_path
+    IFS= read -r json_report_path
+  } < <(resolve_report_paths_for_case "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}" "${report_path}" "${json_report_path}")
 
   run_experiment_case "${experiment_name}" "${case_id}" "${profile_id}" "${report_path}" "${json_report_path}" "${preserve_serving}" "${preserve_load}"
 }
@@ -4645,7 +4655,6 @@ run_stream_command() {
   local preserve_serving=0
   local preserve_load=0
   local timestamp
-  local report_prefix
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -4711,15 +4720,10 @@ run_stream_command() {
   require_positive_integer "${stream_concurrency}" "stream concurrency"
 
   timestamp=$(date +%Y%m%d-%H%M%S)
-  if [[ -z "${report_path}" || -z "${json_report_path}" ]]; then
-    report_prefix=$(default_report_prefix "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}")
-    if [[ -z "${report_path}" ]]; then
-      report_path="${report_prefix}.md"
-    fi
-    if [[ -z "${json_report_path}" ]]; then
-      json_report_path="${report_prefix}.json"
-    fi
-  fi
+  {
+    IFS= read -r report_path
+    IFS= read -r json_report_path
+  } < <(resolve_report_paths_for_case "${experiment_name}" "${case_id}" "${profile_id}" "${timestamp}" "${report_path}" "${json_report_path}")
 
   run_stream_case "${experiment_name}" "${case_id}" "${profile_id}" "${samples}" "${stream_concurrency}" "${report_path}" "${json_report_path}" "${preserve_serving}" "${preserve_load}"
 }

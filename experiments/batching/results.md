@@ -64,22 +64,9 @@ The current matrix covers one small homogeneous request shape. Follow-up
 scheduler work should use mixed request sizes or explicit fairness goals before
 adding new caps.
 
-## Result Template
+## Boundaries
 
-For each case/profile pair, record:
-
-- completed requests and failed requests
-- requests/sec
-- generation tokens/sec when completion usage is present
-- p50, p95, and p99 request latency
-- p50 and p95 TTFT when available
-- peak waiting, running, and active requests
-- average and max GPU utilization
-- GPU memory used and free
-
-## Interpretation Template
-
-Summarize whether the added scheduler freedom increased throughput enough to
-justify any tail-latency increase. Be explicit that `dynamic-default` means the
-repo did not set explicit `--max-num-seqs` or `--max-num-batched-tokens`; it
-does not mean batching was disabled.
+- `dynamic-default` means the repo did not set explicit `--max-num-seqs` or
+  `--max-num-batched-tokens`; it does not mean batching was disabled.
+- The current matrix covers homogeneous `512/128` requests. Do not generalize
+  the scheduler conclusion to mixed-size fairness without a dedicated run.

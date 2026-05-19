@@ -24,7 +24,8 @@ Validate catalog edits with:
 
 ## File Contract
 
-Each experiment lives under `experiments/<name>/`:
+Directory conventions live in `experiments/README.md`. Each experiment keeps
+its decision inputs under `experiments/<name>/`:
 
 - `experiment.yaml`: title, question, workload, metrics, and artifact intent
 - `cases.csv`: workload cases
@@ -37,6 +38,7 @@ Each experiment lives under `experiments/<name>/`:
 - `accuracy-cases.csv`: optional accuracy workloads
 - `quantization/`: optional quantization jobs and recipes
 - `results.md`: curated conclusions or a result template
+- `graphs/`: checked-in visuals derived from curated result tables
 
 Shared defaults live in `experiments/_profiles/serving-defaults.csv`.
 Experiment-specific profiles override only the fields that matter to the
@@ -57,6 +59,10 @@ Each completed experiment records the fields relevant to its decision:
 - GPU utilization and memory pressure when available
 - cost, accuracy, and quantization build fields for those experiments
 - practical architecture conclusion
+
+Keep planning templates only in pending experiments. Once a run matrix is
+curated, replace template sections with boundaries and follow-ups that explain
+what the current evidence can and cannot support.
 
 ## Ownership
 

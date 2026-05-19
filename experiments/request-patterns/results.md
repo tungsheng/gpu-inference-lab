@@ -3,13 +3,6 @@
 Curated live-cluster run: 2026-05-15 UTC, one `default` vLLM replica on the
 current g4dn path.
 
-Generated report artifacts:
-
-- `docs/reports/experiment-request-patterns-steady-small-default-20260514-164928.json`
-- `docs/reports/experiment-request-patterns-burst-small-default-20260514-170305.json`
-- `docs/reports/experiment-request-patterns-uneven-size-mix-default-20260514-170637.json`
-- `docs/reports/experiment-request-patterns-spike-to-zero-default-20260514-171308.json`
-
 ## Result Matrix
 
 | Case | Target rate | Successful | Dropped | Delivery ratio | p95 latency | Requests/sec | Tokens/sec | Peak waiting | Peak active | Avg GPU | Max GPU |
@@ -18,6 +11,13 @@ Generated report artifacts:
 | `burst-small` | 18 | 2283 | 327 | 0.874713 | 8.56s | 13.36 | 1709.53 | 1 | 127 | 77.3% | 79% |
 | `uneven-size-mix` | 8 | 2661 | 8 | 0.997003 | 7.87s | 7.39 | 949.51 | 1 | 25 | 65.2% | 84% |
 | `spike-to-zero` | 20 | 1635 | 415 | 0.797561 | 8.45s | 14.10 | 1805.15 | 0 | 128 | 75.5% | 76% |
+
+## Source Reports
+
+- `docs/reports/experiment-request-patterns-steady-small-default-20260514-164928.json`
+- `docs/reports/experiment-request-patterns-burst-small-default-20260514-170305.json`
+- `docs/reports/experiment-request-patterns-uneven-size-mix-default-20260514-170637.json`
+- `docs/reports/experiment-request-patterns-spike-to-zero-default-20260514-171308.json`
 
 ## Interpretation
 

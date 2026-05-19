@@ -3,13 +3,6 @@
 Curated live-cluster run: 2026-05-15 UTC, one serving GPU, cost scope
 `serving-gpu-only`, hourly serving cost `$0.526`.
 
-Generated report artifacts:
-
-- `docs/reports/experiment-cost-steady-cost-efficiency-naive-single-20260514-171552.json`
-- `docs/reports/experiment-cost-steady-cost-efficiency-optimized-batched-20260514-172916.json`
-- `docs/reports/experiment-cost-burst-cost-efficiency-naive-single-20260514-172403.json`
-- `docs/reports/experiment-cost-burst-cost-efficiency-optimized-batched-20260514-173650.json`
-
 ## Result Matrix
 
 | Case | Profile | Status | Successful | Dropped | Failed | p95 latency | p99 latency | SLO passed | Cost | Cost/1K successful | Cost/1M tokens | Avg GPU |
@@ -18,6 +11,13 @@ Generated report artifacts:
 | `steady-cost-efficiency` | `optimized-batched` | complete | 2670 | 0 | 0 | 1.61s | 1.62s | true | $0.052738 | $0.019752 | $0.154313 | 82.5% |
 | `burst-cost-efficiency` | `naive-single` | failed | 227 | 2882 | 43 | 120.00s | 120.00s | false | $0.037259 | $0.164137 | $1.282317 | 86.5% |
 | `burst-cost-efficiency` | `optimized-batched` | complete | 2570 | 677 | 0 | 10.91s | 11.07s | false | $0.032813 | $0.012768 | $0.099748 | n/a |
+
+## Source Reports
+
+- `docs/reports/experiment-cost-steady-cost-efficiency-naive-single-20260514-171552.json`
+- `docs/reports/experiment-cost-steady-cost-efficiency-optimized-batched-20260514-172916.json`
+- `docs/reports/experiment-cost-burst-cost-efficiency-naive-single-20260514-172403.json`
+- `docs/reports/experiment-cost-burst-cost-efficiency-optimized-batched-20260514-173650.json`
 
 ## Interpretation
 
