@@ -21,6 +21,7 @@ Validate catalog edits with:
 | Request pattern utilization | default-profile four-pattern matrix curated | How do steady, burst, uneven-size, and spike-to-zero patterns affect GPU occupancy? | `experiments/request-patterns/` |
 | Cost per useful work | steady and burst cost matrices curated | How much cheaper does the same GPU become when batching increases useful work? | `experiments/cost/` |
 | FP4 quantization optimization | renderable; Blackwell capacity attempt blocked | Does SmoothQuant improve NVFP4 recovery enough to justify its cost? | `experiments/fp4/` |
+| Failure and mitigation drills | scaffolded command surface | Which failures are absorbed by capacity fallback, admission control, or warm serving capacity? | `experiments/failure-mitigation/` |
 
 ## File Contract
 
@@ -37,6 +38,8 @@ its decision inputs under `experiments/<name>/`:
 - `cost-profiles.csv` and `cost-details.csv`: optional cost inputs
 - `accuracy-cases.csv`: optional accuracy workloads
 - `quantization/`: optional quantization jobs and recipes
+- `scenarios.csv`, `mitigations.csv`, and `suites.csv`: optional
+  failure-drill orchestration inputs for `./scripts/failure`
 - `results.md`: curated conclusions or a result template
 - `graphs/`: checked-in visuals derived from curated result tables
 

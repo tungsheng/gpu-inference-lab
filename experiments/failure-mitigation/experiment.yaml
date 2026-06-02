@@ -1,0 +1,58 @@
+# Controlled failure and mitigation experiment catalog.
+
+name: failure-mitigation
+title: Failure And Mitigation Drills
+status: scaffolded
+owner: local
+
+question: Which inference-infra failures are absorbed by capacity fallback, admission control, or warm serving capacity?
+
+serving_profile:
+  defaults: ../_profiles/serving-defaults.csv
+  profiles_file: serving-profiles.csv
+  notes:
+    - Failure scenarios should keep the workload and serving profile stable while changing one failure injector or mitigation.
+    - Capacity-profile mitigations are orchestrated by scripts/failure and scripts/evaluate rather than by vLLM manifest overrides.
+
+workload:
+  generator: k6
+  endpoint: /v1/completions
+  cases_file: cases.csv
+  client_policies_file: client-policies.csv
+  prompt_strategy: approximate-token-target
+
+failure_model:
+  scenarios_file: scenarios.csv
+  mitigations_file: mitigations.csv
+  suites_file: suites.csv
+
+metrics:
+  failure:
+    - trigger_seconds
+    - detection_seconds
+    - replacement_seconds
+    - recovered_ready_seconds
+    - first_successful_response_seconds
+    - recovery_outcome
+  workload:
+    - successful_requests
+    - failed_requests
+    - dropped_iterations
+    - interrupted_iterations
+    - delivery_ratio
+  latency:
+    - p95_request_latency_seconds
+    - p99_request_latency_seconds
+    - p95_estimated_queue_wait_seconds
+  capacity:
+    - first_gpu_capacity_type
+    - second_gpu_capacity_type
+    - recovery_gpu_capacity_type
+    - active_nodeclaims
+  gpu:
+    - average_gpu_utilization_percent
+    - max_gpu_utilization_percent
+
+artifacts:
+  readme: README.md
+  results: results.md

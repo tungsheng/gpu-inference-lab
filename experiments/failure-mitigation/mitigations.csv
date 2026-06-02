@@ -1,0 +1,7 @@
+mitigation_id,profile,policy,workload_case,capacity_mode,description
+baseline,zero-idle,running,burst-direct,spot-preferred,current zero-idle running-request baseline
+warm-1,warm-1,running,steady-recovery,spot-preferred,keep one GPU capacity baseline while using running-request HPA
+active-pressure,zero-idle,active-pressure,burst-direct,spot-preferred,use waiting plus running pressure for HPA scale-out
+warm-1-active-pressure,warm-1,active-pressure,steady-recovery,spot-preferred,combine warm baseline with active-pressure HPA
+bounded-admission,zero-idle,active-pressure,burst-queued,spot-preferred,use queued client load as bounded admission approximation
+ondemand-fallback,zero-idle,active-pressure,burst-queued,on-demand-fallback,keep on-demand path available for degraded spot capacity

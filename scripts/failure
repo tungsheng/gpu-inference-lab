@@ -1,0 +1,1071 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/_common.sh"
+
+FAILURE_EXPERIMENT_NAME="failure-mitigation"
+FAILURE_DIR="${REPO_ROOT}/experiments/${FAILURE_EXPERIMENT_NAME}"
+SCENARIOS_PATH="${FAILURE_DIR}/scenarios.csv"
+MITIGATIONS_PATH="${FAILURE_DIR}/mitigations.csv"
+SUITES_PATH="${FAILURE_DIR}/suites.csv"
+REPORTS_DIR="${FAILURE_REPORTS_DIR:-${REPO_ROOT}/docs/reports}"
+EVALUATE_COMMAND="${FAILURE_EVALUATE_COMMAND:-${SCRIPT_DIR}/evaluate}"
+EXPERIMENT_COMMAND="${FAILURE_EXPERIMENT_COMMAND:-${SCRIPT_DIR}/experiment}"
+FAILURE_RUN_LABEL_KEY="gpu-inference-lab/run-id"
+
+SCENARIO_OPTION=""
+MITIGATION_OPTION=""
+SUITE_OPTION=""
+WORKLOAD_OVERRIDE=""
+PROFILE_OVERRIDE=""
+POLICY_OVERRIDE=""
+SERVING_PROFILE_OVERRIDE=""
+RUN_ID=""
+DRY_RUN=0
+USER_REPORT_PATH=""
+USER_JSON_REPORT_PATH=""
+SKIP_REPORT_DIR_CREATE=0
+
+SCENARIO_ID=""
+SCENARIO_LAYER=""
+SCENARIO_RUNNER=""
+SCENARIO_RESILIENCE=""
+SCENARIO_EXPERIMENT=""
+SCENARIO_DEFAULT_CASE=""
+SCENARIO_INJECTOR=""
+SCENARIO_RECOVERY_GATE=""
+SCENARIO_MUTATES=""
+SCENARIO_DESCRIPTION=""
+
+MITIGATION_ID=""
+MITIGATION_PROFILE=""
+MITIGATION_POLICY=""
+MITIGATION_WORKLOAD_CASE=""
+MITIGATION_CAPACITY_MODE=""
+MITIGATION_DESCRIPTION=""
+
+EFFECTIVE_PROFILE=""
+EFFECTIVE_POLICY=""
+EFFECTIVE_WORKLOAD=""
+EFFECTIVE_SERVING_PROFILE=""
+REPORT_PATH=""
+JSON_REPORT_PATH=""
+INJECTOR_TARGET_KIND=""
+INJECTOR_TARGET_NAME=""
+INJECTOR_TRIGGER_TIME=""
+INJECTOR_REPLACEMENT_TIME=""
+INJECTOR_READY_TIME=""
+INJECTOR_RESPONSE_TIME=""
+
+usage() {
+  cat <<EOF
+Usage:
+  ./scripts/failure list [scenarios|mitigations|suites]
+  ./scripts/failure show scenario <scenario-id>
+  ./scripts/failure show mitigation <mitigation-id>
+  ./scripts/failure show suite <suite-id>
+  ./scripts/failure preflight --scenario id --mitigation id [--workload case] [--profile zero-idle|warm-1] [--policy running|active-pressure]
+  ./scripts/failure run --scenario id --mitigation id [--workload case] [--profile zero-idle|warm-1] [--policy running|active-pressure] [--serving-profile profile] [--run-id id] [--report path] [--json-report path] [--dry-run]
+  ./scripts/failure matrix --suite id [--profile zero-idle|warm-1] [--dry-run]
+  ./scripts/failure cleanup --run-id id [--dry-run]
+
+Examples:
+  ./scripts/failure list
+  ./scripts/failure show scenario spot-interruption
+  ./scripts/failure preflight --scenario spot-interruption --mitigation ondemand-fallback
+  ./scripts/failure run --scenario spot-interruption --mitigation ondemand-fallback --dry-run
+  ./scripts/failure matrix --suite capacity-recovery --dry-run
+EOF
+}
+
+die() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+require_option_value() {
+  local option_name=$1
+  local option_value=${2-}
+
+  if [[ -z "${option_value}" || "${option_value}" == -* ]]; then
+    die "${option_name} requires a value"
+  fi
+
+  printf '%s\n' "${option_value}"
+}
+
+require_name() {
+  local value=$1
+  local label=$2
+
+  if [[ ! "${value}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    die "Invalid ${label}: ${value}"
+  fi
+}
+
+require_label_value() {
+  local value=$1
+  local label=$2
+
+  if [[ ! "${value}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+    die "Invalid ${label}: ${value}"
+  fi
+
+  if ((${#value} > 63)); then
+    die "Invalid ${label}: ${value} is longer than 63 characters"
+  fi
+}
+
+csv_field_count() {
+  local csv_path=$1
+  local expected_count=$2
+
+  [[ -f "${csv_path}" ]] || die "Missing failure catalog file: ${csv_path}"
+
+  awk -F',' -v expected_count="${expected_count}" '
+    /^[[:space:]]*$/ { next }
+    $1 ~ /^#/ { next }
+    NF != expected_count {
+      printf "%s:%d expected %d CSV fields but found %d\n", FILENAME, NR, expected_count, NF > "/dev/stderr"
+      failed=1
+    }
+    END { exit failed ? 1 : 0 }
+  ' "${csv_path}" || die "Invalid failure catalog shape: ${csv_path}"
+}
+
+validate_failure_catalog() {
+  local row_id
+  local row_case
+  local row_experiment
+  local row_mitigation_id
+  local row_runner
+  local row_scenario_id
+  local row_policy
+  local row_suite_id
+  local row_workload
+  local _rest
+
+  csv_field_count "${SCENARIOS_PATH}" 10
+  csv_field_count "${MITIGATIONS_PATH}" 6
+  csv_field_count "${SUITES_PATH}" 6
+
+  while IFS=',' read -r row_id _layer row_runner _resilience row_experiment row_case _injector _gate _mutates _description; do
+    if [[ -z "${row_id}" || "${row_id}" == "scenario_id" || "${row_id}" == \#* ]]; then
+      continue
+    fi
+
+    require_name "${row_id}" "scenario id"
+    require_name "${row_experiment}" "scenario experiment"
+    require_name "${row_case}" "scenario default case"
+    case "${row_runner}" in
+      evaluate-resilience|experiment-run|kubectl-injector)
+        ;;
+      *)
+        die "Invalid failure scenario runner: ${row_runner}"
+        ;;
+    esac
+  done < "${SCENARIOS_PATH}"
+
+  while IFS=',' read -r row_id _profile row_policy row_workload _capacity_mode _description; do
+    if [[ -z "${row_id}" || "${row_id}" == "mitigation_id" || "${row_id}" == \#* ]]; then
+      continue
+    fi
+
+    require_name "${row_id}" "mitigation id"
+    require_name "${row_workload}" "mitigation workload case"
+    case "${row_policy}" in
+      running|active-pressure)
+        ;;
+      *)
+        die "Invalid mitigation policy: ${row_policy}"
+      ;;
+    esac
+  done < "${MITIGATIONS_PATH}"
+
+  while IFS=',' read -r row_suite_id row_scenario_id row_mitigation_id row_workload _profile _description; do
+    if [[ -z "${row_suite_id}" || "${row_suite_id}" == "suite_id" || "${row_suite_id}" == \#* ]]; then
+      continue
+    fi
+
+    require_name "${row_suite_id}" "suite id"
+    load_scenario "${row_scenario_id}" >/dev/null
+    load_mitigation "${row_mitigation_id}" >/dev/null
+    require_name "${row_workload}" "suite workload case"
+  done < "${SUITES_PATH}"
+}
+
+load_scenario() {
+  local requested_id=$1
+  local row_id
+
+  require_name "${requested_id}" "scenario id"
+
+  while IFS=',' read -r row_id SCENARIO_LAYER SCENARIO_RUNNER SCENARIO_RESILIENCE SCENARIO_EXPERIMENT SCENARIO_DEFAULT_CASE SCENARIO_INJECTOR SCENARIO_RECOVERY_GATE SCENARIO_MUTATES SCENARIO_DESCRIPTION; do
+    if [[ -z "${row_id}" || "${row_id}" == "scenario_id" || "${row_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "${row_id}" == "${requested_id}" ]]; then
+      SCENARIO_ID=${row_id}
+      return 0
+    fi
+  done < "${SCENARIOS_PATH}"
+
+  die "Unknown failure scenario: ${requested_id}"
+}
+
+load_mitigation() {
+  local requested_id=$1
+  local row_id
+
+  require_name "${requested_id}" "mitigation id"
+
+  while IFS=',' read -r row_id MITIGATION_PROFILE MITIGATION_POLICY MITIGATION_WORKLOAD_CASE MITIGATION_CAPACITY_MODE MITIGATION_DESCRIPTION; do
+    if [[ -z "${row_id}" || "${row_id}" == "mitigation_id" || "${row_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "${row_id}" == "${requested_id}" ]]; then
+      MITIGATION_ID=${row_id}
+      return 0
+    fi
+  done < "${MITIGATIONS_PATH}"
+
+  die "Unknown failure mitigation: ${requested_id}"
+}
+
+resolve_plan() {
+  EFFECTIVE_PROFILE=${PROFILE_OVERRIDE:-${MITIGATION_PROFILE}}
+  EFFECTIVE_POLICY=${POLICY_OVERRIDE:-${MITIGATION_POLICY}}
+  EFFECTIVE_WORKLOAD=${WORKLOAD_OVERRIDE:-${MITIGATION_WORKLOAD_CASE:-${SCENARIO_DEFAULT_CASE}}}
+  EFFECTIVE_SERVING_PROFILE=${SERVING_PROFILE_OVERRIDE:-default}
+
+  case "${EFFECTIVE_PROFILE}" in
+    zero-idle|warm-1)
+      ;;
+    *)
+      die "Unsupported failure capacity profile: ${EFFECTIVE_PROFILE}"
+      ;;
+  esac
+
+  case "${EFFECTIVE_POLICY}" in
+    running|active-pressure)
+      ;;
+    *)
+      die "Unsupported failure policy: ${EFFECTIVE_POLICY}"
+      ;;
+  esac
+
+  require_name "${EFFECTIVE_WORKLOAD}" "workload case"
+  require_name "${EFFECTIVE_SERVING_PROFILE}" "serving profile id"
+}
+
+require_plan_options() {
+  [[ -n "${SCENARIO_OPTION}" ]] || die "--scenario is required"
+  [[ -n "${MITIGATION_OPTION}" ]] || die "--mitigation is required"
+
+  validate_failure_catalog
+  load_scenario "${SCENARIO_OPTION}"
+  load_mitigation "${MITIGATION_OPTION}"
+  resolve_plan
+}
+
+ensure_run_id() {
+  if [[ -z "${RUN_ID}" ]]; then
+    RUN_ID=$(date +%Y%m%d-%H%M%S)
+  fi
+
+  require_label_value "${RUN_ID}" "run id"
+}
+
+ensure_report_paths() {
+  ensure_run_id
+  if [[ "${DRY_RUN}" != "1" && "${SKIP_REPORT_DIR_CREATE}" != "1" ]]; then
+    mkdir -p "${REPORTS_DIR}"
+  fi
+  REPORT_PATH=${USER_REPORT_PATH:-${REPORTS_DIR}/failure-${SCENARIO_ID}-${MITIGATION_ID}-${RUN_ID}.md}
+  JSON_REPORT_PATH=${USER_JSON_REPORT_PATH:-${REPORTS_DIR}/failure-${SCENARIO_ID}-${MITIGATION_ID}-${RUN_ID}.json}
+}
+
+render_shell_command() {
+  local part
+
+  for part in "$@"; do
+    printf '%q ' "${part}"
+  done
+  printf '\n'
+}
+
+print_plan_command() {
+  case "${SCENARIO_RUNNER}" in
+    evaluate-resilience)
+      render_shell_command \
+        "${EVALUATE_COMMAND}" \
+        --profile "${EFFECTIVE_PROFILE}" \
+        --policy "${EFFECTIVE_POLICY}" \
+        --resilience "${SCENARIO_RESILIENCE}" \
+        --report "${REPORT_PATH:-<report-path>}" \
+        --json-report "${JSON_REPORT_PATH:-<json-report-path>}"
+      ;;
+    experiment-run)
+      render_shell_command \
+        "${EXPERIMENT_COMMAND}" \
+        run \
+        --experiment "${SCENARIO_EXPERIMENT}" \
+        --case "${EFFECTIVE_WORKLOAD}" \
+        --profile "${EFFECTIVE_SERVING_PROFILE}" \
+        --report "${REPORT_PATH:-<report-path>}" \
+        --json-report "${JSON_REPORT_PATH:-<json-report-path>}"
+      ;;
+    kubectl-injector)
+      printf 'built-in injector %q for %q\n' "${SCENARIO_INJECTOR}" "${SCENARIO_ID}"
+      ;;
+  esac
+}
+
+print_plan() {
+  printf 'Failure drill plan\n'
+  printf '  Scenario: %s (%s)\n' "${SCENARIO_ID}" "${SCENARIO_LAYER}"
+  printf '  Description: %s\n' "${SCENARIO_DESCRIPTION}"
+  printf '  Mitigation: %s\n' "${MITIGATION_ID}"
+  printf '  Mitigation detail: %s\n' "${MITIGATION_DESCRIPTION}"
+  printf '  Runner: %s\n' "${SCENARIO_RUNNER}"
+  printf '  Injector: %s\n' "${SCENARIO_INJECTOR}"
+  printf '  Workload: %s\n' "${EFFECTIVE_WORKLOAD}"
+  printf '  Capacity profile: %s\n' "${EFFECTIVE_PROFILE}"
+  printf '  Policy: %s\n' "${EFFECTIVE_POLICY}"
+  printf '  Mutates: %s\n' "${SCENARIO_MUTATES}"
+  printf '  Recovery gate: %s\n' "${SCENARIO_RECOVERY_GATE}"
+  case "${SCENARIO_RUNNER}" in
+    evaluate-resilience)
+      printf '  Setup: delegated to scripts/evaluate\n'
+      ;;
+    experiment-run)
+      printf '  Setup: delegated to scripts/experiment run\n'
+      ;;
+    kubectl-injector)
+      printf '  Setup: requires an existing serving stack that matches the mitigation\n'
+      ;;
+  esac
+  printf '  Command: '
+  print_plan_command
+}
+
+list_scenarios() {
+  awk -F',' '
+    NR == 1 { next }
+    NF > 0 && $1 !~ /^#/ {
+      printf "%-26s %-10s %-20s %s\n", $1, $2, $3, $10
+    }
+  ' "${SCENARIOS_PATH}"
+}
+
+list_mitigations() {
+  awk -F',' '
+    NR == 1 { next }
+    NF > 0 && $1 !~ /^#/ {
+      printf "%-24s %-10s %-16s %-18s %s\n", $1, $2, $3, $4, $6
+    }
+  ' "${MITIGATIONS_PATH}"
+}
+
+list_suites() {
+  awk -F',' '
+    NR == 1 { next }
+    NF > 0 && $1 !~ /^#/ {
+      printf "%-20s %-26s %-24s %-18s %s\n", $1, $2, $3, $4, $6
+    }
+  ' "${SUITES_PATH}"
+}
+
+list_command() {
+  local kind=${1:-all}
+
+  validate_failure_catalog
+
+  case "${kind}" in
+    all)
+      printf 'Scenarios:\n'
+      list_scenarios
+      printf '\nMitigations:\n'
+      list_mitigations
+      printf '\nSuites:\n'
+      list_suites
+      ;;
+    scenarios)
+      list_scenarios
+      ;;
+    mitigations)
+      list_mitigations
+      ;;
+    suites)
+      list_suites
+      ;;
+    *)
+      die "Unsupported list kind: ${kind}"
+      ;;
+  esac
+}
+
+show_scenario() {
+  load_scenario "$1"
+  printf 'Scenario: %s\n' "${SCENARIO_ID}"
+  printf 'Layer: %s\n' "${SCENARIO_LAYER}"
+  printf 'Runner: %s\n' "${SCENARIO_RUNNER}"
+  printf 'Resilience mode: %s\n' "${SCENARIO_RESILIENCE}"
+  printf 'Default experiment: %s\n' "${SCENARIO_EXPERIMENT}"
+  printf 'Default workload: %s\n' "${SCENARIO_DEFAULT_CASE}"
+  printf 'Injector: %s\n' "${SCENARIO_INJECTOR}"
+  printf 'Mutates: %s\n' "${SCENARIO_MUTATES}"
+  printf 'Recovery gate: %s\n' "${SCENARIO_RECOVERY_GATE}"
+  printf 'Description: %s\n' "${SCENARIO_DESCRIPTION}"
+}
+
+show_mitigation() {
+  load_mitigation "$1"
+  printf 'Mitigation: %s\n' "${MITIGATION_ID}"
+  printf 'Capacity profile: %s\n' "${MITIGATION_PROFILE}"
+  printf 'Policy: %s\n' "${MITIGATION_POLICY}"
+  printf 'Workload case: %s\n' "${MITIGATION_WORKLOAD_CASE}"
+  printf 'Capacity mode: %s\n' "${MITIGATION_CAPACITY_MODE}"
+  printf 'Description: %s\n' "${MITIGATION_DESCRIPTION}"
+}
+
+show_suite() {
+  local requested_id=$1
+  local row_suite_id
+  local found=0
+
+  require_name "${requested_id}" "suite id"
+
+  printf 'Suite: %s\n' "${requested_id}"
+  while IFS=',' read -r row_suite_id row_scenario_id row_mitigation_id row_workload row_profile row_description; do
+    if [[ -z "${row_suite_id}" || "${row_suite_id}" == "suite_id" || "${row_suite_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "${row_suite_id}" != "${requested_id}" ]]; then
+      continue
+    fi
+
+    found=1
+    printf '%s scenario=%s mitigation=%s workload=%s profile=%s :: %s\n' \
+      "-" \
+      "${row_scenario_id}" \
+      "${row_mitigation_id}" \
+      "${row_workload}" \
+      "${row_profile}" \
+      "${row_description}"
+  done < "${SUITES_PATH}"
+
+  [[ "${found}" == "1" ]] || die "Unknown failure suite: ${requested_id}"
+}
+
+show_command() {
+  local kind=${1:-}
+  local id=${2:-}
+
+  validate_failure_catalog
+
+  [[ -n "${kind}" && -n "${id}" ]] || die "show requires a kind and id"
+
+  case "${kind}" in
+    scenario)
+      show_scenario "${id}"
+      ;;
+    mitigation)
+      show_mitigation "${id}"
+      ;;
+    suite)
+      show_suite "${id}"
+      ;;
+    *)
+      die "Unsupported show kind: ${kind}"
+      ;;
+  esac
+}
+
+parse_plan_options() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --scenario)
+        SCENARIO_OPTION=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --mitigation)
+        MITIGATION_OPTION=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --workload)
+        WORKLOAD_OVERRIDE=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --profile)
+        PROFILE_OVERRIDE=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --policy)
+        POLICY_OVERRIDE=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --serving-profile)
+        SERVING_PROFILE_OVERRIDE=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --run-id)
+        RUN_ID=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --report)
+        USER_REPORT_PATH=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --json-report)
+        USER_JSON_REPORT_PATH=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --dry-run)
+        DRY_RUN=1
+        shift
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+}
+
+preflight_command() {
+  parse_plan_options "$@"
+  require_plan_options
+  SKIP_REPORT_DIR_CREATE=1
+  ensure_report_paths
+  print_plan
+  printf '\nPreflight checks\n'
+  printf '  Catalog: ok\n'
+
+  case "${SCENARIO_RUNNER}" in
+    evaluate-resilience)
+      [[ -x "${EVALUATE_COMMAND}" ]] || die "Evaluate command is not executable: ${EVALUATE_COMMAND}"
+      printf '  Runner command: %s\n' "${EVALUATE_COMMAND}"
+      ;;
+    experiment-run)
+      [[ -x "${EXPERIMENT_COMMAND}" ]] || die "Experiment command is not executable: ${EXPERIMENT_COMMAND}"
+      printf '  Runner command: %s\n' "${EXPERIMENT_COMMAND}"
+      ;;
+    kubectl-injector)
+      require_commands kubectl curl date
+      printf '  Required commands: kubectl curl date\n'
+      printf '  Cluster mutation: not executed during preflight\n'
+      ;;
+  esac
+
+  printf '  Report path: %s\n' "${REPORT_PATH}"
+  printf '  JSON report path: %s\n' "${JSON_REPORT_PATH}"
+}
+
+json_escape() {
+  local value=${1:-}
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  printf '"%s"' "${value}"
+}
+
+write_injector_report() {
+  local status=$1
+  local target_kind=$2
+  local target_name=$3
+  local trigger_time=$4
+  local replacement_time=$5
+  local ready_time=$6
+  local response_time=$7
+  local outcome=$8
+  local note=$9
+  local generated_at
+
+  generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  cat > "${REPORT_PATH}" <<EOF
+# Failure Drill Report
+
+Status: ${status}
+
+## Drill
+
+| Field | Value |
+| --- | --- |
+| Run ID | ${RUN_ID} |
+| Scenario | ${SCENARIO_ID} |
+| Mitigation | ${MITIGATION_ID} |
+| Runner | ${SCENARIO_RUNNER} |
+| Injector | ${SCENARIO_INJECTOR} |
+| Target | ${target_kind}/${target_name} |
+| Recovery gate | ${SCENARIO_RECOVERY_GATE} |
+| Outcome | ${outcome} |
+
+## Timeline
+
+| Event | Epoch seconds |
+| --- | ---: |
+| Trigger | ${trigger_time:-n/a} |
+| Replacement observed | ${replacement_time:-n/a} |
+| Ready recovered | ${ready_time:-n/a} |
+| Public response recovered | ${response_time:-n/a} |
+
+## Notes
+
+- ${note}
+EOF
+
+  cat > "${JSON_REPORT_PATH}" <<EOF
+{
+  "schema_version": "failure-drill-report/v1",
+  "generated_at": $(json_escape "${generated_at}"),
+  "status": $(json_escape "${status}"),
+  "run_id": $(json_escape "${RUN_ID}"),
+  "scenario": $(json_escape "${SCENARIO_ID}"),
+  "mitigation": $(json_escape "${MITIGATION_ID}"),
+  "runner": $(json_escape "${SCENARIO_RUNNER}"),
+  "injector": $(json_escape "${SCENARIO_INJECTOR}"),
+  "target": {
+    "kind": $(json_escape "${target_kind}"),
+    "name": $(json_escape "${target_name}")
+  },
+  "recovery_gate": $(json_escape "${SCENARIO_RECOVERY_GATE}"),
+  "timeline": {
+    "trigger_seconds": ${trigger_time:-null},
+    "replacement_seconds": ${replacement_time:-null},
+    "recovered_ready_seconds": ${ready_time:-null},
+    "first_successful_response_seconds": ${response_time:-null}
+  },
+  "outcome": $(json_escape "${outcome}"),
+  "note": $(json_escape "${note}")
+}
+EOF
+}
+
+first_vllm_pod_name() {
+  kubectl get pods \
+    -n "${APP_NAMESPACE}" \
+    -l "app=${GPU_INFERENCE_DEPLOYMENT_NAME}" \
+    --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | sed -n '1p'
+}
+
+oldest_gpu_node_name() {
+  kubectl get nodes \
+    -l 'workload=gpu' \
+    --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | sed -n '1p'
+}
+
+nodeclaim_for_node() {
+  local node_name=$1
+
+  kubectl get nodeclaims \
+    -l "${KARPENTER_SERVING_NODEPOOL_SELECTOR}" \
+    -o custom-columns='NAME:.metadata.name,NODE:.status.nodeName' \
+    --no-headers 2>/dev/null | awk -v node_name="${node_name}" '$2 == node_name { print $1; exit }'
+}
+
+nodeclaim_exists() {
+  local nodeclaim_name=$1
+
+  kubectl get nodeclaim "${nodeclaim_name}" >/dev/null 2>&1
+}
+
+node_exists() {
+  local node_name=$1
+
+  kubectl get node "${node_name}" >/dev/null 2>&1
+}
+
+wait_for_deleted_nodeclaim_or_node() {
+  local target_kind=$1
+  local target_name=$2
+  local timeout_seconds=$3
+  local start_time
+
+  start_time=$(date +%s)
+
+  while true; do
+    case "${target_kind}" in
+      nodeclaim)
+        if ! nodeclaim_exists "${target_name}"; then
+          return 0
+        fi
+        ;;
+      node)
+        if ! node_exists "${target_name}"; then
+          return 0
+        fi
+        ;;
+      *)
+        die "Unsupported deletion wait target kind: ${target_kind}"
+        ;;
+    esac
+
+    if (( $(date +%s) - start_time >= timeout_seconds )); then
+      printf 'Timed out waiting for %s/%s to be deleted\n' "${target_kind}" "${target_name}" >&2
+      return 1
+    fi
+
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+}
+
+deployment_desired_replicas() {
+  local desired
+
+  desired=$(kubectl get deployment "${GPU_INFERENCE_DEPLOYMENT_NAME}" \
+    -n "${APP_NAMESPACE}" \
+    -o jsonpath='{.spec.replicas}' 2>/dev/null | tr -d '[:space:]')
+
+  printf '%s\n' "${desired:-1}"
+}
+
+wait_for_public_recovery() {
+  local public_url
+
+  public_url=$(public_inference_url "$(wait_for_ingress_hostname "${INGRESS_HOSTNAME_TIMEOUT_SECONDS}")") || return 1
+  wait_for_http_200 "${public_url}" "${VERIFY_RESPONSE_TIMEOUT_SECONDS}"
+}
+
+run_pod_delete_injector() {
+  local target_pod
+  local desired_replicas
+  local trigger_time
+  local ready_time
+  local response_time
+
+  target_pod=$(first_vllm_pod_name)
+  [[ -n "${target_pod}" ]] || die "No vLLM pod found in namespace ${APP_NAMESPACE}"
+  INJECTOR_TARGET_KIND="pod"
+  INJECTOR_TARGET_NAME=${target_pod}
+
+  desired_replicas=$(deployment_desired_replicas)
+  trigger_time=$(date +%s)
+  INJECTOR_TRIGGER_TIME=${trigger_time}
+
+  kubectl label pod "${target_pod}" -n "${APP_NAMESPACE}" "${FAILURE_RUN_LABEL_KEY}=${RUN_ID}" --overwrite >/dev/null 2>&1 || true
+  kubectl delete pod "${target_pod}" -n "${APP_NAMESPACE}" || return 1
+  wait_for_deployment_ready_replicas_at_least "${APP_NAMESPACE}" "${GPU_INFERENCE_DEPLOYMENT_NAME}" "${desired_replicas}" "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  ready_time=$(date +%s)
+  INJECTOR_REPLACEMENT_TIME=${ready_time}
+  INJECTOR_READY_TIME=${ready_time}
+  wait_for_public_recovery || return 1
+  response_time=$(date +%s)
+  INJECTOR_RESPONSE_TIME=${response_time}
+
+  write_injector_report \
+    "complete" \
+    "pod" \
+    "${target_pod}" \
+    "${trigger_time}" \
+    "${ready_time}" \
+    "${ready_time}" \
+    "${response_time}" \
+    "serving-recovered" \
+    "Deleted the oldest vLLM pod and observed deployment readiness plus a public completion response."
+}
+
+run_gpu_node_loss_injector() {
+  local target_node
+  local target_nodeclaim
+  local desired_replicas
+  local initial_gpu_nodes
+  local trigger_time
+  local replacement_time
+  local ready_time
+  local response_time
+  local target_kind
+  local target_name
+
+  target_node=$(oldest_gpu_node_name)
+  [[ -n "${target_node}" ]] || die "No GPU node found with label workload=gpu"
+
+  target_nodeclaim=$(nodeclaim_for_node "${target_node}")
+  desired_replicas=$(deployment_desired_replicas)
+  initial_gpu_nodes=$(all_gpu_node_count)
+  trigger_time=$(date +%s)
+
+  if [[ -n "${target_nodeclaim}" ]]; then
+    target_kind="nodeclaim"
+    target_name=${target_nodeclaim}
+    INJECTOR_TARGET_KIND=${target_kind}
+    INJECTOR_TARGET_NAME=${target_name}
+    INJECTOR_TRIGGER_TIME=${trigger_time}
+    kubectl label nodeclaim "${target_nodeclaim}" "${FAILURE_RUN_LABEL_KEY}=${RUN_ID}" --overwrite >/dev/null 2>&1 || true
+    kubectl delete nodeclaim "${target_nodeclaim}" || return 1
+  else
+    target_kind="node"
+    target_name=${target_node}
+    INJECTOR_TARGET_KIND=${target_kind}
+    INJECTOR_TARGET_NAME=${target_name}
+    INJECTOR_TRIGGER_TIME=${trigger_time}
+    kubectl label node "${target_node}" "${FAILURE_RUN_LABEL_KEY}=${RUN_ID}" --overwrite >/dev/null 2>&1 || true
+    kubectl delete node "${target_node}" || return 1
+  fi
+
+  wait_for_deleted_nodeclaim_or_node "${target_kind}" "${target_name}" "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  wait_for_all_gpu_nodes_at_least "${initial_gpu_nodes}" "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  replacement_time=$(date +%s)
+  INJECTOR_REPLACEMENT_TIME=${replacement_time}
+  wait_for_deployment_ready_replicas_at_least "${APP_NAMESPACE}" "${GPU_INFERENCE_DEPLOYMENT_NAME}" "${desired_replicas}" "${EVALUATE_SCALE_TIMEOUT_SECONDS}" || return 1
+  ready_time=$(date +%s)
+  INJECTOR_READY_TIME=${ready_time}
+  wait_for_public_recovery || return 1
+  response_time=$(date +%s)
+  INJECTOR_RESPONSE_TIME=${response_time}
+
+  write_injector_report \
+    "complete" \
+    "${target_kind}" \
+    "${target_name}" \
+    "${trigger_time}" \
+    "${replacement_time}" \
+    "${ready_time}" \
+    "${response_time}" \
+    "serving-recovered" \
+    "Withdrew GPU serving capacity and observed replacement capacity plus a public completion response."
+}
+
+run_kubectl_injector() {
+  local status
+
+  require_commands kubectl curl date
+
+  INJECTOR_TARGET_KIND=""
+  INJECTOR_TARGET_NAME=""
+  INJECTOR_TRIGGER_TIME=""
+  INJECTOR_REPLACEMENT_TIME=""
+  INJECTOR_READY_TIME=""
+  INJECTOR_RESPONSE_TIME=""
+
+  set +e
+  case "${SCENARIO_INJECTOR}" in
+    delete-vllm-pod)
+      run_pod_delete_injector
+      status=$?
+      ;;
+    delete-serving-nodeclaim)
+      run_gpu_node_loss_injector
+      status=$?
+      ;;
+    *)
+      set -e
+      die "Unsupported built-in injector: ${SCENARIO_INJECTOR}"
+      ;;
+  esac
+  set -e
+
+  if [[ "${status}" != "0" ]]; then
+    write_injector_report \
+      "failed" \
+      "${INJECTOR_TARGET_KIND:-unknown}" \
+      "${INJECTOR_TARGET_NAME:-unknown}" \
+      "${INJECTOR_TRIGGER_TIME:-}" \
+      "${INJECTOR_REPLACEMENT_TIME:-}" \
+      "${INJECTOR_READY_TIME:-}" \
+      "${INJECTOR_RESPONSE_TIME:-}" \
+      "recovery-incomplete" \
+      "The injector started but did not satisfy the recovery gate. Inspect cluster state before cleanup."
+    return "${status}"
+  fi
+}
+
+run_plan() {
+  ensure_report_paths
+
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    print_plan
+    printf '  Dry run: no cluster resources changed\n'
+    return 0
+  fi
+
+  case "${SCENARIO_RUNNER}" in
+    evaluate-resilience)
+      "${EVALUATE_COMMAND}" \
+        --profile "${EFFECTIVE_PROFILE}" \
+        --policy "${EFFECTIVE_POLICY}" \
+        --resilience "${SCENARIO_RESILIENCE}" \
+        --report "${REPORT_PATH}" \
+        --json-report "${JSON_REPORT_PATH}"
+      ;;
+    experiment-run)
+      "${EXPERIMENT_COMMAND}" \
+        run \
+        --experiment "${SCENARIO_EXPERIMENT}" \
+        --case "${EFFECTIVE_WORKLOAD}" \
+        --profile "${EFFECTIVE_SERVING_PROFILE}" \
+        --report "${REPORT_PATH}" \
+        --json-report "${JSON_REPORT_PATH}"
+      ;;
+    kubectl-injector)
+      run_kubectl_injector
+      ;;
+    *)
+      die "Unsupported failure runner: ${SCENARIO_RUNNER}"
+      ;;
+  esac
+}
+
+run_command() {
+  parse_plan_options "$@"
+  require_plan_options
+  run_plan
+}
+
+matrix_command() {
+  local row_suite_id
+  local row_scenario_id
+  local row_mitigation_id
+  local row_workload
+  local row_profile
+  local row_description
+  local found=0
+  local user_profile_override
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --suite)
+        SUITE_OPTION=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --profile)
+        PROFILE_OVERRIDE=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --dry-run)
+        DRY_RUN=1
+        shift
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  [[ -n "${SUITE_OPTION}" ]] || die "--suite is required"
+  require_name "${SUITE_OPTION}" "suite id"
+  validate_failure_catalog
+  user_profile_override=${PROFILE_OVERRIDE}
+
+  while IFS=',' read -r row_suite_id row_scenario_id row_mitigation_id row_workload row_profile row_description; do
+    if [[ -z "${row_suite_id}" || "${row_suite_id}" == "suite_id" || "${row_suite_id}" == \#* ]]; then
+      continue
+    fi
+
+    if [[ "${row_suite_id}" != "${SUITE_OPTION}" ]]; then
+      continue
+    fi
+
+    found=1
+    SCENARIO_OPTION=${row_scenario_id}
+    MITIGATION_OPTION=${row_mitigation_id}
+    WORKLOAD_OVERRIDE=${row_workload}
+    if [[ -n "${user_profile_override}" ]]; then
+      PROFILE_OVERRIDE=${user_profile_override}
+    else
+      PROFILE_OVERRIDE=${row_profile}
+    fi
+    POLICY_OVERRIDE=""
+    SERVING_PROFILE_OVERRIDE=""
+    USER_REPORT_PATH=""
+    USER_JSON_REPORT_PATH=""
+    RUN_ID=""
+
+    printf '==> suite=%s scenario=%s mitigation=%s :: %s\n' \
+      "${row_suite_id}" \
+      "${row_scenario_id}" \
+      "${row_mitigation_id}" \
+      "${row_description}"
+    require_plan_options
+    run_plan
+  done < "${SUITES_PATH}"
+
+  [[ "${found}" == "1" ]] || die "Unknown failure suite: ${SUITE_OPTION}"
+}
+
+cleanup_command() {
+  local local_selector
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --run-id)
+        RUN_ID=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --dry-run)
+        DRY_RUN=1
+        shift
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  [[ -n "${RUN_ID}" ]] || die "--run-id is required"
+  require_label_value "${RUN_ID}" "run id"
+
+  local_selector="${FAILURE_RUN_LABEL_KEY}=${RUN_ID}"
+
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    printf 'Cleanup plan for run %s\n' "${RUN_ID}"
+    printf '  Delete app jobs/configmaps/pods with label %s\n' "${local_selector}"
+    printf '  Remove labels from nodes and NodeClaims with label %s\n' "${local_selector}"
+    return 0
+  fi
+
+  require_commands kubectl
+  kubectl delete job,configmap,pod -n "${APP_NAMESPACE}" -l "${local_selector}" --ignore-not-found=true
+  kubectl label nodes -l "${local_selector}" "${FAILURE_RUN_LABEL_KEY}-" --overwrite >/dev/null 2>&1 || true
+  kubectl label nodeclaims -l "${local_selector}" "${FAILURE_RUN_LABEL_KEY}-" --overwrite >/dev/null 2>&1 || true
+}
+
+main() {
+  local command=${1:-}
+
+  if [[ -z "${command}" ]]; then
+    usage
+    exit 1
+  fi
+  shift || true
+
+  case "${command}" in
+    list)
+      list_command "${1:-all}"
+      ;;
+    show)
+      show_command "$@"
+      ;;
+    preflight)
+      preflight_command "$@"
+      ;;
+    plan)
+      DRY_RUN=1
+      run_command "$@"
+      ;;
+    run)
+      run_command "$@"
+      ;;
+    matrix)
+      matrix_command "$@"
+      ;;
+    cleanup)
+      cleanup_command "$@"
+      ;;
+    -h|--help|help)
+      usage
+      ;;
+    *)
+      die "Unexpected command: ${command}"
+      ;;
+  esac
+}
+
+main "$@"

@@ -92,5 +92,13 @@ checks, and teardown recovery.
 | `scripts/` | lifecycle, evaluation, and experiment commands |
 | `test/` | shell tests for scripts and manifest contracts |
 
+Failure drills use the same catalog/reporting style:
+
+```bash
+./scripts/failure list
+./scripts/failure run --scenario spot-interruption --mitigation ondemand-fallback --dry-run
+./scripts/failure matrix --suite capacity-recovery --dry-run
+```
+
 The active environment favors iteration over production hardening. Use
 [Platform reference](docs/platform-reference.md) for production boundary notes.

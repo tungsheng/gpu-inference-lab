@@ -17,8 +17,9 @@ artifacts separate from curated conclusions.
 | `<experiment>/graphs/` | checked-in visuals derived from curated results |
 
 Optional files such as `request-shapes.csv`, `client-policies.csv`,
-`cost-profiles.csv`, `accuracy-cases.csv`, and `quantization/` appear only when
-the experiment needs that dimension.
+`cost-profiles.csv`, `accuracy-cases.csv`, `scenarios.csv`,
+`mitigations.csv`, `suites.csv`, and `quantization/` appear only when the
+experiment needs that dimension.
 
 ## Result Page Shape
 

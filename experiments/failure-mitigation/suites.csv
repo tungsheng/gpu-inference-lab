@@ -1,0 +1,7 @@
+suite_id,scenario_id,mitigation_id,workload,profile,description
+capacity-recovery,spot-unavailable,ondemand-fallback,burst-queued,zero-idle,confirm degraded spot capacity falls back to on-demand
+capacity-recovery,spot-interruption,ondemand-fallback,burst-queued,zero-idle,confirm interrupted spot capacity recovers through on-demand replacement
+serving-recovery,vllm-pod-delete,warm-1-active-pressure,steady-recovery,warm-1,confirm serving process recovery with warm active-pressure mitigation
+serving-recovery,gpu-node-loss,warm-1-active-pressure,steady-recovery,warm-1,confirm node withdrawal recovery with warm active-pressure mitigation
+admission-overload,overload-direct-vs-bounded,baseline,burst-direct,zero-idle,measure direct-client overload behavior
+admission-overload,overload-direct-vs-bounded,bounded-admission,burst-queued,zero-idle,measure bounded-admission overload behavior

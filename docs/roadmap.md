@@ -20,6 +20,7 @@ and small-request useful-work cost. The current operator-facing readout lives in
 | GPU efficiency | compare useful work across serving and capacity shapes | scheduler, node-size, placement, cost, latency, and failure-rate comparisons are captured |
 | Quantization decision path | prove when FP4 is worth selecting | BF16, NVFP4, and SmoothQuant results include accuracy, memory, latency, throughput, serving cost, and build cost |
 | Production boundary | separate lab evidence from production requirements | private access, credentials, cloud-native spot interruption handling, and shared-account teardown are documented |
+| Failure drill DevEx | make failure testing repeatable | scenarios, mitigations, suites, dry-runs, preflights, reports, and cleanup are driven through one command surface |
 
 ## Known Limits
 
@@ -34,4 +35,6 @@ and small-request useful-work cost. The current operator-facing readout lives in
   does not yet compare multiple packing shapes or node sizes.
 - Spot interruption testing deletes a live `NodeClaim`; it does not consume
   cloud-native interruption notices.
+- Failure drills now have a catalog and command surface, but only live reports
+  should be promoted into recommendations.
 - FP4 result summaries are still pending live Blackwell capacity.

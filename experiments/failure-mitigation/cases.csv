@@ -1,0 +1,4 @@
+case_id,prompt_token_target,max_tokens,start_rate,target_rate,ramp_up_duration,steady_duration,ramp_down_duration,pre_allocated_vus,max_vus,timeout_seconds,description
+burst-direct,512,128,0,24,15s,2m,30s,64,256,180,open-loop overloaded burst for direct-client failure exposure
+burst-queued,512,128,1,24,15s,2m,30s,64,256,180,closed-loop burst that approximates bounded admission during failure
+steady-recovery,512,128,1,8,15s,2m,30s,16,64,180,moderate steady load for pod and node recovery drills

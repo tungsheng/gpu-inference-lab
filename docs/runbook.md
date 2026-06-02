@@ -28,6 +28,8 @@ Run local tests at any point:
 | Sweep active-pressure targets | `./scripts/evaluate --profile zero-idle --policy sweep --active-targets 2,4,6,8` |
 | Run one experiment case | `./scripts/experiment run --experiment kv-cache --case prompt-512-output-100 --profile default` |
 | Run one streaming case | `./scripts/experiment run-stream --experiment prefill-decode --case prefill-heavy --profile default --samples 5` |
+| Inspect failure drills | `./scripts/failure list` |
+| Dry-run a failure drill | `./scripts/failure run --scenario spot-interruption --mitigation ondemand-fallback --dry-run` |
 | Tear down normally | `./scripts/down` |
 
 ## Local Rendering
@@ -117,6 +119,25 @@ captured.
 The runner applies rendered serving and client manifests, waits for completion,
 writes Markdown and JSON reports under `docs/reports/`, and cleans up rendered
 resources unless `--preserve-serving` or `--preserve-load` is set.
+
+## Failure Drills
+
+Failure drills combine a named scenario, mitigation, workload, and recovery
+gate:
+
+```bash
+./scripts/failure list
+./scripts/failure show scenario spot-interruption
+./scripts/failure preflight --scenario spot-interruption --mitigation ondemand-fallback
+./scripts/failure run --scenario spot-interruption --mitigation ondemand-fallback --dry-run
+./scripts/failure matrix --suite capacity-recovery --dry-run
+```
+
+Capacity drills delegate to `./scripts/evaluate` so resilience reports keep the
+same timeline, capacity-type, cost, and metric fields. Admission drills delegate
+to `./scripts/experiment run`. Pod and GPU-node drills use built-in `kubectl`
+injectors and write compact Markdown/JSON recovery reports under
+`docs/reports/`.
 
 ## Watch A Live Run
 

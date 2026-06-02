@@ -1,0 +1,2 @@
+profile_id,model,served_model_name,vllm_image,max_model_len,gpu_memory_utilization,max_num_seqs,max_num_batched_tokens,cpu_request,memory_request,cpu_limit,memory_limit,model_cache_size,shm_size,description
+default,,,,,,,,,,,,,,shared default vLLM serving profile for failure drills

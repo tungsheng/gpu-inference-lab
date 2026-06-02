@@ -1,0 +1,6 @@
+scenario_id,layer,runner,resilience_mode,default_experiment,default_case,injector,recovery_gate,mutates,description
+spot-unavailable,capacity,evaluate-resilience,spot-unavailable,autoscaling,burst-queued,disable-spot-nodepool,on-demand-second-gpu-node,nodepool,withdraw preferred spot capacity before burst and confirm on-demand fallback
+spot-interruption,capacity,evaluate-resilience,spot-interruption,autoscaling,burst-queued,delete-spot-nodeclaim,replacement-gpu-node-and-two-ready-replicas,nodepool nodeclaim,delete live spot-backed NodeClaim after scale-out and confirm replacement capacity
+gpu-node-loss,node,kubectl-injector,healthy,failure-mitigation,steady-recovery,delete-serving-nodeclaim,serving-deployment-ready-and-public-200,nodeclaim node,withdraw the oldest GPU serving NodeClaim or node and wait for serving recovery
+vllm-pod-delete,pod,kubectl-injector,healthy,failure-mitigation,steady-recovery,delete-vllm-pod,serving-deployment-ready-and-public-200,pod,delete the oldest vLLM pod and wait for rollout and public response recovery
+overload-direct-vs-bounded,admission,experiment-run,healthy,autoscaling,burst-direct,client-overload,delivery-ratio-and-p95-latency,load,run direct or bounded autoscaling workload cases to compare explicit backpressure

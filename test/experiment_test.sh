@@ -24,13 +24,15 @@ run_experiment_list_test() {
   assert_contains "${COMMAND_OUTPUT}" "Cost Per Useful Work" "experiment list should include the cost title"
   assert_contains "${COMMAND_OUTPUT}" "fp4" "experiment list should include the FP4 experiment"
   assert_contains "${COMMAND_OUTPUT}" "FP4 Quantization Optimization" "experiment list should include the FP4 title"
+  assert_contains "${COMMAND_OUTPUT}" "failure-mitigation" "experiment list should include the failure-mitigation experiment"
+  assert_contains "${COMMAND_OUTPUT}" "Failure And Mitigation Drills" "experiment list should include the failure-mitigation title"
 }
 
 run_experiment_validate_test() {
   run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" validate
 
   assert_status 0 "${COMMAND_STATUS}" "scripts/experiment validate should succeed for the checked-in catalog"
-  assert_contains "${COMMAND_OUTPUT}" "Validated 7 experiment(s)." "validate should report the number of checked-in experiments"
+  assert_contains "${COMMAND_OUTPUT}" "Validated 8 experiment(s)." "validate should report the number of checked-in experiments"
 }
 
 run_experiment_show_test() {
