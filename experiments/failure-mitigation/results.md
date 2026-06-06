@@ -2,8 +2,21 @@
 
 ## Status
 
-Planned. The catalog and `./scripts/failure` command define the initial drill
-surface; live results should replace this section after measured runs.
+Partial live run on 2026-06-06. The catalog and `./scripts/failure` command are
+usable, but the capacity-recovery suite is not yet a promotion gate.
+
+## Latest Live Run
+
+| Scenario | Mitigation | Result | Notes |
+| --- | --- | --- | --- |
+| `spot-unavailable` | `ondemand-fallback` | Passed | Spot NodePool was withdrawn and the service scaled to on-demand. First public response was 459s, second ready replica was 925s, and final cleanup to zero GPU nodes was 2183s. |
+| `spot-interruption` | `ondemand-fallback` | Failed before recovery | The first serving node landed on on-demand, then the drill withdrew on-demand and left the service without ready endpoints. The load job failed with 3599 failed requests before HPA could scale out. |
+
+Follow-up from this run: `scripts/evaluate` now fails fast when a load job
+reaches `Failed` before HPA scale-out, writes partial reports for interruption
+precondition failures, refuses to withdraw on-demand unless the first serving
+node is already spot-backed, and steers interruption recovery with temporary
+NodePool weights instead of deleting a live spot NodePool.
 
 ## Planned Matrix
 

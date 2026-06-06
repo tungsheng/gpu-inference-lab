@@ -36,6 +36,7 @@ PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS=0
 PRESERVE_PROFILE_BASELINE=0
 SPOT_NODEPOOL_DISABLED=0
 ONDEMAND_NODEPOOL_DISABLED=0
+NODEPOOL_CAPACITY_PREFERENCES_PATCHED=0
 
 PUBLIC_INFERENCE_URL=""
 PROMETHEUS_LOCAL_PORT=""
@@ -459,6 +460,11 @@ cleanup_evaluate() {
   if [[ "${ONDEMAND_NODEPOOL_DISABLED}" == "1" ]]; then
     kubectl apply -f "${KARPENTER_ONDEMAND_NODEPOOL_MANIFEST}" >/dev/null 2>&1 || true
     ONDEMAND_NODEPOOL_DISABLED=0
+  fi
+  if [[ "${NODEPOOL_CAPACITY_PREFERENCES_PATCHED}" == "1" ]]; then
+    kubectl apply -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" >/dev/null 2>&1 || true
+    kubectl apply -f "${KARPENTER_ONDEMAND_NODEPOOL_MANIFEST}" >/dev/null 2>&1 || true
+    NODEPOOL_CAPACITY_PREFERENCES_PATCHED=0
   fi
 
   if ((${#TEMP_FILES[@]} > 0)); then
@@ -1113,11 +1119,40 @@ prepare_warm_profile_capacity() {
   fi
 }
 
+nodepool_owned_nodeclaim_count() {
+  local nodepool_name=$1
+
+  {
+    kubectl get nodeclaims \
+      -l "karpenter.sh/nodepool=${nodepool_name}" \
+      -o name 2>/dev/null || true
+  } | wc -l | tr -d ' '
+}
+
+require_nodepool_without_nodeclaims() {
+  local nodepool_name=$1
+  local nodeclaim_count
+
+  nodeclaim_count=$(nodepool_owned_nodeclaim_count "${nodepool_name}")
+  nodeclaim_count=${nodeclaim_count:-0}
+  if [[ "${nodeclaim_count}" == "0" ]]; then
+    return 0
+  fi
+
+  printf 'Refusing to delete NodePool %s because it still owns %s NodeClaim(s); use non-destructive capacity controls for live pools.\n' \
+    "${nodepool_name}" \
+    "${nodeclaim_count}" >&2
+  print_serving_nodeclaim_snapshot
+  print_serving_node_snapshot
+  return 1
+}
+
 disable_spot_nodepool() {
   if [[ "${SPOT_NODEPOOL_DISABLED}" == "1" ]]; then
     return 0
   fi
 
+  require_nodepool_without_nodeclaims "${KARPENTER_SPOT_NODEPOOL_NAME}" || return 1
   kubectl delete -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion nodepool "${KARPENTER_SPOT_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   SPOT_NODEPOOL_DISABLED=1
@@ -1128,9 +1163,37 @@ disable_ondemand_nodepool() {
     return 0
   fi
 
+  require_nodepool_without_nodeclaims "${KARPENTER_ONDEMAND_NODEPOOL_NAME}" || return 1
   kubectl delete -f "${KARPENTER_ONDEMAND_NODEPOOL_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion nodepool "${KARPENTER_ONDEMAND_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   ONDEMAND_NODEPOOL_DISABLED=1
+}
+
+patch_nodepool_weight() {
+  local nodepool_name=$1
+  local weight=$2
+
+  kubectl patch nodepool "${nodepool_name}" --type=merge -p "{\"spec\":{\"weight\":${weight}}}" || return 1
+  wait_for_resource_existence nodepool "${nodepool_name}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  NODEPOOL_CAPACITY_PREFERENCES_PATCHED=1
+}
+
+prefer_ondemand_recovery_capacity() {
+  restore_ondemand_nodepool || return 1
+  patch_nodepool_weight "${KARPENTER_ONDEMAND_NODEPOOL_NAME}" 100 || return 1
+  patch_nodepool_weight "${KARPENTER_SPOT_NODEPOOL_NAME}" 5 || return 1
+}
+
+restore_nodepool_capacity_preferences() {
+  if [[ "${NODEPOOL_CAPACITY_PREFERENCES_PATCHED}" != "1" ]]; then
+    return 0
+  fi
+
+  kubectl apply -f "${KARPENTER_SPOT_NODEPOOL_MANIFEST}" || return 1
+  kubectl apply -f "${KARPENTER_ONDEMAND_NODEPOOL_MANIFEST}" || return 1
+  wait_for_resource_existence nodepool "${KARPENTER_SPOT_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  wait_for_resource_existence nodepool "${KARPENTER_ONDEMAND_NODEPOOL_NAME}" "" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  NODEPOOL_CAPACITY_PREFERENCES_PATCHED=0
 }
 
 prepare_resilience_mode() {
@@ -1161,9 +1224,36 @@ restore_ondemand_nodepool() {
   ONDEMAND_NODEPOOL_DISABLED=0
 }
 
+write_resilience_precondition_report() {
+  local outcome=$1
+  local reason=$2
+
+  RESILIENCE_OUTCOME=${outcome}
+  RESILIENCE_OUTCOME_REASON=${reason}
+  METRICS_COLLECTION_STATUS="not-collected"
+  METRICS_COLLECTION_REASON="Run stopped before final metric collection because a resilience drill precondition was not satisfied."
+  POLICY_FINISH_TIME=$(date +%s)
+
+  finalize_derived_readouts || return 1
+  write_reports || return 1
+
+  printf 'Wrote partial precondition report: %s\n' "${REPORT_PATH}" >&2
+  printf 'Wrote partial precondition JSON: %s\n' "${JSON_REPORT_PATH}" >&2
+}
+
 prepare_spot_interruption_scale_out() {
   if ! is_spot_interruption_mode; then
     return 0
+  fi
+
+  if [[ "${FIRST_GPU_CAPACITY_TYPE:-}" != "spot" ]]; then
+    local reason
+    reason="spot-interruption requires the first GPU node to be spot before withdrawing on-demand capacity, but the first GPU node reported ${FIRST_GPU_CAPACITY_TYPE:-unknown}"
+    printf '%s\n' "${reason}" >&2
+    print_serving_nodeclaim_snapshot
+    print_serving_node_snapshot
+    write_resilience_precondition_report "interruption-precondition-failed" "${reason}"
+    return 1
   fi
 
   disable_ondemand_nodepool || return 1
@@ -1250,6 +1340,9 @@ run_load_and_wait_for_scale_out() {
   while true; do
     local desired_replicas
     local job_complete
+    local job_failed
+    local job_failed_reason
+    local job_failed_message
 
     desired_replicas=$(hpa_desired_replicas "${APP_NAMESPACE}" "${GPU_INFERENCE_HPA_NAME}")
     desired_replicas=${desired_replicas:-0}
@@ -1262,6 +1355,30 @@ run_load_and_wait_for_scale_out() {
       -o jsonpath="{.status.conditions[?(@.type=='Complete')].status}" 2>/dev/null || true)
     if [[ "${job_complete}" == "True" ]]; then
       printf 'Load job completed before HPA scaled out; desired replicas stayed at %s\n' "${desired_replicas}" >&2
+      return 1
+    fi
+
+    job_failed=$(kubectl get job "${GPU_LOAD_TEST_JOB_NAME}" \
+      -n "${APP_NAMESPACE}" \
+      -o jsonpath="{.status.conditions[?(@.type=='Failed')].status}" 2>/dev/null || true)
+    if [[ "${job_failed}" == "True" ]]; then
+      job_failed_reason=$(kubectl get job "${GPU_LOAD_TEST_JOB_NAME}" \
+        -n "${APP_NAMESPACE}" \
+        -o jsonpath="{.status.conditions[?(@.type=='Failed')].reason}" 2>/dev/null || true)
+      job_failed_message=$(kubectl get job "${GPU_LOAD_TEST_JOB_NAME}" \
+        -n "${APP_NAMESPACE}" \
+        -o jsonpath="{.status.conditions[?(@.type=='Failed')].message}" 2>/dev/null || true)
+
+      printf 'Load job failed before HPA scaled out; desired replicas stayed at %s' "${desired_replicas}" >&2
+      if [[ -n "${job_failed_reason}" ]]; then
+        printf ': %s' "${job_failed_reason}" >&2
+      fi
+      if [[ -n "${job_failed_message}" ]]; then
+        printf ' - %s' "${job_failed_message}" >&2
+      fi
+      printf '\n' >&2
+      print_serving_pod_snapshot
+      print_serving_nodeclaim_snapshot
       return 1
     fi
 
@@ -1376,17 +1493,28 @@ trigger_spot_interruption_and_wait_for_recovery() {
   fi
 
   if [[ "${SECOND_GPU_CAPACITY_TYPE}" != "spot" ]]; then
-    printf 'spot-interruption requires the burst node to be spot, but the second GPU node reported %s\n' "${SECOND_GPU_CAPACITY_TYPE:-unknown}" >&2
+    local reason
+    reason="spot-interruption requires the burst node to be spot, but the second GPU node reported ${SECOND_GPU_CAPACITY_TYPE:-unknown}"
+    printf '%s\n' "${reason}" >&2
+    print_serving_nodeclaim_snapshot
+    print_serving_node_snapshot
+    print_serving_pod_snapshot
+    write_resilience_precondition_report "interruption-precondition-failed" "${reason}"
     return 1
   fi
 
   if [[ -z "${SECOND_NODECLAIM_NAME}" ]]; then
-    printf 'spot-interruption could not identify the burst NodeClaim to interrupt\n' >&2
+    local reason
+    reason="spot-interruption could not identify the burst NodeClaim to interrupt"
+    printf '%s\n' "${reason}" >&2
+    print_serving_nodeclaim_snapshot
+    print_serving_node_snapshot
+    print_serving_pod_snapshot
+    write_resilience_precondition_report "interruption-precondition-failed" "${reason}"
     return 1
   fi
 
-  disable_spot_nodepool || return 1
-  restore_ondemand_nodepool || return 1
+  prefer_ondemand_recovery_capacity || return 1
 
   kubectl delete nodeclaim "${SECOND_NODECLAIM_NAME}" --ignore-not-found=true || return 1
   INTERRUPTION_TRIGGER_TIME=$(date +%s)
@@ -1423,6 +1551,7 @@ delete_inference_and_clean_profile_capacity() {
     PROFILE_BASELINE_RESTORED_TIME=$(date +%s)
 
     if [[ "${PRESERVE_PROFILE_BASELINE}" == "1" ]]; then
+      restore_nodepool_capacity_preferences || return 1
       POLICY_FINISH_TIME=${PROFILE_BASELINE_RESTORED_TIME}
       return 0
     fi
@@ -1433,6 +1562,7 @@ delete_inference_and_clean_profile_capacity() {
   fi
 
   wait_for_serving_gpu_nodes_at_most_with_progress 0 "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
+  restore_nodepool_capacity_preferences || return 1
   CLEANUP_FINISH_TIME=$(date +%s)
   POLICY_FINISH_TIME=${CLEANUP_FINISH_TIME}
 }
@@ -1842,7 +1972,9 @@ estimate_costs() {
 finalize_derived_readouts() {
   estimate_costs
   derive_capacity_readout
-  derive_resilience_outcome
+  if [[ -z "${RESILIENCE_OUTCOME}" ]]; then
+    derive_resilience_outcome
+  fi
 }
 
 collect_production_metrics() {
@@ -2176,13 +2308,13 @@ derive_resilience_outcome() {
 
     if [[ "${RECOVERY_GPU_CAPACITY_TYPE}" == "on-demand" ]]; then
       RESILIENCE_OUTCOME="interruption-recovered"
-      RESILIENCE_OUTCOME_REASON="the burst started on spot, the interrupted spot capacity was withdrawn, and the service recovered to two ready replicas on on-demand capacity"
+      RESILIENCE_OUTCOME_REASON="the burst started on spot, replacement capacity was steered toward on-demand, and the service recovered to two ready replicas on on-demand capacity"
       return 0
     fi
 
     if [[ "${RECOVERY_GPU_CAPACITY_TYPE}" == "spot" ]]; then
       RESILIENCE_OUTCOME="interruption-recovered-on-spot"
-      RESILIENCE_OUTCOME_REASON="the spot burst node was interrupted, but recovery still landed on spot capacity instead of the expected on-demand fallback"
+      RESILIENCE_OUTCOME_REASON="the spot burst node was interrupted, but recovery still landed on spot capacity even after on-demand recovery capacity was preferred"
       return 0
     fi
 

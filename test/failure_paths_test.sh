@@ -400,6 +400,205 @@ run_evaluate_scale_out_timeout_test() {
   teardown_test_tmpdir
 }
 
+run_evaluate_scale_out_failed_job_test() {
+  setup_test_tmpdir
+
+  write_stub kubectl \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"cmd=\"\$*\"" \
+"if [[ \"\$1\" == 'port-forward' ]]; then" \
+"  printf '%s\n' 'Forwarding from 127.0.0.1:39090 -> 9090'" \
+"  sleep 30" \
+"  exit 0" \
+"fi" \
+"case \"\$cmd\" in" \
+"  'get namespace app') exit 1 ;;" \
+"  'create namespace app') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
+"  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete hpa vllm-openai -n app --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true')" \
+"    rm -f \"${TEST_TMPDIR}/deployment-applied\"" \
+"    exit 0" \
+"    ;;" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'get nodes -l workload=gpu -o name')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'node/gpu-serving-1'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'nodeclaim/gpu-serving-1'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get nodes -l workload=gpu --sort-by=.metadata.creationTimestamp -o jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'gpu-serving-1'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g5.xlarge'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-ondemand'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'on-demand'; exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml')" \
+"    : > \"${TEST_TMPDIR}/deployment-applied\"" \
+"    exit 0" \
+"    ;;" \
+"  'apply -f ${REPO_ROOT}/platform/inference/hpa.yaml') exit 0 ;;" \
+"  'get pods -n app -l app=vllm-openai --sort-by=.metadata.creationTimestamp -o jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'vllm-openai-0'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+  "  get\ pod\ vllm-openai-0\ -n\ app\ -o\ jsonpath=*PodScheduled* ) printf '%s\n' '2026-04-10T20:00:10Z'; exit 0 ;;" \
+  "  get\ pod\ vllm-openai-0\ -n\ app\ -o\ jsonpath=*containerStatuses*running.startedAt* ) printf '%s\n' '2026-04-10T20:01:30Z'; exit 0 ;;" \
+  "  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
+  "  'get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_running') printf '%s\n' '{\"kind\":\"MetricValueList\",\"items\":[{\"value\":\"0\"}]}'; exit 0 ;;" \
+  "  'apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml') exit 0 ;;" \
+  "  'get job gpu-load-test -n app -o jsonpath={.status.conditions[?(@.type=='\"'\"'Complete'\"'\"')].status}') exit 0 ;;" \
+  "  'get job gpu-load-test -n app -o jsonpath={.status.conditions[?(@.type=='\"'\"'Failed'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
+  "  'get job gpu-load-test -n app -o jsonpath={.status.conditions[?(@.type=='\"'\"'Failed'\"'\"')].reason}') printf '%s\n' 'BackoffLimitExceeded'; exit 0 ;;" \
+  "  'get job gpu-load-test -n app -o jsonpath={.status.conditions[?(@.type=='\"'\"'Failed'\"'\"')].message}') printf '%s\n' 'Job has reached the specified backoff limit'; exit 0 ;;" \
+  "  'get hpa vllm-openai -n app -o jsonpath={.status.desiredReplicas}') printf '%s\n' '1'; exit 0 ;;" \
+  "  *) exit 0 ;;" \
+  "esac"
+
+  write_stub curl \
+  "#!/usr/bin/env bash" \
+  "set -euo pipefail" \
+  "cmd=\"\$*\"" \
+  "if [[ \"\$cmd\" == *'/api/v1/query'* ]]; then" \
+  "  printf '%s' '{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{},\"value\":[1712781000,\"0\"]}]}}'" \
+  "  exit 0" \
+  "fi" \
+  "printf '200'"
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" \
+    POLL_INTERVAL_SECONDS=0 \
+    /bin/bash "${REPO_ROOT}/scripts/evaluate" --profile zero-idle --report "${TEST_TMPDIR}/report.md"
+
+  assert_status 1 "${COMMAND_STATUS}" "evaluate should fail when the load job fails before HPA scales out"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 6/11 run load and wait for scale-out" "evaluate should fail in the scale-out stage when the load job fails"
+  assert_contains "${COMMAND_OUTPUT}" "Load job failed before HPA scaled out; desired replicas stayed at 1: BackoffLimitExceeded - Job has reached the specified backoff limit" "evaluate should report failed load job reason and message"
+  teardown_test_tmpdir
+}
+
+run_evaluate_spot_interruption_requires_spot_baseline_test() {
+  setup_test_tmpdir
+
+  write_stub kubectl \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"cmd=\"\$*\"" \
+"if [[ \"\$1\" == 'port-forward' ]]; then" \
+"  printf '%s\n' 'Forwarding from 127.0.0.1:39090 -> 9090'" \
+"  sleep 30" \
+"  exit 0" \
+"fi" \
+"case \"\$cmd\" in" \
+"  'get namespace app') exit 1 ;;" \
+"  'create namespace app') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
+"  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete hpa vllm-openai -n app --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true')" \
+"    rm -f \"${TEST_TMPDIR}/deployment-applied\"" \
+"    exit 0" \
+"    ;;" \
+"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true')" \
+"    : > \"${TEST_TMPDIR}/ondemand-deleted\"" \
+"    exit 0" \
+"    ;;" \
+"  'get nodes -l workload=gpu -o name')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'node/gpu-serving-1'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'nodeclaim/gpu-serving-1'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get nodes -l workload=gpu --sort-by=.metadata.creationTimestamp -o jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'gpu-serving-1'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g5.xlarge'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-ondemand'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'on-demand'; exit 0 ;;" \
+"  'apply -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml')" \
+"    : > \"${TEST_TMPDIR}/deployment-applied\"" \
+"    exit 0" \
+"    ;;" \
+"  'apply -f ${REPO_ROOT}/platform/inference/hpa.yaml') exit 0 ;;" \
+"  'get pods -n app -l app=vllm-openai --sort-by=.metadata.creationTimestamp -o jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}')" \
+"    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" ]]; then" \
+"      printf '%s\n' 'vllm-openai-0'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+  "  get\ pod\ vllm-openai-0\ -n\ app\ -o\ jsonpath=*PodScheduled* ) printf '%s\n' '2026-04-10T20:00:10Z'; exit 0 ;;" \
+  "  get\ pod\ vllm-openai-0\ -n\ app\ -o\ jsonpath=*containerStatuses*running.startedAt* ) printf '%s\n' '2026-04-10T20:01:30Z'; exit 0 ;;" \
+  "  'rollout status deployment/vllm-openai -n app --timeout=20m') exit 0 ;;" \
+  "  'get --raw /apis/custom.metrics.k8s.io/v1beta1/namespaces/app/pods/vllm-openai-0/vllm_requests_active') printf '%s\n' '{\"kind\":\"MetricValueList\",\"items\":[{\"value\":\"0\"}]}'; exit 0 ;;" \
+  "  'apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml')" \
+  "    : > \"${TEST_TMPDIR}/load-applied\"" \
+  "    exit 0" \
+  "    ;;" \
+  "  *) exit 0 ;;" \
+  "esac"
+
+  write_stub curl \
+  "#!/usr/bin/env bash" \
+  "set -euo pipefail" \
+  "cmd=\"\$*\"" \
+  "if [[ \"\$cmd\" == *'/api/v1/query'* ]]; then" \
+  "  printf '%s' '{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{},\"value\":[1712781000,\"0\"]}]}}'" \
+  "  exit 0" \
+  "fi" \
+  "printf '200'"
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" \
+    POLL_INTERVAL_SECONDS=0 \
+    /bin/bash "${REPO_ROOT}/scripts/evaluate" --profile zero-idle --policy active-pressure --resilience spot-interruption --report "${TEST_TMPDIR}/report.md"
+
+  assert_status 1 "${COMMAND_STATUS}" "spot-interruption should fail before withdrawing on-demand when the first node is not spot"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 6/11 active-pressure: run load and wait for scale-out" "spot-interruption precondition failure should surface in scale-out stage"
+  assert_contains "${COMMAND_OUTPUT}" "spot-interruption requires the first GPU node to be spot before withdrawing on-demand capacity, but the first GPU node reported on-demand" "spot-interruption should explain the invalid baseline"
+  assert_file_not_exists "${TEST_TMPDIR}/ondemand-deleted" "spot-interruption should not delete on-demand NodePool when the baseline node is on-demand"
+  assert_file_not_exists "${TEST_TMPDIR}/load-applied" "spot-interruption should not start load after an invalid spot baseline"
+  assert_file_exists "${TEST_TMPDIR}/report.md" "spot-interruption precondition failures should still write a Markdown report"
+  assert_file_exists "${TEST_TMPDIR}/report.json" "spot-interruption precondition failures should still write a JSON report"
+
+  REPORT_CONTENT=$(cat "${TEST_TMPDIR}/report.md")
+  JSON_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/report.json")
+  assert_contains "${REPORT_CONTENT}" "Metrics collection status: not-collected" "precondition reports should explain that metrics were not collected"
+  assert_contains "${REPORT_CONTENT}" "Resilience outcome: interruption-precondition-failed" "precondition reports should record the resilience outcome"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"metrics_collection_status\": \"not-collected\"" "precondition JSON should record skipped metric collection"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"outcome\": \"interruption-precondition-failed\"" "precondition JSON should record the resilience outcome"
+  teardown_test_tmpdir
+}
+
 run_evaluate_metric_pipeline_timeout_test() {
   setup_test_tmpdir
 
@@ -1457,6 +1656,8 @@ run_evaluate_compare_warm_profile_capacity_timeout_test
 run_evaluate_metric_pipeline_timeout_test
 run_evaluate_active_pressure_metric_pipeline_timeout_test
 run_evaluate_scale_out_timeout_test
+run_evaluate_scale_out_failed_job_test
+run_evaluate_spot_interruption_requires_spot_baseline_test
 run_evaluate_compare_second_policy_failure_test
 run_evaluate_sweep_second_target_failure_test
 run_down_alb_timeout_test

@@ -61,12 +61,20 @@ write_evaluate_kubectl_stub() {
 "    : > \"${TEST_TMPDIR}/interruption-triggered\"" \
 "    exit 0" \
 "    ;;" \
+"  patch\ nodepool\ gpu-serving-ondemand\ --type=merge\ -p\ *weight*100* )" \
+"    : > \"${TEST_TMPDIR}/ondemand-recovery-preferred\"" \
+"    exit 0" \
+"    ;;" \
+"  patch\ nodepool\ gpu-serving-spot\ --type=merge\ -p\ *weight*5* )" \
+"    : > \"${TEST_TMPDIR}/spot-recovery-deprioritized\"" \
+"    exit 0" \
+"    ;;" \
 "  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml')" \
-"    rm -f \"${TEST_TMPDIR}/spot-nodepool-disabled\"" \
+"    rm -f \"${TEST_TMPDIR}/spot-nodepool-disabled\" \"${TEST_TMPDIR}/spot-recovery-deprioritized\"" \
 "    exit 0" \
 "    ;;" \
 "  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml')" \
-"    rm -f \"${TEST_TMPDIR}/ondemand-nodepool-disabled\"" \
+"    rm -f \"${TEST_TMPDIR}/ondemand-nodepool-disabled\" \"${TEST_TMPDIR}/ondemand-recovery-preferred\"" \
 "    exit 0" \
 "    ;;" \
 "  'get nodepool gpu-serving-spot')" \
@@ -109,6 +117,13 @@ write_evaluate_kubectl_stub() {
 "    fi" \
 "    exit 0" \
 "    ;;" \
+"  'get nodeclaims -l karpenter.sh/nodepool=gpu-serving-spot -o name')" \
+"    if [[ -f \"${TEST_TMPDIR}/spot-nodepool-has-nodeclaim\" ]]; then" \
+"      printf '%s\n' 'nodeclaim/gpu-serving-existing'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get nodeclaims -l karpenter.sh/nodepool=gpu-serving-ondemand -o name') exit 0 ;;" \
 "  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) --sort-by=.metadata.creationTimestamp -o jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}')" \
 "    if [[ -f \"${TEST_TMPDIR}/deployment-applied\" || -f \"${TEST_TMPDIR}/warm-placeholder-applied\" ]]; then" \
 "      printf '%s\n' 'gpu-serving-1'" \
@@ -162,8 +177,22 @@ write_evaluate_kubectl_stub() {
 "    exit 1" \
 "    ;;" \
 "  'get node gpu-serving-1 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}') printf '%s\n' 'g5.xlarge'; exit 0 ;;" \
-"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}') printf '%s\n' 'gpu-serving-ondemand'; exit 0 ;;" \
-"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}') printf '%s\n' 'on-demand'; exit 0 ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/nodepool}')" \
+"    if [[ -f \"${TEST_TMPDIR}/first-node-spot\" ]]; then" \
+"      printf '%s\n' 'gpu-serving-spot'" \
+"    else" \
+"      printf '%s\n' 'gpu-serving-ondemand'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
+"  'get node gpu-serving-1 -o jsonpath={.metadata.labels.karpenter\.sh/capacity-type}')" \
+"    if [[ -f \"${TEST_TMPDIR}/first-node-spot\" ]]; then" \
+"      printf '%s\n' 'spot'" \
+"    else" \
+"      printf '%s\n' 'on-demand'" \
+"    fi" \
+"    exit 0" \
+"    ;;" \
 "  'get node gpu-serving-1 -o jsonpath={.metadata.labels.topology\.kubernetes\.io/zone}') printf '%s\n' 'us-west-2a'; exit 0 ;;" \
 "  'get node gpu-serving-2 -o jsonpath={.metadata.labels.node\.kubernetes\.io/instance-type}')" \
 "    if [[ -f \"${TEST_TMPDIR}/spot-nodepool-disabled\" ]]; then" \
@@ -672,10 +701,36 @@ run_spot_unavailable_resilience_test() {
   teardown_test_tmpdir
 }
 
+run_spot_unavailable_live_nodeclaim_guard_test() {
+  setup_test_tmpdir
+  write_evaluate_kubectl_stub
+  write_evaluate_curl_stub
+  : > "${TEST_TMPDIR}/spot-nodepool-has-nodeclaim"
+
+  run_and_capture env \
+    PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
+    TMPDIR=/tmp \
+    /bin/bash "${REPO_ROOT}/scripts/evaluate" \
+    --profile zero-idle \
+    --resilience spot-unavailable \
+    --report "${TEST_TMPDIR}/resilience.md" \
+    --json-report "${TEST_TMPDIR}/resilience.json"
+
+  assert_status 1 "${COMMAND_STATUS}" "spot-unavailable should fail instead of deleting a NodePool that still owns NodeClaims"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 2/11 prepare evaluation edge and profile" "the live NodeClaim guard should fail during resilience preparation"
+  assert_contains "${COMMAND_OUTPUT}" "Refusing to delete NodePool gpu-serving-spot because it still owns 1 NodeClaim(s)" "the live NodeClaim guard should explain why deletion was refused"
+
+  KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
+  assert_not_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" "the guard should prevent spot NodePool deletion when it still owns NodeClaims"
+
+  teardown_test_tmpdir
+}
+
 run_spot_interruption_resilience_test() {
   setup_test_tmpdir
   write_evaluate_kubectl_stub
   write_evaluate_curl_stub
+  : > "${TEST_TMPDIR}/first-node-spot"
 
   run_and_capture env \
     PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -719,21 +774,27 @@ run_spot_interruption_resilience_test() {
   assert_contains "${JSON_REPORT_CONTENT}" "\"expected_recovery_capacity_type\": \"on-demand\"" "the JSON report should include the expected replacement capacity type"
   assert_contains "${JSON_REPORT_CONTENT}" "\"outcome\": \"interruption-recovered\"" "the JSON report should include the interruption recovery outcome"
   assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true" "the interruption workflow should withdraw the on-demand NodePool before the burst so the scale-out node must land on spot"
-  assert_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" "the interruption workflow should withdraw the spot NodePool before recovery"
+  assert_not_contains "${KUBECTL_LOG}" "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" "the interruption workflow should not delete the live spot NodePool during recovery"
   assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" "the interruption workflow should restore the on-demand NodePool before deleting the interrupted spot nodeclaim"
+  assert_contains "${KUBECTL_LOG}" "patch nodepool gpu-serving-ondemand --type=merge -p {\"spec\":{\"weight\":100}}" "the interruption workflow should prefer on-demand recovery capacity without deleting the spot NodePool"
+  assert_contains "${KUBECTL_LOG}" "patch nodepool gpu-serving-spot --type=merge -p {\"spec\":{\"weight\":5}}" "the interruption workflow should deprioritize new spot recovery capacity without deleting the spot NodePool"
   assert_contains "${KUBECTL_LOG}" "delete nodeclaim gpu-serving-2 --ignore-not-found=true" "the interruption workflow should delete the live burst NodeClaim"
   assert_occurs_before "${KUBECTL_LOG}" \
     "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true" \
     "apply -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml" \
     "the interruption workflow should remove on-demand burst capacity before the load starts"
   assert_occurs_before "${KUBECTL_LOG}" \
-    "delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true" \
     "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" \
-    "the interruption workflow should withdraw the spot pool before re-enabling on-demand recovery capacity"
+    "patch nodepool gpu-serving-ondemand --type=merge -p {\"spec\":{\"weight\":100}}" \
+    "the interruption workflow should restore on-demand capacity before preferring it for recovery"
   assert_occurs_before "${KUBECTL_LOG}" \
-    "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" \
+    "patch nodepool gpu-serving-ondemand --type=merge -p {\"spec\":{\"weight\":100}}" \
+    "patch nodepool gpu-serving-spot --type=merge -p {\"spec\":{\"weight\":5}}" \
+    "the interruption workflow should prefer on-demand before deprioritizing new spot capacity"
+  assert_occurs_before "${KUBECTL_LOG}" \
+    "patch nodepool gpu-serving-spot --type=merge -p {\"spec\":{\"weight\":5}}" \
     "delete nodeclaim gpu-serving-2 --ignore-not-found=true" \
-    "the interruption workflow should restore on-demand capacity before deleting the live spot nodeclaim"
+    "the interruption workflow should set recovery preferences before deleting the live spot nodeclaim"
   assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml" "the interruption workflow should restore the spot NodePool after the run"
   assert_contains "${CURL_LOG}" "/metrics/job/gpu-serving-measure/profile/zero-idle/resilience/spot-interruption/policy/running/target/128" "the interruption workflow should label Pushgateway metrics with the interruption mode"
 
@@ -747,4 +808,5 @@ run_compare_policy_test
 run_compare_policy_reverse_order_test
 run_sweep_policy_test
 run_spot_unavailable_resilience_test
+run_spot_unavailable_live_nodeclaim_guard_test
 run_spot_interruption_resilience_test
