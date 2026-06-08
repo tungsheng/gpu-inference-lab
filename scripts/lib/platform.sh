@@ -24,6 +24,8 @@ KARPENTER_SERVING_NODEPOOL_REGEX="${KARPENTER_ONDEMAND_NODEPOOL_NAME}|${KARPENTE
 KARPENTER_SERVING_NODEPOOL_SELECTOR="karpenter.sh/nodepool in (${KARPENTER_ONDEMAND_NODEPOOL_NAME},${KARPENTER_SPOT_NODEPOOL_NAME})"
 KARPENTER_WARM_NODEPOOL_NAME="gpu-warm-1"
 KARPENTER_SERVICE_ACCOUNT_NAME="karpenter"
+EC2_SPOT_SERVICE_LINKED_ROLE_NAME="AWSServiceRoleForEC2Spot"
+EC2_SPOT_SERVICE_LINKED_ROLE_SERVICE_NAME="spot.amazonaws.com"
 
 ALB_CONTROLLER_RELEASE_NAME="aws-load-balancer-controller"
 ALB_CONTROLLER_HELM_REPO_NAME="eks"
@@ -224,6 +226,40 @@ update_kubeconfig() {
     --name "${CLUSTER_NAME}" \
     --region "${AWS_REGION}" \
     --alias "${CLUSTER_NAME}"
+}
+
+ensure_ec2_spot_service_linked_role() {
+  if aws iam get-role --role-name "${EC2_SPOT_SERVICE_LINKED_ROLE_NAME}" >/dev/null 2>&1; then
+    printf 'EC2 Spot service-linked role is present: %s\n' "${EC2_SPOT_SERVICE_LINKED_ROLE_NAME}"
+    return 0
+  fi
+
+  local output
+  local status
+
+  if output=$(aws iam create-service-linked-role --aws-service-name "${EC2_SPOT_SERVICE_LINKED_ROLE_SERVICE_NAME}" 2>&1); then
+    status=0
+  else
+    status=$?
+  fi
+
+  if [[ "${status}" == "0" ]]; then
+    printf 'Created EC2 Spot service-linked role: %s\n' "${EC2_SPOT_SERVICE_LINKED_ROLE_NAME}"
+    return 0
+  fi
+
+  if [[ "${output}" == *"${EC2_SPOT_SERVICE_LINKED_ROLE_NAME}"* ]]; then
+    if [[ "${output}" == *"already exists"* || "${output}" == *"has been taken"* ]]; then
+      printf 'EC2 Spot service-linked role is present: %s\n' "${EC2_SPOT_SERVICE_LINKED_ROLE_NAME}"
+      return 0
+    fi
+  fi
+
+  printf 'Unable to ensure EC2 Spot service-linked role: %s\n' "${EC2_SPOT_SERVICE_LINKED_ROLE_NAME}" >&2
+  if [[ -n "${output}" ]]; then
+    printf '%s\n' "${output}" >&2
+  fi
+  return "${status}"
 }
 
 resource_exists() {

@@ -34,6 +34,8 @@ write_stub aws \
 "printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/aws.log\"" \
 "case \"\$1 \$2\" in" \
 "  'eks update-kubeconfig') exit 0 ;;" \
+"  'iam get-role') exit 1 ;;" \
+"  'iam create-service-linked-role') exit 0 ;;" \
 "  *) exit 1 ;;" \
 "esac"
 
@@ -104,16 +106,19 @@ write_stub kubectl \
 run_and_capture env PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" /bin/bash "${REPO_ROOT}/scripts/up" -auto-approve
 
 assert_status 0 "${COMMAND_STATUS}" "scripts/up should succeed with the expected happy-path tool interactions"
-assert_contains "${COMMAND_OUTPUT}" "OK 3/8 terraform apply" "up output should confirm terraform apply"
-assert_contains "${COMMAND_OUTPUT}" "OK 6/8 install observability stack" "up output should confirm the observability stage"
-assert_contains "${COMMAND_OUTPUT}" "OK 8/8 apply public inference edge" "up output should confirm the inference edge stage"
+assert_contains "${COMMAND_OUTPUT}" "OK 3/9 terraform apply" "up output should confirm terraform apply"
+assert_contains "${COMMAND_OUTPUT}" "OK 5/9 ensure EC2 Spot service-linked role" "up output should confirm the Spot account prerequisite stage"
+assert_contains "${COMMAND_OUTPUT}" "OK 7/9 install observability stack" "up output should confirm the observability stage"
+assert_contains "${COMMAND_OUTPUT}" "OK 9/9 apply public inference edge" "up output should confirm the inference edge stage"
 assert_contains "${COMMAND_OUTPUT}" "Public inference URL: http://public-edge.example.com/v1/completions" "up should print the final public inference URL"
 assert_contains "${COMMAND_OUTPUT}" "Grafana: kubectl port-forward -n monitoring deployment/kube-prometheus-stack-grafana 3000:3000" "up should print the Grafana access hint"
 
 TERRAFORM_LOG=$(cat "${TEST_TMPDIR}/terraform.log")
 KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
+AWS_LOG=$(cat "${TEST_TMPDIR}/aws.log")
 
 assert_contains "${TERRAFORM_LOG}" "apply -auto-approve" "up should pass raw terraform arguments through to terraform apply"
+assert_contains "${AWS_LOG}" "iam create-service-linked-role --aws-service-name spot.amazonaws.com" "up should create the Spot service-linked role when it is missing"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/observability/vllm-podmonitor.yaml" "up should apply the vLLM PodMonitor"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml" "up should apply the GPU metrics exporter"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" "up should install the on-demand serving NodePool"

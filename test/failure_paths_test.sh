@@ -31,6 +31,8 @@ write_common_up_stubs() {
 "set -euo pipefail" \
 "case \"\$1 \$2\" in" \
 "  'eks update-kubeconfig') exit 0 ;;" \
+"  'iam get-role') exit 1 ;;" \
+"  'iam create-service-linked-role') exit 0 ;;" \
 "  *) exit 1 ;;" \
 "esac"
 
@@ -157,8 +159,42 @@ run_missing_prereq_test() {
   link_system_command dirname
   run_and_capture env PATH="${TEST_BIN}" /bin/bash "${REPO_ROOT}/scripts/up"
   assert_status 1 "${COMMAND_STATUS}" "up should fail fast when required tools are missing"
-  assert_contains "${COMMAND_OUTPUT}" "FAIL 1/8 checking prerequisites" "up should fail in the prerequisite stage when tools are missing"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 1/9 checking prerequisites" "up should fail in the prerequisite stage when tools are missing"
   assert_contains "${COMMAND_OUTPUT}" "Missing required command(s): aws helm kubectl terraform" "up should explain which commands are missing"
+  teardown_test_tmpdir
+}
+
+run_up_spot_service_linked_role_failure_test() {
+  setup_test_tmpdir
+  write_common_up_stubs
+
+  write_stub aws \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"case \"\$1 \$2\" in" \
+"  'eks update-kubeconfig') exit 0 ;;" \
+"  'iam get-role') exit 1 ;;" \
+"  'iam create-service-linked-role')" \
+"    printf '%s\n' 'AuthFailure.ServiceLinkedRoleCreationNotPermitted'" \
+"    exit 254" \
+"    ;;" \
+"  *) exit 1 ;;" \
+"esac"
+
+  write_stub kubectl \
+"#!/usr/bin/env bash" \
+"set -euo pipefail" \
+"case \"\$*\" in" \
+"  'cluster-info') exit 0 ;;" \
+"  *) exit 1 ;;" \
+"esac"
+
+  run_and_capture env PATH="${TEST_BIN}:${TEST_PATH_SUFFIX}" /bin/bash "${REPO_ROOT}/scripts/up"
+
+  assert_status 254 "${COMMAND_STATUS}" "up should surface the Spot service-linked-role IAM failure"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 5/9 ensure EC2 Spot service-linked role" "up should fail before installing Karpenter when Spot IAM bootstrap is blocked"
+  assert_contains "${COMMAND_OUTPUT}" "Unable to ensure EC2 Spot service-linked role: AWSServiceRoleForEC2Spot" "up should name the missing Spot service-linked role"
+  assert_contains "${COMMAND_OUTPUT}" "aws iam create-service-linked-role --aws-service-name spot.amazonaws.com" "up should print the manual remediation command"
   teardown_test_tmpdir
 }
 
@@ -219,7 +255,7 @@ run_up_ingress_timeout_test() {
     /bin/bash "${REPO_ROOT}/scripts/up"
 
   assert_status 1 "${COMMAND_STATUS}" "up should fail when the ingress hostname never appears"
-  assert_contains "${COMMAND_OUTPUT}" "FAIL 8/8 apply public inference edge" "up should fail on the inference edge stage when the hostname never appears"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 9/9 apply public inference edge" "up should fail on the inference edge stage when the hostname never appears"
   teardown_test_tmpdir
 }
 
@@ -583,8 +619,9 @@ run_evaluate_spot_interruption_requires_spot_baseline_test() {
     /bin/bash "${REPO_ROOT}/scripts/evaluate" --profile zero-idle --policy active-pressure --resilience spot-interruption --report "${TEST_TMPDIR}/report.md"
 
   assert_status 1 "${COMMAND_STATUS}" "spot-interruption should fail before withdrawing on-demand when the first node is not spot"
-  assert_contains "${COMMAND_OUTPUT}" "FAIL 6/11 active-pressure: run load and wait for scale-out" "spot-interruption precondition failure should surface in scale-out stage"
-  assert_contains "${COMMAND_OUTPUT}" "spot-interruption requires the first GPU node to be spot before withdrawing on-demand capacity, but the first GPU node reported on-demand" "spot-interruption should explain the invalid baseline"
+  assert_contains "${COMMAND_OUTPUT}" "FAIL 4/11 active-pressure: wait for first ready replica and first public response" "spot-interruption precondition failure should surface as soon as the first node capacity type is known"
+  assert_contains "${COMMAND_OUTPUT}" "spot-interruption requires the first GPU node to be spot before the interruption phase, but the first GPU node reported on-demand" "spot-interruption should explain the invalid baseline"
+  assert_contains "${COMMAND_OUTPUT}" "Recent Karpenter Spot diagnostics" "spot-interruption should point operators at recent Spot provisioning errors"
   assert_file_not_exists "${TEST_TMPDIR}/ondemand-deleted" "spot-interruption should not delete on-demand NodePool when the baseline node is on-demand"
   assert_file_not_exists "${TEST_TMPDIR}/load-applied" "spot-interruption should not start load after an invalid spot baseline"
   assert_file_exists "${TEST_TMPDIR}/report.md" "spot-interruption precondition failures should still write a Markdown report"
@@ -1647,6 +1684,7 @@ run_down_orphan_security_group_cleanup_retry_test() {
 }
 
 run_missing_prereq_test
+run_up_spot_service_linked_role_failure_test
 run_up_ingress_timeout_test
 run_verify_gpu_timeout_test
 run_verify_ready_timeout_test

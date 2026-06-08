@@ -911,6 +911,23 @@ print_serving_pod_snapshot() {
   printf 'Current serving pods:\n%s\n' "${output}" >&2
 }
 
+print_recent_karpenter_spot_diagnostics() {
+  local output
+
+  output=$(
+    kubectl logs -n "${KARPENTER_NAMESPACE}" "deployment/${KARPENTER_RELEASE_NAME}" --since=15m 2>/dev/null \
+      | awk '/gpu-serving-spot|CreateFleet|MaxSpotInstanceCountExceeded|UnfulfillableCapacity|ServiceLinkedRoleCreationNotPermitted/ { print }' \
+      | tail -n 8 || true
+  )
+
+  if [[ -z "${output}" ]]; then
+    printf 'Recent Karpenter Spot diagnostics: none found in the last 15m\n' >&2
+    return 0
+  fi
+
+  printf 'Recent Karpenter Spot diagnostics:\n%s\n' "${output}" >&2
+}
+
 wait_for_serving_nodeclaims_at_least_with_progress() {
   local expected=$1
   local timeout_seconds=$2
@@ -1246,17 +1263,27 @@ prepare_spot_interruption_scale_out() {
     return 0
   fi
 
-  if [[ "${FIRST_GPU_CAPACITY_TYPE:-}" != "spot" ]]; then
-    local reason
-    reason="spot-interruption requires the first GPU node to be spot before withdrawing on-demand capacity, but the first GPU node reported ${FIRST_GPU_CAPACITY_TYPE:-unknown}"
-    printf '%s\n' "${reason}" >&2
-    print_serving_nodeclaim_snapshot
-    print_serving_node_snapshot
-    write_resilience_precondition_report "interruption-precondition-failed" "${reason}"
-    return 1
+  require_spot_interruption_first_gpu_spot || return 1
+  disable_ondemand_nodepool || return 1
+}
+
+require_spot_interruption_first_gpu_spot() {
+  if ! is_spot_interruption_mode; then
+    return 0
   fi
 
-  disable_ondemand_nodepool || return 1
+  if [[ "${FIRST_GPU_CAPACITY_TYPE:-}" == "spot" ]]; then
+    return 0
+  fi
+
+  local reason
+  reason="spot-interruption requires the first GPU node to be spot before the interruption phase, but the first GPU node reported ${FIRST_GPU_CAPACITY_TYPE:-unknown}. Spot baseline capacity was unavailable; inspect recent Karpenter Spot diagnostics for quota or capacity errors."
+  printf '%s\n' "${reason}" >&2
+  print_serving_nodeclaim_snapshot
+  print_serving_node_snapshot
+  print_recent_karpenter_spot_diagnostics
+  write_resilience_precondition_report "interruption-precondition-failed" "${reason}"
+  return 1
 }
 
 prepare_edge_and_profile() {
@@ -1310,6 +1337,7 @@ wait_for_first_ready_and_response() {
   if [[ -z "${FIRST_GPU_NODE_NAME}" ]]; then
     populate_first_gpu_node_identity
   fi
+  require_spot_interruption_first_gpu_spot || return 1
 
   FIRST_POD_NAME=$(wait_for_first_pod_name "${EVALUATE_SCALE_TIMEOUT_SECONDS}") || return 1
   FIRST_POD_SCHEDULED_TIME=$(wait_for_pod_condition_timestamp \

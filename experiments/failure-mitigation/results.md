@@ -2,21 +2,28 @@
 
 ## Status
 
-Partial live run on 2026-06-06. The catalog and `./scripts/failure` command are
-usable, but the capacity-recovery suite is not yet a promotion gate.
+Partial live capacity-recovery pass on 2026-06-07. The catalog and
+`./scripts/failure` command are usable, but the capacity-recovery suite is not
+yet a promotion gate because the account cannot currently launch the required
+Spot GPU baseline.
 
 ## Latest Live Run
 
 | Scenario | Mitigation | Result | Notes |
 | --- | --- | --- | --- |
-| `spot-unavailable` | `ondemand-fallback` | Passed | Spot NodePool was withdrawn and the service scaled to on-demand. First public response was 459s, second ready replica was 925s, and final cleanup to zero GPU nodes was 2183s. |
-| `spot-interruption` | `ondemand-fallback` | Failed before recovery | The first serving node landed on on-demand, then the drill withdrew on-demand and left the service without ready endpoints. The load job failed with 3599 failed requests before HPA could scale out. |
+| `spot-unavailable` | `ondemand-fallback` | Passed | Spot NodePool was withdrawn and the service scaled to on-demand. First public response was 427s, second ready replica was 904s, p95 request latency was 117s, peak active requests was 256, and average GPU utilization was 18.1%. |
+| `spot-interruption` | `ondemand-fallback` | Blocked before recovery | Karpenter attempted `gpu-serving-spot`, but EC2 returned `MaxSpotInstanceCountExceeded` plus `UnfulfillableCapacity`, then fallback created an on-demand first node. The patched evaluator stopped at first-node capacity discovery instead of waiting for vLLM cold start. |
 
-Follow-up from this run: `scripts/evaluate` now fails fast when a load job
-reaches `Failed` before HPA scale-out, writes partial reports for interruption
-precondition failures, refuses to withdraw on-demand unless the first serving
-node is already spot-backed, and steers interruption recovery with temporary
-NodePool weights instead of deleting a live spot NodePool.
+Follow-up from this run: `scripts/up` now ensures the EC2 Spot service-linked
+role before installing Karpenter, and `scripts/evaluate` now stops
+`spot-interruption` as soon as the first GPU node is not spot-backed. The
+precondition failure prints recent Karpenter Spot diagnostics, writes partial
+reports, and avoids the several-minute vLLM image/model startup wait.
+
+Remaining live blocker: raise or free EC2 Spot quota for the target GPU families
+in `us-west-2`, or broaden the Spot NodePool to additional viable GPU
+instance-size/family combinations before treating `spot-interruption` as a
+promotion gate.
 
 ## Planned Matrix
 

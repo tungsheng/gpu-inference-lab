@@ -6,7 +6,7 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/_common.sh"
 
-TOTAL_STAGES=8
+TOTAL_STAGES=9
 
 usage() {
   cat <<EOF
@@ -133,28 +133,34 @@ main() {
   run_stage 4 "${TOTAL_STAGES}" "connect cluster context" connect_cluster
 
   set_failure_hints \
+    "aws iam get-role --role-name ${EC2_SPOT_SERVICE_LINKED_ROLE_NAME}" \
+    "aws iam create-service-linked-role --aws-service-name ${EC2_SPOT_SERVICE_LINKED_ROLE_SERVICE_NAME}" \
+    "kubectl logs -n ${KARPENTER_NAMESPACE} deployment/${KARPENTER_RELEASE_NAME} --tail=80"
+  run_stage 5 "${TOTAL_STAGES}" "ensure EC2 Spot service-linked role" ensure_ec2_spot_service_linked_role
+
+  set_failure_hints \
     "kubectl get serviceaccount -n kube-system ${ALB_CONTROLLER_SERVICE_ACCOUNT_NAME} -o yaml" \
     "helm list -n kube-system" \
     "kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller"
-  run_stage 5 "${TOTAL_STAGES}" "install aws load balancer controller" install_aws_load_balancer_controller
+  run_stage 6 "${TOTAL_STAGES}" "install aws load balancer controller" install_aws_load_balancer_controller
 
   set_failure_hints \
     "helm list -n ${MONITORING_NAMESPACE}" \
     "kubectl get apiservice ${PROMETHEUS_ADAPTER_APISERVICE_NAME} -o yaml" \
     "kubectl get pods -n ${MONITORING_NAMESPACE}"
-  run_stage 6 "${TOTAL_STAGES}" "install observability stack" install_observability_stack
+  run_stage 7 "${TOTAL_STAGES}" "install observability stack" install_observability_stack
 
   set_failure_hints \
     "helm list -n ${KARPENTER_NAMESPACE}" \
     "kubectl get ec2nodeclass,nodepool" \
     "kubectl get daemonset -n kube-system nvidia-device-plugin-daemonset -o wide"
-  run_stage 7 "${TOTAL_STAGES}" "install karpenter and gpu prerequisites" install_karpenter_stack
+  run_stage 8 "${TOTAL_STAGES}" "install karpenter and gpu prerequisites" install_karpenter_stack
 
   set_failure_hints \
     "kubectl get service,ingress -n ${APP_NAMESPACE}" \
     "kubectl describe ingress ${GPU_INFERENCE_INGRESS_NAME} -n ${APP_NAMESPACE}" \
     "kubectl get events -n ${APP_NAMESPACE} --sort-by=.lastTimestamp | tail -n 40"
-  run_stage 8 "${TOTAL_STAGES}" "apply public inference edge" apply_inference_edge
+  run_stage 9 "${TOTAL_STAGES}" "apply public inference edge" apply_inference_edge
 
   printf '\nReady:\n'
   printf '  Public inference URL: %s\n' "$(public_inference_url "${INGRESS_HOSTNAME}")"
