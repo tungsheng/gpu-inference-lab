@@ -12,6 +12,8 @@ run_experiment_list_test() {
   assert_status 0 "${COMMAND_STATUS}" "scripts/experiment list should succeed"
   assert_contains "${COMMAND_OUTPUT}" "kv-cache" "experiment list should include the KV-cache experiment"
   assert_contains "${COMMAND_OUTPUT}" "KV Cache Vs Concurrency" "experiment list should include the KV-cache title"
+  assert_contains "${COMMAND_OUTPUT}" "kv-cache-observatory" "experiment list should include the KV-cache observatory experiment"
+  assert_contains "${COMMAND_OUTPUT}" "KV Cache Observatory" "experiment list should include the KV-cache observatory title"
   assert_contains "${COMMAND_OUTPUT}" "prefill-decode" "experiment list should include the prefill/decode experiment"
   assert_contains "${COMMAND_OUTPUT}" "Prefill Vs Decode Timing" "experiment list should include the prefill/decode title"
   assert_contains "${COMMAND_OUTPUT}" "batching" "experiment list should include the batching experiment"
@@ -32,7 +34,7 @@ run_experiment_validate_test() {
   run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" validate
 
   assert_status 0 "${COMMAND_STATUS}" "scripts/experiment validate should succeed for the checked-in catalog"
-  assert_contains "${COMMAND_OUTPUT}" "Validated 8 experiment(s)." "validate should report the number of checked-in experiments"
+  assert_contains "${COMMAND_OUTPUT}" "Validated 9 experiment(s)." "validate should report the number of checked-in experiments"
 }
 
 run_experiment_show_test() {
@@ -141,6 +143,22 @@ run_fp4_show_test() {
   assert_contains "${COMMAND_OUTPUT}" "recipe=quantization/smoothquant_nvfp4_recipe.py" "show output should include the SmoothQuant recipe"
   assert_contains "${COMMAND_OUTPUT}" "Serving extensions:" "show output should include serving extensions"
   assert_contains "${COMMAND_OUTPUT}" "dtype=auto tensor_parallel=8 node_profile=blackwell quantization=nvfp4+smoothquant" "show output should include Blackwell serving metadata"
+}
+
+run_kv_cache_observatory_show_test() {
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" show kv-cache-observatory
+
+  assert_status 0 "${COMMAND_STATUS}" "scripts/experiment show should succeed for kv-cache-observatory"
+  assert_contains "${COMMAND_OUTPUT}" "Experiment: kv-cache-observatory" "show output should include the observatory experiment name"
+  assert_contains "${COMMAND_OUTPUT}" "long-context-workload" "show output should include the long-context workload"
+  assert_contains "${COMMAND_OUTPUT}" "shared-system-prompt" "show output should include the shared-system-prompt workload"
+  assert_contains "${COMMAND_OUTPUT}" "agent-workflow" "show output should include the agent workflow workload"
+  assert_contains "${COMMAND_OUTPUT}" "cache-miss-storm" "show output should include the cache miss storm workload"
+  assert_contains "${COMMAND_OUTPUT}" "Request shapes:" "show output should include Request A/B/C shapes"
+  assert_contains "${COMMAND_OUTPUT}" "shared-system-prompt/request-a: prompt=2048 output=200 weight=1" "show output should include Request A allocation metadata"
+  assert_contains "${COMMAND_OUTPUT}" "modern-vllm-0221" "show output should include the modern vLLM profile"
+  assert_contains "${COMMAND_OUTPUT}" "modern-vllm-0221-prefix" "show output should include the prefix-cache profile"
+  assert_contains "${COMMAND_OUTPUT}" "vllm/vllm-openai:v0.22.1" "show output should include the vLLM 0.22.1 image"
 }
 
 run_render_load_test() {
@@ -278,9 +296,33 @@ run_render_request_pattern_load_test() {
 
   assert_contains "${REQUEST_PATTERN_MANIFEST}" 'const requestShapes = [{ label: "short", promptTokenTarget: 128, maxTokens: 64, weight: 6 }, { label: "medium", promptTokenTarget: 512, maxTokens: 128, weight: 3 }, { label: "long", promptTokenTarget: 1536, maxTokens: 512, weight: 1 }];' "uneven load manifest should embed weighted request shapes"
   assert_contains "${REQUEST_PATTERN_MANIFEST}" "function selectRequestShape()" "uneven load manifest should select a shape per request"
-  assert_contains "${REQUEST_PATTERN_MANIFEST}" "prompt: buildPrompt(requestShape.promptTokenTarget)" "uneven load manifest should build prompts from selected shapes"
+  assert_contains "${REQUEST_PATTERN_MANIFEST}" "prompt: buildPrompt(requestShape.promptTokenTarget, requestShape.label)" "uneven load manifest should build prompts from selected shapes"
   assert_contains "${REQUEST_PATTERN_MANIFEST}" "max_tokens: requestShape.maxTokens" "uneven load manifest should set output caps from selected shapes"
   assert_contains "${REQUEST_PATTERN_MANIFEST}" "request_shape: requestShape.label" "uneven load manifest should tag requests by selected shape"
+
+  teardown_test_tmpdir
+}
+
+run_render_kv_cache_observatory_load_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-load \
+    --experiment kv-cache-observatory \
+    --case cache-miss-storm \
+    --output "${TEST_TMPDIR}/kv-cache-observatory-miss-storm.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-load should render the KV Cache Observatory miss-storm case"
+  assert_file_exists "${TEST_TMPDIR}/kv-cache-observatory-miss-storm.yaml" "render-load should write the observatory manifest"
+
+  OBSERVATORY_MANIFEST=$(cat "${TEST_TMPDIR}/kv-cache-observatory-miss-storm.yaml")
+
+  assert_contains "${OBSERVATORY_MANIFEST}" 'const experimentName = "kv-cache-observatory";' "observatory load should embed the experiment name"
+  assert_contains "${OBSERVATORY_MANIFEST}" 'const caseId = "cache-miss-storm";' "observatory load should embed the selected case"
+  assert_contains "${OBSERVATORY_MANIFEST}" 'const requestShapes = [{ label: "request-a", promptTokenTarget: 2048, maxTokens: 200, weight: 1 }, { label: "request-b", promptTokenTarget: 2048, maxTokens: 200, weight: 1 }, { label: "request-c", promptTokenTarget: 2048, maxTokens: 200, weight: 1 }];' "observatory load should embed Request A/B/C shapes"
+  assert_contains "${OBSERVATORY_MANIFEST}" "function buildObservatoryMissStormPrompt" "observatory load should include the miss-storm prompt strategy"
+  assert_contains "${OBSERVATORY_MANIFEST}" 'experimentName === "kv-cache-observatory" && caseId === "cache-miss-storm"' "observatory load should select the miss-storm prompt branch"
+  assert_contains "${OBSERVATORY_MANIFEST}" "prompt: buildPrompt(requestShape.promptTokenTarget, requestShape.label)" "observatory load should pass request labels into the prompt builder"
+  assert_contains "${OBSERVATORY_MANIFEST}" "request_shape: requestShape.label" "observatory load should tag Request A/B/C traffic"
 
   teardown_test_tmpdir
 }
@@ -479,6 +521,32 @@ run_render_fp8_kv_serving_profile_test() {
   teardown_test_tmpdir
 }
 
+run_render_modern_vllm_0221_serving_profile_test() {
+  setup_test_tmpdir
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-serving \
+    --experiment kv-cache-observatory \
+    --profile modern-vllm-0221-prefix \
+    --output "${TEST_TMPDIR}/vllm-modern-0221-prefix.yaml"
+
+  assert_status 0 "${COMMAND_STATUS}" "render-serving should render the modern vLLM 0.22.1 prefix profile"
+  assert_file_exists "${TEST_TMPDIR}/vllm-modern-0221-prefix.yaml" "render-serving should write the modern vLLM manifest"
+
+  MODERN_VLLM_MANIFEST=$(cat "${TEST_TMPDIR}/vllm-modern-0221-prefix.yaml")
+
+  assert_contains "${MODERN_VLLM_MANIFEST}" "image: vllm/vllm-openai:v0.22.1" "modern profile should pin vLLM 0.22.1"
+  assert_contains "${MODERN_VLLM_MANIFEST}" '- --enable-prefix-caching' "prefix profile should enable prefix caching"
+  assert_contains "${MODERN_VLLM_MANIFEST}" '- --max-model-len' "modern profile should include max model length"
+  assert_contains "${MODERN_VLLM_MANIFEST}" '- "9216"' "modern profile should use the long-context model length"
+  assert_contains "${MODERN_VLLM_MANIFEST}" '- --max-num-seqs' "modern profile should include the sequence limit"
+  assert_contains "${MODERN_VLLM_MANIFEST}" '- "32"' "modern profile should cap max sequences"
+  assert_contains "${MODERN_VLLM_MANIFEST}" '- --max-num-batched-tokens' "modern profile should include the batched-token limit"
+  assert_contains "${MODERN_VLLM_MANIFEST}" '- --gpu-memory-utilization' "modern profile should include GPU memory utilization"
+  assert_contains "${MODERN_VLLM_MANIFEST}" '- "0.90"' "modern profile should use the intended GPU memory target"
+
+  teardown_test_tmpdir
+}
+
 run_render_batching_serving_profile_test() {
   setup_test_tmpdir
 
@@ -583,9 +651,14 @@ run_render_report_test() {
   assert_contains "${REPORT_CONTENT}" "| p95 server decode | n/a |" "Markdown report should render unavailable server decode timing as n/a"
   assert_contains "${REPORT_CONTENT}" "| p95 server inter-token latency | n/a |" "Markdown report should render unavailable server inter-token timing as n/a"
   assert_contains "${REPORT_CONTENT}" "| GPU memory used | n/a |" "Markdown report should render unavailable GPU memory metrics as n/a"
+  assert_contains "${REPORT_CONTENT}" "| KV cache source | n/a |" "Markdown report should render unavailable KV cache source as n/a"
+  assert_contains "${REPORT_CONTENT}" "| KV cache active blocks | n/a |" "Markdown report should render unavailable active block metrics as n/a"
+  assert_contains "${REPORT_CONTENT}" "| KV cache hit tokens | n/a |" "Markdown report should render unavailable cache hits as n/a"
+  assert_contains "${REPORT_CONTENT}" "| KV cache memory utilization | n/a |" "Markdown report should render unavailable KV utilization as n/a"
   assert_contains "${REPORT_CONTENT}" "Unavailable fields remain \`n/a\` when the runner did not collect that signal" "Markdown report should explain unavailable metrics conservatively"
   assert_contains "${REPORT_CONTENT}" "Client timing fields use k6 HTTP phases" "Markdown report should explain client timing semantics"
   assert_contains "${REPORT_CONTENT}" "Server timing fields use vLLM Prometheus histograms" "Markdown report should explain server timing semantics"
+  assert_contains "${REPORT_CONTENT}" "KV cache fields use vLLM Prometheus metrics" "Markdown report should explain KV cache source semantics"
   assert_contains "${JSON_REPORT_CONTENT}" "\"schema_version\": \"experiment-report/v1\"" "JSON report should include the schema version"
   assert_contains "${JSON_REPORT_CONTENT}" "\"status\": \"pending\"" "JSON report should mark the scaffold as pending"
   assert_contains "${JSON_REPORT_CONTENT}" "\"requires_live_cluster\": true" "JSON report should state that measured results require a live cluster"
@@ -605,6 +678,11 @@ run_render_report_test() {
   assert_contains "${JSON_REPORT_CONTENT}" "\"p50_ttft_seconds\": null" "JSON report should render unavailable TTFT as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"p95_inter_token_latency_seconds\": null" "JSON report should render unavailable inter-token latency as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"gpu_memory_used_bytes\": null" "JSON report should render unavailable GPU memory as null"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"kv_cache\": {" "JSON report should include the KV cache results block"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"source\": null" "JSON report should render unavailable KV cache source as null"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"active_blocks\": null" "JSON report should render unavailable active block metrics as null"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"cache_hit_tokens\": null" "JSON report should render unavailable cache hits as null"
+  assert_contains "${JSON_REPORT_CONTENT}" "\"kv_memory_utilization_percent\": null" "JSON report should render unavailable KV utilization as null"
   assert_contains "${JSON_REPORT_CONTENT}" "\"cost_per_1000_successful_requests_usd\": null" "JSON report should render unavailable cost as null"
 
   teardown_test_tmpdir
@@ -971,6 +1049,16 @@ write_experiment_run_curl_stub() {
   "    value='3.200'" \
   "  elif [[ \"\$cmd\" == *'e2e_request_latency_seconds_bucket'* ]]; then" \
   "    value='6.400'" \
+  "  elif [[ \"\$cmd\" == *'gpu_cache_usage_perc'* ]]; then" \
+  "    value='62.5'" \
+  "  elif [[ \"\$cmd\" == *'gpu_prefix_cache_hits'* ]]; then" \
+  "    value='120'" \
+  "  elif [[ \"\$cmd\" == *'gpu_prefix_cache_queries'* ]]; then" \
+  "    value='200'" \
+  "  elif [[ \"\$cmd\" == *'kv_cache_evictions'* ]]; then" \
+  "    value='4'" \
+  "  elif [[ \"\$cmd\" == *'kv_cache_reloads'* ]]; then" \
+  "    value='9'" \
   "  elif [[ \"\$cmd\" == *'num_requests_running'* && \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
   "    value='11'" \
   "  elif [[ \"\$cmd\" == *'num_requests_waiting'* ]]; then" \
@@ -1000,6 +1088,7 @@ run_live_experiment_runner_test() {
   run_and_capture env \
     PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
     TMPDIR=/tmp \
+    EXPERIMENT_KV_CACHE_TOTAL_BLOCKS=100 \
     /bin/bash "${REPO_ROOT}/scripts/experiment" run \
     --experiment kv-cache \
     --case prompt-512-output-100 \
@@ -1038,6 +1127,16 @@ run_live_experiment_runner_test() {
   assert_contains "${RUN_REPORT_CONTENT}" "| p95 server e2e latency | 6.400 |" "experiment run should collect server e2e timing when vLLM histograms are available"
   assert_contains "${RUN_REPORT_CONTENT}" "| Generated tokens | 4096 |" "experiment run should parse generated token totals from k6 logs"
   assert_contains "${RUN_REPORT_CONTENT}" "| Run duration | 120 |" "experiment run should parse run duration from k6 logs"
+  assert_contains "${RUN_REPORT_CONTENT}" "| KV cache source | derived |" "experiment run should label block counts derived when total blocks are supplied"
+  assert_contains "${RUN_REPORT_CONTENT}" "| KV cache total blocks | 100 |" "experiment run should include supplied total KV blocks"
+  assert_contains "${RUN_REPORT_CONTENT}" "| KV cache active blocks | 63 |" "experiment run should derive active KV blocks from utilization"
+  assert_contains "${RUN_REPORT_CONTENT}" "| KV cache free blocks | 37 |" "experiment run should derive free KV blocks from utilization"
+  assert_contains "${RUN_REPORT_CONTENT}" "| KV cache hit tokens | 120 |" "experiment run should collect prefix cache hits"
+  assert_contains "${RUN_REPORT_CONTENT}" "| KV cache miss tokens | 80.000000 |" "experiment run should derive prefix cache misses"
+  assert_contains "${RUN_REPORT_CONTENT}" "| KV cache hit rate | 0.600000 |" "experiment run should derive prefix cache hit rate"
+  assert_contains "${RUN_REPORT_CONTENT}" "| KV cache evictions | 4 |" "experiment run should collect KV eviction counters"
+  assert_contains "${RUN_REPORT_CONTENT}" "| KV cache reloads | 9 |" "experiment run should collect KV reload counters"
+  assert_contains "${RUN_REPORT_CONTENT}" "| KV cache memory utilization | 62.5 |" "experiment run should collect KV memory utilization"
   assert_contains "${RUN_JSON_CONTENT}" "\"status\": \"complete\"" "experiment run should mark the JSON report complete"
   assert_contains "${RUN_JSON_CONTENT}" "\"source\": \"scripts/experiment run\"" "experiment run should record the live runner source"
   assert_contains "${RUN_JSON_CONTENT}" "\"completed_requests\": 42" "experiment run should write completed requests to JSON"
@@ -1071,6 +1170,17 @@ run_live_experiment_runner_test() {
   assert_contains "${RUN_JSON_CONTENT}" "\"max_gpu_utilization_percent\": 88.2" "experiment run should collect max GPU utilization when DCGM is available"
   assert_contains "${RUN_JSON_CONTENT}" "\"gpu_memory_used_bytes\": 4294967296" "experiment run should collect GPU memory used when DCGM is available"
   assert_contains "${RUN_JSON_CONTENT}" "\"gpu_memory_free_bytes\": 8589934592" "experiment run should collect GPU memory free when DCGM is available"
+  assert_contains "${RUN_JSON_CONTENT}" "\"kv_cache\": {" "experiment run should write KV cache metrics to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"source\": \"derived\"" "experiment run should write KV cache metric source to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"total_blocks\": 100" "experiment run should write total KV blocks to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"active_blocks\": 63" "experiment run should write active KV blocks to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"free_blocks\": 37" "experiment run should write free KV blocks to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"cache_hit_tokens\": 120" "experiment run should write prefix cache hits to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"cache_miss_tokens\": 80.000000" "experiment run should write derived prefix misses to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"cache_hit_rate\": 0.600000" "experiment run should write derived prefix hit rate to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"evictions\": 4" "experiment run should write KV evictions to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"reloads\": 9" "experiment run should write KV reloads to JSON"
+  assert_contains "${RUN_JSON_CONTENT}" "\"kv_memory_utilization_percent\": 62.5" "experiment run should write KV utilization to JSON"
   assert_contains "${RUN_JSON_CONTENT}" "\"cost_per_1000_successful_requests_usd\": null" "experiment run should leave cost null without a cost profile"
   assert_occurs_before "${KUBECTL_LOG}" \
     "apply -f ${REPO_ROOT}/platform/inference/service.yaml" \
@@ -1095,6 +1205,9 @@ run_live_experiment_runner_test() {
   assert_contains "${CURL_LOG}" "query=count(DCGM_FI_DEV_GPU_UTIL)" "experiment run should verify DCGM GPU utilization is scrapeable before load"
   assert_contains "${CURL_LOG}" "query=count(DCGM_FI_DEV_FB_USED)" "experiment run should verify DCGM used-memory metrics are scrapeable before load"
   assert_contains "${CURL_LOG}" "query=count(DCGM_FI_DEV_FB_FREE)" "experiment run should verify DCGM free-memory metrics are scrapeable before load"
+  assert_contains "${CURL_LOG}" "gpu_cache_usage_perc" "experiment run should query KV cache utilization"
+  assert_contains "${CURL_LOG}" "gpu_prefix_cache_hits" "experiment run should query prefix-cache hits"
+  assert_contains "${CURL_LOG}" "gpu_prefix_cache_queries" "experiment run should query prefix-cache query totals"
   assert_contains "${CURL_LOG}" "time=" "experiment run should anchor final Prometheus queries to the observed load window"
   assert_contains "${KUBECTL_LOG}" "delete -f /tmp/gpu-lab-experiment-load." "experiment run should clean up the rendered load manifest"
   assert_contains "${KUBECTL_LOG}" "delete -f /tmp/gpu-lab-experiment-serving." "experiment run should clean up the rendered serving manifest"
@@ -1573,10 +1686,12 @@ run_request_patterns_show_test
 run_autoscaling_show_test
 run_cost_show_test
 run_fp4_show_test
+run_kv_cache_observatory_show_test
 run_render_load_test
 run_render_fractional_arrival_rate_load_test
 run_render_autoscaling_load_test
 run_render_request_pattern_load_test
+run_render_kv_cache_observatory_load_test
 run_render_stream_test
 run_render_mixed_stream_test
 run_render_fp4_quantization_manifest_test
@@ -1585,6 +1700,7 @@ run_render_unknown_case_test
 run_render_default_serving_profile_test
 run_render_long_context_serving_profile_test
 run_render_fp8_kv_serving_profile_test
+run_render_modern_vllm_0221_serving_profile_test
 run_render_batching_serving_profile_test
 run_render_fp4_serving_profile_test
 run_render_unknown_serving_profile_test

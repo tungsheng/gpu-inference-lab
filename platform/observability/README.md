@@ -27,6 +27,9 @@ observability as part of the main platform story rather than a manual add-on.
 - experiment summary metrics pushed to Pushgateway
 - Grafana experiment summaries grouped by `profile`, `resilience`, `policy`,
   and target
+- Grafana KV Cache Observatory panels for KV utilization, prefix hit/miss
+  tokens, request pressure, queue/prefill/decode timing, GPU memory, and
+  eviction/reload signals when available
 
 ## Current Custom Metric Surface
 

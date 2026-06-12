@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/gpu-inference-lab/kv-cache-trace.schema.json",
+  "title": "KV Cache Observatory Trace",
+  "type": "object",
+  "required": ["schema_version", "run", "block_size", "total_blocks", "requests", "events"],
+  "properties": {
+    "schema_version": { "const": "kv-cache-trace/v1" },
+    "run": {
+      "type": "object",
+      "required": ["experiment", "case", "profile", "source"],
+      "properties": {
+        "experiment": { "type": "string" },
+        "case": { "type": "string" },
+        "profile": { "type": "string" },
+        "source": { "enum": ["observed", "derived", "unavailable"] }
+      },
+      "additionalProperties": false
+    },
+    "block_size": { "type": "integer", "minimum": 1 },
+    "total_blocks": { "type": "integer", "minimum": 1 },
+    "requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label"],
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "prompt_tokens": { "type": "integer" },
+          "max_tokens": { "type": "integer" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["time_seconds", "type", "request_id", "blocks"],
+        "properties": {
+          "time_seconds": { "type": "number" },
+          "type": {
+            "enum": [
+              "request_start",
+              "block_allocated",
+              "block_reused",
+              "block_freed",
+              "block_evicted",
+              "request_finish"
+            ]
+          },
+          "request_id": { "type": "string" },
+          "blocks": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0 }
+          },
+          "source": { "enum": ["observed", "derived", "unavailable"] }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

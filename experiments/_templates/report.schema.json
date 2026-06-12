@@ -333,6 +333,24 @@
           },
           "additionalProperties": false
         },
+        "kv_cache": {
+          "type": "object",
+          "properties": {
+            "source": { "enum": ["observed", "derived", "unavailable", null] },
+            "total_blocks": { "type": ["number", "null"] },
+            "active_blocks": { "type": ["number", "null"] },
+            "free_blocks": { "type": ["number", "null"] },
+            "fragmented_blocks": { "type": ["number", "null"] },
+            "cache_hit_tokens": { "type": ["number", "null"] },
+            "cache_miss_tokens": { "type": ["number", "null"] },
+            "cache_hit_rate": { "type": ["number", "null"] },
+            "evictions": { "type": ["number", "null"] },
+            "reloads": { "type": ["number", "null"] },
+            "kv_memory_utilization_percent": { "type": ["number", "null"] },
+            "kv_memory_used_bytes": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        },
         "accuracy": {
           "type": "object",
           "properties": {

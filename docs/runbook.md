@@ -21,6 +21,7 @@ Run local tests at any point:
 | Inspect experiment definitions | `./scripts/experiment list` |
 | Validate catalog contracts | `./scripts/experiment validate` |
 | Show one experiment | `./scripts/experiment show kv-cache` |
+| Render a KV cache timeline demo | `./scripts/kv-observe demo --output /tmp/kv-cache-observatory.html` |
 | Bring up the dev platform | `./scripts/up` |
 | Prove cold start from zero GPU nodes | `./scripts/verify` |
 | Run the default burst baseline | `./scripts/evaluate --profile zero-idle` |
@@ -58,6 +59,10 @@ Render-only commands do not require AWS or collect measurements.
   --profile optimized-batched
 
 ./scripts/experiment summarize-reports --experiment kv-cache
+
+./scripts/kv-observe preflight \
+  --experiment kv-cache-observatory \
+  --profile modern-vllm-0221
 ```
 
 ## Bring Up
@@ -114,11 +119,20 @@ captured.
   --case prefill-heavy \
   --profile default \
   --samples 5
+
+./scripts/experiment run \
+  --experiment kv-cache-observatory \
+  --case shared-system-prompt \
+  --profile modern-vllm-0221-prefix
 ```
 
 The runner applies rendered serving and client manifests, waits for completion,
 writes Markdown and JSON reports under `docs/reports/`, and cleans up rendered
 resources unless `--preserve-serving` or `--preserve-load` is set.
+
+KV Cache Observatory reports add nullable `results.kv_cache` fields. Missing
+block, eviction, or reload fields are expected until vLLM metrics or KV events
+expose that signal for the selected serving path.
 
 ## Failure Drills
 

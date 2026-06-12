@@ -1,0 +1,4 @@
+profile_id,model,served_model_name,vllm_image,max_model_len,gpu_memory_utilization,max_num_seqs,max_num_batched_tokens,cpu_request,memory_request,cpu_limit,memory_limit,model_cache_size,shm_size,description
+default,,,,,,,,,,,,,,default checked-in serving profile
+modern-vllm-0221,,,vllm/vllm-openai:v0.22.1,9216,0.90,32,9216,,,,,,,modern vLLM 0.22.1 profile for KV Cache Observatory experiments
+modern-vllm-0221-prefix,,,vllm/vllm-openai:v0.22.1,9216,0.90,32,9216,,,,,,,modern vLLM 0.22.1 profile with prefix caching enabled for reuse experiments

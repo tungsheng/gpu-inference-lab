@@ -9,7 +9,7 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT_SCRIPTS=$(find "${REPO_ROOT}/scripts" -maxdepth 1 -type f | sed 's#.*/##' | sort)
 LIB_FILES=$(find "${REPO_ROOT}/scripts/lib" -maxdepth 1 -type f | sed 's#.*/##' | sort)
 
-assert_eq $'_common.sh\ndown\nevaluate\nexperiment\nfailure\nup\nverify' "${ROOT_SCRIPTS}" "scripts/ should expose the lifecycle commands and experiment helpers at the repo root"
+assert_eq $'_common.sh\ndown\nevaluate\nexperiment\nfailure\nkv-observe\nup\nverify' "${ROOT_SCRIPTS}" "scripts/ should expose the lifecycle commands and experiment helpers at the repo root"
 assert_eq $'README.md\ndestroy-recovery.sh\nevaluate-reports.sh\nplatform.sh' "${LIB_FILES}" "scripts/lib should contain the shared platform, teardown recovery, and report helper libraries"
 
 assert_file_not_exists "${REPO_ROOT}/scripts/dev" "the umbrella dev CLI should be removed"

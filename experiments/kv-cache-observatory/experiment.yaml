@@ -1,0 +1,45 @@
+name: kv-cache-observatory
+title: KV Cache Observatory
+status: planned
+owner: local
+
+question: Which KV-cache signals explain memory pressure, prefix reuse, evictions, and latency in modern vLLM serving?
+
+serving_profile:
+  defaults: ../_profiles/serving-defaults.csv
+  profiles_file: serving-profiles.csv
+  extensions_file: serving-extensions.csv
+  notes:
+    - The default modern profile pins vLLM v0.22.1 for new KV-cache observatory work.
+    - Historical v0.9.0 results remain in experiments/kv-cache and should not be rewritten as v0.22.1 evidence.
+
+workload:
+  generator: k6
+  endpoint: /v1/completions
+  cases_file: cases.csv
+  request_shapes_file: request-shapes.csv
+  prompt_strategy: observatory-prefix-patterns
+  output_strategy: max_tokens
+
+metrics:
+  required:
+    - active_blocks
+    - free_blocks
+    - fragmented_blocks
+    - cache_hit_tokens
+    - cache_miss_tokens
+    - cache_hit_rate
+    - evictions
+    - reloads
+    - kv_memory_utilization_percent
+    - p95_request_latency_seconds
+    - p95_queue_seconds
+    - p95_prefill_seconds
+    - p95_decode_seconds
+    - average_gpu_utilization_percent
+    - gpu_memory_used_bytes
+
+artifacts:
+  readme: README.md
+  results: results.md
+  graphs_dir: graphs

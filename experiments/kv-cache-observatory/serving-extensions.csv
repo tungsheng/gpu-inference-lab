@@ -1,0 +1,3 @@
+profile_id,dtype,tensor_parallel_size,node_profile,quantization_method,model_artifact_path,model_artifact_hash,recipe_hash,calibration_dataset,calibration_split,calibration_samples,calibration_max_seq_len,calibration_seed,kv_cache_dtype,calculate_kv_scales,description
+modern-vllm-0221,float16,,,,,,,,,,,,,,modern vLLM 0.22.1 baseline for KV observability
+modern-vllm-0221-prefix,float16,,,,,,,,,,,,,,modern vLLM 0.22.1 baseline for prefix-cache reuse visibility

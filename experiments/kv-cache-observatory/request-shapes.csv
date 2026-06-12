@@ -1,0 +1,10 @@
+case_id,shape_id,prompt_token_target,max_tokens,weight
+shared-system-prompt,request-a,2048,200,1
+shared-system-prompt,request-b,2048,200,1
+shared-system-prompt,request-c,2048,200,1
+agent-workflow,request-a,2048,128,2
+agent-workflow,request-b,3072,256,2
+agent-workflow,request-c,4096,256,1
+cache-miss-storm,request-a,2048,200,1
+cache-miss-storm,request-b,2048,200,1
+cache-miss-storm,request-c,2048,200,1

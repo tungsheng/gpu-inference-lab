@@ -1,0 +1,5 @@
+case_id,prompt_token_target,max_tokens,start_rate,target_rate,ramp_up_duration,steady_duration,ramp_down_duration,pre_allocated_vus,max_vus,timeout_seconds,description
+long-context-workload,8192,300,0,1.00,2m,8m,2m,128,320,300,long-context workload for correlating KV utilization with queue prefill decode and tail latency
+shared-system-prompt,2048,200,0,3.00,1m,6m,1m,96,192,240,shared system prompt workload for prefix-cache hit visibility
+agent-workflow,3072,256,0,2.00,1m,6m,1m,96,224,240,agent workflow with repeated system tool and scratchpad context across chained requests
+cache-miss-storm,2048,200,0,3.00,1m,6m,1m,128,256,240,randomized prefix workload intended to defeat prefix reuse and expose miss storms

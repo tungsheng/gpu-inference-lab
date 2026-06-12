@@ -296,8 +296,8 @@ show_experiment() {
         scheduler="max_num_seqs=${MAX_NUM_SEQS} max_num_batched_tokens=${MAX_NUM_BATCHED_TOKENS}"
       fi
 
-      printf "  - %s: model=%s served=%s max_model_len=%s gpu_memory=%s scheduler=%s\n" \
-        "${PROFILE_ID}" "${MODEL}" "${SERVED_MODEL_NAME}" "${MAX_MODEL_LEN}" "${GPU_MEMORY_UTILIZATION}" "${scheduler}"
+      printf "  - %s: model=%s served=%s image=%s max_model_len=%s gpu_memory=%s scheduler=%s\n" \
+        "${PROFILE_ID}" "${MODEL}" "${SERVED_MODEL_NAME}" "${VLLM_IMAGE}" "${MAX_MODEL_LEN}" "${GPU_MEMORY_UTILIZATION}" "${scheduler}"
     done < "${serving_profiles_path}"
   fi
 
@@ -2017,6 +2017,16 @@ EOF
   fi
 }
 
+render_optional_vllm_prefix_cache_args() {
+  case "${PROFILE_ID}" in
+    *prefix*)
+      cat <<EOF
+            - --enable-prefix-caching
+EOF
+      ;;
+  esac
+}
+
 render_optional_node_selector_labels() {
   case "${SERVING_NODE_PROFILE}" in
     blackwell)
@@ -2201,6 +2211,7 @@ EOF
   render_optional_vllm_parallel_args
   render_optional_vllm_scheduler_args
   render_optional_vllm_kv_cache_args
+  render_optional_vllm_prefix_cache_args
   cat <<EOF
           env:
             - name: HF_HOME
@@ -2704,6 +2715,18 @@ render_report_markdown() {
   local max_gpu_utilization_display
   local gpu_memory_used_display
   local gpu_memory_free_display
+  local kv_cache_source_display
+  local kv_cache_total_blocks_display
+  local kv_cache_active_blocks_display
+  local kv_cache_free_blocks_display
+  local kv_cache_fragmented_blocks_display
+  local kv_cache_hit_tokens_display
+  local kv_cache_miss_tokens_display
+  local kv_cache_hit_rate_display
+  local kv_cache_evictions_display
+  local kv_cache_reloads_display
+  local kv_cache_memory_utilization_display
+  local kv_cache_memory_used_display
   local quantization_method_display
   local model_artifact_path_display
   local model_artifact_hash_display
@@ -2821,6 +2844,18 @@ render_report_markdown() {
   max_gpu_utilization_display=$(display_optional_metric "${RESULT_MAX_GPU_UTILIZATION_PERCENT:-}")
   gpu_memory_used_display=$(display_optional_bytes_gib "${RESULT_GPU_MEMORY_USED_BYTES:-}")
   gpu_memory_free_display=$(display_optional_bytes_gib "${RESULT_GPU_MEMORY_FREE_BYTES:-}")
+  kv_cache_source_display=$(display_optional_metric "${RESULT_KV_CACHE_SOURCE:-}")
+  kv_cache_total_blocks_display=$(display_optional_metric "${RESULT_KV_CACHE_TOTAL_BLOCKS:-}")
+  kv_cache_active_blocks_display=$(display_optional_metric "${RESULT_KV_CACHE_ACTIVE_BLOCKS:-}")
+  kv_cache_free_blocks_display=$(display_optional_metric "${RESULT_KV_CACHE_FREE_BLOCKS:-}")
+  kv_cache_fragmented_blocks_display=$(display_optional_metric "${RESULT_KV_CACHE_FRAGMENTED_BLOCKS:-}")
+  kv_cache_hit_tokens_display=$(display_optional_metric "${RESULT_KV_CACHE_HIT_TOKENS:-}")
+  kv_cache_miss_tokens_display=$(display_optional_metric "${RESULT_KV_CACHE_MISS_TOKENS:-}")
+  kv_cache_hit_rate_display=$(display_optional_metric "${RESULT_KV_CACHE_HIT_RATE:-}")
+  kv_cache_evictions_display=$(display_optional_metric "${RESULT_KV_CACHE_EVICTIONS:-}")
+  kv_cache_reloads_display=$(display_optional_metric "${RESULT_KV_CACHE_RELOADS:-}")
+  kv_cache_memory_utilization_display=$(display_optional_metric "${RESULT_KV_CACHE_MEMORY_UTILIZATION_PERCENT:-}")
+  kv_cache_memory_used_display=$(display_optional_bytes_gib "${RESULT_KV_CACHE_MEMORY_USED_BYTES:-}")
   kv_cache_dtype_display=$(display_optional_metric "${KV_CACHE_DTYPE:-}")
   calculate_kv_scales_display=$(display_optional_metric "${CALCULATE_KV_SCALES:-}")
   quantization_method_display=$(display_optional_metric "${QUANTIZATION_METHOD:-}")
@@ -3006,6 +3041,18 @@ render_report_markdown() {
 | Max GPU utilization | ${max_gpu_utilization_display} |
 | GPU memory used | ${gpu_memory_used_display} |
 | GPU memory free | ${gpu_memory_free_display} |
+| KV cache source | ${kv_cache_source_display} |
+| KV cache total blocks | ${kv_cache_total_blocks_display} |
+| KV cache active blocks | ${kv_cache_active_blocks_display} |
+| KV cache free blocks | ${kv_cache_free_blocks_display} |
+| KV cache fragmented blocks | ${kv_cache_fragmented_blocks_display} |
+| KV cache hit tokens | ${kv_cache_hit_tokens_display} |
+| KV cache miss tokens | ${kv_cache_miss_tokens_display} |
+| KV cache hit rate | ${kv_cache_hit_rate_display} |
+| KV cache evictions | ${kv_cache_evictions_display} |
+| KV cache reloads | ${kv_cache_reloads_display} |
+| KV cache memory utilization | ${kv_cache_memory_utilization_display} |
+| KV cache memory used | ${kv_cache_memory_used_display} |
 | arc_easy score | ${accuracy_arc_easy_display} |
 | hellaswag score | ${accuracy_hellaswag_display} |
 | winogrande score | ${accuracy_winogrande_display} |
@@ -3038,6 +3085,9 @@ ${stream_shape_summary_section}
 - Server timing fields use vLLM Prometheus histograms when the active vLLM image
   exposes them; missing queue, prefill, decode, TTFT, or inter-token histograms
   remain \`n/a\`.
+- KV cache fields use vLLM Prometheus metrics when available; block counts,
+  evictions, and reloads remain \`n/a\` unless directly observed or explicitly
+  derived.
 EOF
 }
 
@@ -3227,6 +3277,20 @@ render_report_json() {
       "gpu_memory_used_bytes": $(json_optional_number "${RESULT_GPU_MEMORY_USED_BYTES:-}"),
       "gpu_memory_free_bytes": $(json_optional_number "${RESULT_GPU_MEMORY_FREE_BYTES:-}")
     },
+    "kv_cache": {
+      "source": $(json_optional_string "${RESULT_KV_CACHE_SOURCE:-}"),
+      "total_blocks": $(json_optional_number "${RESULT_KV_CACHE_TOTAL_BLOCKS:-}"),
+      "active_blocks": $(json_optional_number "${RESULT_KV_CACHE_ACTIVE_BLOCKS:-}"),
+      "free_blocks": $(json_optional_number "${RESULT_KV_CACHE_FREE_BLOCKS:-}"),
+      "fragmented_blocks": $(json_optional_number "${RESULT_KV_CACHE_FRAGMENTED_BLOCKS:-}"),
+      "cache_hit_tokens": $(json_optional_number "${RESULT_KV_CACHE_HIT_TOKENS:-}"),
+      "cache_miss_tokens": $(json_optional_number "${RESULT_KV_CACHE_MISS_TOKENS:-}"),
+      "cache_hit_rate": $(json_optional_number "${RESULT_KV_CACHE_HIT_RATE:-}"),
+      "evictions": $(json_optional_number "${RESULT_KV_CACHE_EVICTIONS:-}"),
+      "reloads": $(json_optional_number "${RESULT_KV_CACHE_RELOADS:-}"),
+      "kv_memory_utilization_percent": $(json_optional_number "${RESULT_KV_CACHE_MEMORY_UTILIZATION_PERCENT:-}"),
+      "kv_memory_used_bytes": $(json_optional_number "${RESULT_KV_CACHE_MEMORY_USED_BYTES:-}")
+    },
     "accuracy": {
       "tasks": $(json_optional_string "${ACCURACY_TASKS:-}"),
       "num_fewshot": $(json_optional_integer "${ACCURACY_NUM_FEWSHOT:-}"),
@@ -3271,7 +3335,8 @@ render_report_json() {
     "This report records the workload and serving contract for the selected case.",
     "Unavailable fields remain null when the runner did not collect that signal; do not treat missing GPU, queue, scaling, or cost fields as measured evidence.",
     "Client timing fields use k6 HTTP phases; client waiting is time to first byte, not a dedicated server-side queue histogram.",
-    "Server timing fields use vLLM Prometheus histograms when the active vLLM image exposes them; missing queue, prefill, decode, TTFT, or inter-token histograms remain null."
+    "Server timing fields use vLLM Prometheus histograms when the active vLLM image exposes them; missing queue, prefill, decode, TTFT, or inter-token histograms remain null.",
+    "KV cache fields use vLLM Prometheus metrics when available; block counts, evictions, and reloads remain null unless directly observed or explicitly derived."
   ]
 }
 EOF
@@ -3451,6 +3516,24 @@ collect_experiment_histogram_quantile_metric() {
   done
 }
 
+collect_experiment_first_scalar_query() {
+  local destination_var=$1
+  local query_time=$2
+  local query
+  local value
+
+  shift 2
+  printf -v "${destination_var}" '%s' ""
+
+  for query in "$@"; do
+    value=$(experiment_prometheus_query_scalar "${query}" "${query_time}") || return 1
+    if [[ -n "${value}" ]]; then
+      printf -v "${destination_var}" '%s' "${value}"
+      return 0
+    fi
+  done
+}
+
 print_experiment_dcgm_diagnostics() {
   printf 'DCGM diagnostics:\n' >&2
   kubectl get daemonset "${DCGM_EXPORTER_DAEMONSET_NAME}" -n "${MONITORING_NAMESPACE}" -o wide >&2 || true
@@ -3537,6 +3620,7 @@ experiment_metric_lookback_window() {
 collect_experiment_observability_metrics() {
   local window
   local query_time=""
+  local kv_cache_query_tokens=""
 
   command -v curl >/dev/null 2>&1 || return 0
   start_experiment_prometheus_port_forward || return 0
@@ -3565,6 +3649,82 @@ collect_experiment_observability_metrics() {
   RESULT_MAX_GPU_UTILIZATION_PERCENT=$(experiment_prometheus_query_scalar "max_over_time((max(DCGM_FI_DEV_GPU_UTIL))[${window}:1m])" "${query_time}")
   RESULT_GPU_MEMORY_USED_BYTES=$(experiment_prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_FB_USED) * 1048576)[${window}:1m])" "${query_time}")
   RESULT_GPU_MEMORY_FREE_BYTES=$(experiment_prometheus_query_scalar "avg_over_time((avg(DCGM_FI_DEV_FB_FREE) * 1048576)[${window}:1m])" "${query_time}")
+  collect_experiment_first_scalar_query RESULT_KV_CACHE_ACTIVE_BLOCKS "${query_time}" \
+    "avg_over_time((avg(vllm:kv_cache_active_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" \
+    "avg_over_time((avg(vllm_kv_cache_active_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" \
+    "avg_over_time((avg(vllm:gpu_cache_active_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" \
+    "avg_over_time((avg(vllm_gpu_cache_active_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])"
+  collect_experiment_first_scalar_query RESULT_KV_CACHE_FREE_BLOCKS "${query_time}" \
+    "avg_over_time((avg(vllm:kv_cache_free_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" \
+    "avg_over_time((avg(vllm_kv_cache_free_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" \
+    "avg_over_time((avg(vllm:gpu_cache_free_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" \
+    "avg_over_time((avg(vllm_gpu_cache_free_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])"
+  collect_experiment_first_scalar_query RESULT_KV_CACHE_FRAGMENTED_BLOCKS "${query_time}" \
+    "avg_over_time((avg(vllm:kv_cache_fragmented_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" \
+    "avg_over_time((avg(vllm_kv_cache_fragmented_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" \
+    "avg_over_time((avg(vllm:gpu_cache_fragmented_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])" \
+    "avg_over_time((avg(vllm_gpu_cache_fragmented_blocks{namespace=\"${APP_NAMESPACE}\"}))[${window}:15s])"
+  collect_experiment_first_scalar_query RESULT_KV_CACHE_MEMORY_UTILIZATION_PERCENT "${query_time}" \
+    "avg_over_time((avg(vllm:gpu_cache_usage_perc{namespace=\"${APP_NAMESPACE}\"}) * 100)[${window}:15s])" \
+    "avg_over_time((avg(vllm_gpu_cache_usage_perc{namespace=\"${APP_NAMESPACE}\"}) * 100)[${window}:15s])"
+  collect_experiment_first_scalar_query RESULT_KV_CACHE_HIT_TOKENS "${query_time}" \
+    "sum(increase(vllm:gpu_prefix_cache_hits_total{namespace=\"${APP_NAMESPACE}\"}[${window}]))" \
+    "sum(increase(vllm:gpu_prefix_cache_hits{namespace=\"${APP_NAMESPACE}\"}[${window}]))" \
+    "sum(increase(vllm_gpu_prefix_cache_hits_total{namespace=\"${APP_NAMESPACE}\"}[${window}]))"
+  collect_experiment_first_scalar_query kv_cache_query_tokens "${query_time}" \
+    "sum(increase(vllm:gpu_prefix_cache_queries_total{namespace=\"${APP_NAMESPACE}\"}[${window}]))" \
+    "sum(increase(vllm:gpu_prefix_cache_queries{namespace=\"${APP_NAMESPACE}\"}[${window}]))" \
+    "sum(increase(vllm_gpu_prefix_cache_queries_total{namespace=\"${APP_NAMESPACE}\"}[${window}]))"
+  collect_experiment_first_scalar_query RESULT_KV_CACHE_EVICTIONS "${query_time}" \
+    "sum(increase(vllm:kv_cache_evictions_total{namespace=\"${APP_NAMESPACE}\"}[${window}]))" \
+    "sum(increase(vllm_kv_cache_evictions_total{namespace=\"${APP_NAMESPACE}\"}[${window}]))"
+  collect_experiment_first_scalar_query RESULT_KV_CACHE_RELOADS "${query_time}" \
+    "sum(increase(vllm:kv_cache_reloads_total{namespace=\"${APP_NAMESPACE}\"}[${window}]))" \
+    "sum(increase(vllm_kv_cache_reloads_total{namespace=\"${APP_NAMESPACE}\"}[${window}]))"
+
+  if [[ -n "${RESULT_KV_CACHE_HIT_TOKENS:-}" && -n "${kv_cache_query_tokens}" ]]; then
+    RESULT_KV_CACHE_MISS_TOKENS=$(awk -v queries="${kv_cache_query_tokens}" -v hits="${RESULT_KV_CACHE_HIT_TOKENS}" 'BEGIN {
+      misses = queries - hits
+      if (misses < 0) {
+        misses = 0
+      }
+      printf "%.6f", misses
+    }')
+    RESULT_KV_CACHE_HIT_RATE=$(awk -v queries="${kv_cache_query_tokens}" -v hits="${RESULT_KV_CACHE_HIT_TOKENS}" 'BEGIN {
+      if (queries <= 0) {
+        printf ""
+      } else {
+        printf "%.6f", hits / queries
+      }
+    }')
+  fi
+
+  if [[ -n "${EXPERIMENT_KV_CACHE_TOTAL_BLOCKS:-}" && -z "${RESULT_KV_CACHE_TOTAL_BLOCKS:-}" ]]; then
+    RESULT_KV_CACHE_TOTAL_BLOCKS=${EXPERIMENT_KV_CACHE_TOTAL_BLOCKS}
+  elif [[ -z "${RESULT_KV_CACHE_TOTAL_BLOCKS:-}" && -n "${RESULT_KV_CACHE_ACTIVE_BLOCKS:-}" && -n "${RESULT_KV_CACHE_FREE_BLOCKS:-}" ]]; then
+    RESULT_KV_CACHE_TOTAL_BLOCKS=$(awk -v active="${RESULT_KV_CACHE_ACTIVE_BLOCKS}" -v free="${RESULT_KV_CACHE_FREE_BLOCKS}" 'BEGIN {
+      printf "%.6f", active + free
+    }')
+  fi
+
+  if [[ -n "${RESULT_KV_CACHE_TOTAL_BLOCKS:-}" && -n "${RESULT_KV_CACHE_MEMORY_UTILIZATION_PERCENT:-}" &&
+    -z "${RESULT_KV_CACHE_ACTIVE_BLOCKS:-}" && -z "${RESULT_KV_CACHE_FREE_BLOCKS:-}" ]]; then
+    RESULT_KV_CACHE_ACTIVE_BLOCKS=$(awk -v total="${RESULT_KV_CACHE_TOTAL_BLOCKS}" -v usage="${RESULT_KV_CACHE_MEMORY_UTILIZATION_PERCENT}" 'BEGIN {
+      printf "%d", int((total * usage / 100) + 0.5)
+    }')
+    RESULT_KV_CACHE_FREE_BLOCKS=$(awk -v total="${RESULT_KV_CACHE_TOTAL_BLOCKS}" -v active="${RESULT_KV_CACHE_ACTIVE_BLOCKS}" 'BEGIN {
+      free = total - active
+      if (free < 0) {
+        free = 0
+      }
+      printf "%d", free
+    }')
+    RESULT_KV_CACHE_SOURCE="derived"
+  elif [[ -n "${RESULT_KV_CACHE_ACTIVE_BLOCKS:-}${RESULT_KV_CACHE_FREE_BLOCKS:-}${RESULT_KV_CACHE_FRAGMENTED_BLOCKS:-}${RESULT_KV_CACHE_MEMORY_UTILIZATION_PERCENT:-}${RESULT_KV_CACHE_HIT_TOKENS:-}${RESULT_KV_CACHE_EVICTIONS:-}${RESULT_KV_CACHE_RELOADS:-}" ]]; then
+    RESULT_KV_CACHE_SOURCE="observed"
+  else
+    RESULT_KV_CACHE_SOURCE="unavailable"
+  fi
 
   stop_experiment_prometheus_port_forward
 }
