@@ -59,6 +59,21 @@
         },
         "additionalProperties": false
       }
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "active_blocks": { "type": "integer", "minimum": 0 },
+        "free_blocks": { "type": ["integer", "null"], "minimum": 0 },
+        "fragmented_blocks": { "type": ["integer", "null"], "minimum": 0 },
+        "cache_hit_blocks": { "type": "integer", "minimum": 0 },
+        "cache_miss_blocks": { "type": "integer", "minimum": 0 },
+        "cache_hit_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "evictions": { "type": "integer", "minimum": 0 },
+        "reloads": { "type": ["integer", "null"], "minimum": 0 },
+        "source": { "enum": ["observed", "derived", "unavailable"] }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

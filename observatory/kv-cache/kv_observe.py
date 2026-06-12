@@ -335,7 +335,12 @@ def command_collect(args: argparse.Namespace) -> int:
 
 def command_normalize_events(args: argparse.Namespace) -> int:
     payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
-    raw_events = payload.get("events", payload if isinstance(payload, list) else [])
+    if isinstance(payload, list):
+        raw_events = payload
+    elif isinstance(payload, dict):
+        raw_events = payload.get("events", [])
+    else:
+        raw_events = []
     events = []
     for index, raw_event in enumerate(raw_events):
         event_type = raw_event.get("type") or raw_event.get("tag") or raw_event.get("__class__")
@@ -357,6 +362,7 @@ def command_normalize_events(args: argparse.Namespace) -> int:
             "blocks": [int(block) for block in blocks],
             "source": "observed",
         })
+    request_ids = sorted({event["request_id"] for event in events}) or ["kv-cache"]
     trace = {
         "schema_version": SCHEMA_VERSION,
         "run": {
@@ -367,7 +373,7 @@ def command_normalize_events(args: argparse.Namespace) -> int:
         },
         "block_size": args.block_size,
         "total_blocks": args.total_blocks,
-        "requests": [{"id": "kv-cache", "label": "KV Cache"}],
+        "requests": [{"id": request_id, "label": request_id} for request_id in request_ids],
         "events": events,
         "summary": summarize_trace(events, args.total_blocks),
     }
@@ -405,7 +411,7 @@ def command_preflight(args: argparse.Namespace) -> int:
     if "v0.22.1" not in image:
         sys.stderr.write(f"Expected a vLLM v0.22.1 image, found: {image}\n")
         return 1
-    checked = ["vllm:gpu_cache_usage_perc", "vllm:request_queue_time_seconds", "vllm:request_prefill_time_seconds"]
+    checked = ["vllm:gpu_cache_usage_perc", "vllm:request_queue_time_seconds_bucket", "vllm:request_prefill_time_seconds_bucket"]
     if args.prometheus_url:
         names_url = args.prometheus_url.rstrip("/") + "/api/v1/label/__name__/values"
         with urllib.request.urlopen(names_url, timeout=10) as response:

@@ -59,7 +59,7 @@ run_kv_observe_normalize_events_test() {
   setup_test_tmpdir
 
   printf '%s\n' \
-    '{"events":[{"type":"BlockStored","request_id":"request-a","block_hashes":[11,12],"time_seconds":1},{"type":"BlockRemoved","request_id":"request-a","block_hashes":[11],"time_seconds":2}]}' \
+    '[{"type":"BlockStored","request_id":"request-a","block_hashes":[11,12],"time_seconds":1},{"type":"BlockRemoved","request_id":"request-a","block_hashes":[11],"time_seconds":2}]' \
     > "${TEST_TMPDIR}/events.json"
 
   run_and_capture "${REPO_ROOT}/scripts/kv-observe" normalize-events \
@@ -74,6 +74,7 @@ run_kv_observe_normalize_events_test() {
   assert_contains "${NORMALIZED_TRACE}" "\"schema_version\": \"kv-cache-trace/v1\"" "normalized trace should use the trace contract"
   assert_contains "${NORMALIZED_TRACE}" "\"type\": \"block_allocated\"" "normalized trace should include allocations"
   assert_contains "${NORMALIZED_TRACE}" "\"type\": \"block_evicted\"" "normalized trace should include evictions"
+  assert_contains "${NORMALIZED_TRACE}" "\"id\": \"request-a\"" "normalized trace should preserve request ids in the request list"
   assert_contains "${NORMALIZED_TRACE}" "\"source\": \"observed\"" "normalized trace should preserve observed source labels"
   assert_contains "${NORMALIZED_TRACE}" "\"active_blocks\": 1" "normalized summary should count active blocks"
   assert_contains "${NORMALIZED_TRACE}" "\"free_blocks\": 3" "normalized summary should count free blocks"
