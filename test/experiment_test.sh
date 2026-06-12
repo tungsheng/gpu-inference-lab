@@ -536,6 +536,9 @@ run_render_modern_vllm_0221_serving_profile_test() {
 
   assert_contains "${MODERN_VLLM_MANIFEST}" "image: vllm/vllm-openai:v0.22.1" "modern profile should pin vLLM 0.22.1"
   assert_contains "${MODERN_VLLM_MANIFEST}" '- --enable-prefix-caching' "prefix profile should enable prefix caching"
+  assert_contains "${MODERN_VLLM_MANIFEST}" '- --kv-cache-metrics' "observatory profile should enable vLLM KV cache metrics"
+  assert_contains "${MODERN_VLLM_MANIFEST}" '- --kv-cache-metrics-sample' "observatory profile should configure KV cache metrics sampling"
+  assert_contains "${MODERN_VLLM_MANIFEST}" '- "1.0"' "observatory profile should collect full KV cache metric samples"
   assert_contains "${MODERN_VLLM_MANIFEST}" '- --max-model-len' "modern profile should include max model length"
   assert_contains "${MODERN_VLLM_MANIFEST}" '- "9216"' "modern profile should use the long-context model length"
   assert_contains "${MODERN_VLLM_MANIFEST}" '- --max-num-seqs' "modern profile should include the sequence limit"
