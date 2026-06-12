@@ -31,6 +31,21 @@ run_kv_observe_demo_test() {
   teardown_test_tmpdir
 }
 
+run_kv_observe_demo_default_output_test() {
+  setup_test_tmpdir
+
+  DEFAULT_DEMO_OUTPUT="/tmp/kv-cache-observatory.html"
+  rm -f "${DEFAULT_DEMO_OUTPUT}"
+
+  run_and_capture "${REPO_ROOT}/scripts/kv-observe" demo
+
+  assert_status 0 "${COMMAND_STATUS}" "kv-observe demo should work with its default output path"
+  assert_file_exists "${DEFAULT_DEMO_OUTPUT}" "kv-observe demo should write its default HTML artifact"
+
+  rm -f "${DEFAULT_DEMO_OUTPUT}"
+  teardown_test_tmpdir
+}
+
 run_kv_observe_render_test() {
   setup_test_tmpdir
 
@@ -100,6 +115,7 @@ run_kv_observe_preflight_test() {
 }
 
 run_kv_observe_demo_test
+run_kv_observe_demo_default_output_test
 run_kv_observe_render_test
 run_kv_observe_normalize_events_test
 run_kv_observe_preflight_test

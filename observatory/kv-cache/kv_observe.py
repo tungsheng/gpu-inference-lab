@@ -12,6 +12,7 @@ from pathlib import Path
 
 
 SCHEMA_VERSION = "kv-cache-trace/v1"
+DEFAULT_DEMO_OUTPUT = "/tmp/kv-cache-observatory.html"
 
 
 def repo_root() -> Path:
@@ -440,7 +441,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     demo = subparsers.add_parser("demo", help="render a local Request A/B/C timeline")
-    demo.add_argument("--output", required=True)
+    demo.add_argument("--output", default=DEFAULT_DEMO_OUTPUT)
     demo.add_argument("--trace")
     demo.set_defaults(func=command_demo)
 
