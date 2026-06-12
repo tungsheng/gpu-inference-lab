@@ -63,6 +63,24 @@ to `27.98s`, reduced p95 queue delay from `48.11s` to `0.285s`, and reported
 Boundary: the clearest capacity knee is the `8192/300` workload. Smaller prompt
 lengths need their own matrix before generalizing the stable rate.
 
+### KV Cache Observatory On vLLM 0.22.1
+
+Source: `experiments/kv-cache-observatory/results.md`
+
+Supported claim: vLLM `0.22.1` exposes enough KV/prefix-cache metrics to make
+shared-prefix reuse and cache-miss storms visible in this lab.
+
+Key signal: with the same `modern-vllm-0221-prefix` serving profile, the
+shared-system-prompt case reported a 97.25% observed KV hit rate and 1.229s p95
+request latency, while the cache-miss-storm case reported a 0.00% observed KV
+hit rate and 3.955s p95 request latency. The long-context case completed
+599/599 requests with observed KV metrics, 14.58 GB observed GPU memory usage,
+90.58% observed average GPU utilization, and 1.918s p95 request latency.
+
+Boundary: these vLLM `0.22.1` reports do not expose per-request physical block
+ownership, evictions, or reloads. Those fields remain unavailable unless a run
+adds explicit KV events or a derived `kv-cache-trace/v1` artifact.
+
 ### FP8 KV Cache On Current g4dn Path
 
 Source: `experiments/kv-cache/results.md`
