@@ -30,7 +30,7 @@ data:
           "id": 1,
           "targets": [
             {
-              "expr": "avg(vllm:gpu_cache_usage_perc{namespace=\"app\"}) or avg(vllm_gpu_cache_usage_perc{namespace=\"app\"})",
+              "expr": "avg(vllm:kv_cache_usage_perc{namespace=\"app\"}) or avg(vllm_kv_cache_usage_perc{namespace=\"app\"}) or avg(vllm:gpu_cache_usage_perc{namespace=\"app\"}) or avg(vllm_gpu_cache_usage_perc{namespace=\"app\"})",
               "legendFormat": "kv usage",
               "refId": "A"
             }
@@ -54,12 +54,12 @@ data:
           "id": 2,
           "targets": [
             {
-              "expr": "sum(rate(vllm:gpu_prefix_cache_hits_total{namespace=\"app\"}[5m])) or sum(rate(vllm:gpu_prefix_cache_hits{namespace=\"app\"}[5m]))",
+              "expr": "sum(rate(vllm:prefix_cache_hits_total{namespace=\"app\"}[5m])) or sum(rate(vllm_prefix_cache_hits_total{namespace=\"app\"}[5m])) or sum(rate(vllm:prompt_tokens_cached_total{namespace=\"app\"}[5m])) or sum(rate(vllm_prompt_tokens_cached_total{namespace=\"app\"}[5m])) or sum(rate(vllm:gpu_prefix_cache_hits_total{namespace=\"app\"}[5m])) or sum(rate(vllm:gpu_prefix_cache_hits{namespace=\"app\"}[5m]))",
               "legendFormat": "hit tokens/s",
               "refId": "A"
             },
             {
-              "expr": "(sum(rate(vllm:gpu_prefix_cache_queries_total{namespace=\"app\"}[5m])) - sum(rate(vllm:gpu_prefix_cache_hits_total{namespace=\"app\"}[5m]))) or (sum(rate(vllm:gpu_prefix_cache_queries{namespace=\"app\"}[5m])) - sum(rate(vllm:gpu_prefix_cache_hits{namespace=\"app\"}[5m])))",
+              "expr": "(sum(rate(vllm:prefix_cache_queries_total{namespace=\"app\"}[5m])) - sum(rate(vllm:prefix_cache_hits_total{namespace=\"app\"}[5m]))) or (sum(rate(vllm_prefix_cache_queries_total{namespace=\"app\"}[5m])) - sum(rate(vllm_prefix_cache_hits_total{namespace=\"app\"}[5m]))) or (sum(rate(vllm:prompt_tokens_total{namespace=\"app\"}[5m])) - sum(rate(vllm:prompt_tokens_cached_total{namespace=\"app\"}[5m]))) or (sum(rate(vllm_prompt_tokens_total{namespace=\"app\"}[5m])) - sum(rate(vllm_prompt_tokens_cached_total{namespace=\"app\"}[5m]))) or (sum(rate(vllm:gpu_prefix_cache_queries_total{namespace=\"app\"}[5m])) - sum(rate(vllm:gpu_prefix_cache_hits_total{namespace=\"app\"}[5m]))) or (sum(rate(vllm:gpu_prefix_cache_queries{namespace=\"app\"}[5m])) - sum(rate(vllm:gpu_prefix_cache_hits{namespace=\"app\"}[5m])))",
               "legendFormat": "miss tokens/s",
               "refId": "B"
             }

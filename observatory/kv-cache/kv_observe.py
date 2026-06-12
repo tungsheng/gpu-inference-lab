@@ -271,6 +271,8 @@ def command_collect(args: argparse.Namespace) -> int:
     window = args.window
     query_time = args.time
     usage, usage_query = first_prometheus_value(args.prometheus_url, [
+        f"avg_over_time((avg(vllm:kv_cache_usage_perc) * 100)[{window}:15s])",
+        f"avg_over_time((avg(vllm_kv_cache_usage_perc) * 100)[{window}:15s])",
         f"avg_over_time((avg(vllm:gpu_cache_usage_perc) * 100)[{window}:15s])",
         f"avg_over_time((avg(vllm_gpu_cache_usage_perc) * 100)[{window}:15s])",
     ], query_time)
@@ -293,11 +295,19 @@ def command_collect(args: argparse.Namespace) -> int:
         f"avg_over_time((avg(vllm_gpu_cache_fragmented_blocks))[{window}:15s])",
     ], query_time)
     hits, hits_query = first_prometheus_value(args.prometheus_url, [
+        f"sum(increase(vllm:prefix_cache_hits_total[{window}]))",
+        f"sum(increase(vllm_prefix_cache_hits_total[{window}]))",
+        f"sum(increase(vllm:prompt_tokens_cached_total[{window}]))",
+        f"sum(increase(vllm_prompt_tokens_cached_total[{window}]))",
         f"sum(increase(vllm:gpu_prefix_cache_hits_total[{window}]))",
         f"sum(increase(vllm:gpu_prefix_cache_hits[{window}]))",
         f"sum(increase(vllm_gpu_prefix_cache_hits_total[{window}]))",
     ], query_time)
     queries, queries_query = first_prometheus_value(args.prometheus_url, [
+        f"sum(increase(vllm:prefix_cache_queries_total[{window}]))",
+        f"sum(increase(vllm_prefix_cache_queries_total[{window}]))",
+        f"sum(increase(vllm:prompt_tokens_total[{window}]))",
+        f"sum(increase(vllm_prompt_tokens_total[{window}]))",
         f"sum(increase(vllm:gpu_prefix_cache_queries_total[{window}]))",
         f"sum(increase(vllm:gpu_prefix_cache_queries[{window}]))",
         f"sum(increase(vllm_gpu_prefix_cache_queries_total[{window}]))",
@@ -411,7 +421,7 @@ def command_preflight(args: argparse.Namespace) -> int:
     if "v0.22.1" not in image:
         sys.stderr.write(f"Expected a vLLM v0.22.1 image, found: {image}\n")
         return 1
-    checked = ["vllm:gpu_cache_usage_perc", "vllm:request_queue_time_seconds_bucket", "vllm:request_prefill_time_seconds_bucket"]
+    checked = ["vllm:kv_cache_usage_perc", "vllm:request_queue_time_seconds_bucket", "vllm:request_prefill_time_seconds_bucket"]
     if args.prometheus_url:
         names_url = args.prometheus_url.rstrip("/") + "/api/v1/label/__name__/values"
         with urllib.request.urlopen(names_url, timeout=10) as response:

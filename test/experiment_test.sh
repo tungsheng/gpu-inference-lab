@@ -1052,11 +1052,11 @@ write_experiment_run_curl_stub() {
   "    value='3.200'" \
   "  elif [[ \"\$cmd\" == *'e2e_request_latency_seconds_bucket'* ]]; then" \
   "    value='6.400'" \
-  "  elif [[ \"\$cmd\" == *'gpu_cache_usage_perc'* ]]; then" \
+  "  elif [[ \"\$cmd\" == *'kv_cache_usage_perc'* ]]; then" \
   "    value='62.5'" \
-  "  elif [[ \"\$cmd\" == *'gpu_prefix_cache_hits'* ]]; then" \
+  "  elif [[ \"\$cmd\" == *'prefix_cache_hits'* ]]; then" \
   "    value='120'" \
-  "  elif [[ \"\$cmd\" == *'gpu_prefix_cache_queries'* ]]; then" \
+  "  elif [[ \"\$cmd\" == *'prefix_cache_queries'* ]]; then" \
   "    value='200'" \
   "  elif [[ \"\$cmd\" == *'kv_cache_evictions'* ]]; then" \
   "    value='4'" \
@@ -1208,9 +1208,9 @@ run_live_experiment_runner_test() {
   assert_contains "${CURL_LOG}" "query=count(DCGM_FI_DEV_GPU_UTIL)" "experiment run should verify DCGM GPU utilization is scrapeable before load"
   assert_contains "${CURL_LOG}" "query=count(DCGM_FI_DEV_FB_USED)" "experiment run should verify DCGM used-memory metrics are scrapeable before load"
   assert_contains "${CURL_LOG}" "query=count(DCGM_FI_DEV_FB_FREE)" "experiment run should verify DCGM free-memory metrics are scrapeable before load"
-  assert_contains "${CURL_LOG}" "gpu_cache_usage_perc" "experiment run should query KV cache utilization"
-  assert_contains "${CURL_LOG}" "gpu_prefix_cache_hits" "experiment run should query prefix-cache hits"
-  assert_contains "${CURL_LOG}" "gpu_prefix_cache_queries" "experiment run should query prefix-cache query totals"
+  assert_contains "${CURL_LOG}" "kv_cache_usage_perc" "experiment run should query KV cache utilization"
+  assert_contains "${CURL_LOG}" "prefix_cache_hits" "experiment run should query prefix-cache hits"
+  assert_contains "${CURL_LOG}" "prefix_cache_queries" "experiment run should query prefix-cache query totals"
   assert_contains "${CURL_LOG}" "time=" "experiment run should anchor final Prometheus queries to the observed load window"
   assert_contains "${KUBECTL_LOG}" "delete -f /tmp/gpu-lab-experiment-load." "experiment run should clean up the rendered load manifest"
   assert_contains "${KUBECTL_LOG}" "delete -f /tmp/gpu-lab-experiment-serving." "experiment run should clean up the rendered serving manifest"
