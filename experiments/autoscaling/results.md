@@ -1,5 +1,9 @@
 # Autoscaling And Queueing Behavior Results
 
+> Auditable evidence: the experiment reports behind these tables are committed
+> under `evidence/`. Replay them without a cluster with
+> `./scripts/experiment replay --experiment autoscaling`.
+
 ## Live Cluster Run - 2026-05-07
 
 All cases used the `default` serving profile. Burst cases were run before

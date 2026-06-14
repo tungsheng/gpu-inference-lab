@@ -48,10 +48,31 @@ The summary includes offered work, unserved work, delivery ratio,
 dropped/interrupted work, tail latency, throughput, queue pressure, and GPU
 fields when present in source JSON.
 
+## Committed Evidence
+
+Reports in this directory are generated and ignored, so they cannot be audited
+from a clone. When a report backs a curated conclusion, promote it into the
+owning experiment's committed `evidence/` directory instead of force-adding it
+here:
+
+```bash
+./scripts/experiment promote-evidence --experiment kv-cache --report docs/reports/<report>.json
+./scripts/experiment replay --experiment kv-cache
+```
+
+`promote-evidence` validates that the report matches the named experiment,
+strips operational endpoints (such as load-balancer hostnames), and copies it
+under `experiments/<name>/evidence/`. `replay` renders the committed evidence —
+latest report per case/profile — with the same table as `summarize-reports`,
+using only `jq` and no cluster or AWS access. That makes every promoted
+`results.md` table reproducible from the repository alone.
+
 ## Artifact Rules
 
 - Do not commit routine generated reports.
-- Force-add a generated report only when it belongs in the project narrative.
+- Promote a report into `experiments/<name>/evidence/` (not `docs/reports/`)
+  when it belongs in the project narrative; use `promote-evidence` so endpoints
+  are scrubbed.
 - Promote stable conclusions into curated docs instead of linking every local
   run.
 - Store derived comparison visuals under the owning experiment's `graphs/`

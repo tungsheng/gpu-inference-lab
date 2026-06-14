@@ -1,5 +1,9 @@
 # Request Pattern Utilization Results
 
+> Auditable evidence: the reports behind these tables are committed under
+> `evidence/`. Replay them without a cluster with
+> `./scripts/experiment replay --experiment request-patterns`.
+
 Curated live-cluster run: 2026-05-15 UTC, one `default` vLLM replica on the
 current g4dn path.
 

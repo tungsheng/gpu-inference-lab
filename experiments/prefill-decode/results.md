@@ -1,5 +1,9 @@
 # Prefill Vs Decode Timing Results
 
+> Auditable evidence: the reports behind these tables are committed under
+> `evidence/`. Replay them without a cluster with
+> `./scripts/experiment replay --experiment prefill-decode`.
+
 Status: default-profile streaming runs are populated for the prefill-heavy,
 decode-heavy, and mixed cases. Scheduler variant runs exist for the mixed case;
 the current conclusion is limited to the checked-in default model and vLLM

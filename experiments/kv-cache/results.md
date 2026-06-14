@@ -1,5 +1,9 @@
 # KV Cache Vs Concurrency Results
 
+> Auditable evidence: the reports behind these tables are committed under
+> `evidence/`. Replay them without a cluster with
+> `./scripts/experiment replay --experiment kv-cache`.
+
 Status: `8192/300` long-context rate sweep has a measured saturation knee; the
 1.05-1.20 req/s probes, 1.10-1.20 req/s variance repeats, and the `1.25 req/s`
 admission-control comparison are populated. The `1.20 req/s` scheduler

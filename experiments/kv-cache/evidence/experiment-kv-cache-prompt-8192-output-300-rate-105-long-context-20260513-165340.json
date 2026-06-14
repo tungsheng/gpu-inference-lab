@@ -1,0 +1,184 @@
+{
+  "schema_version": "experiment-report/v1",
+  "experiment": {
+    "name": "kv-cache",
+    "title": "KV Cache Vs Concurrency"
+  },
+  "case": {
+    "id": "prompt-8192-output-300-rate-105",
+    "prompt_token_target": 8192,
+    "max_tokens": 300,
+    "request_shapes": [
+      {
+        "id": "prompt-8192-output-300-rate-105",
+        "prompt_token_target": 8192,
+        "max_tokens": 300,
+        "weight": 1
+      }
+    ],
+    "client_policy": {
+      "id": "direct",
+      "mode": "direct",
+      "executor": "ramping-arrival-rate",
+      "buffer_capacity_requests": 0,
+      "max_queue_wait_seconds": 0
+    },
+    "arrival": {
+      "start_rate": 0,
+      "target_rate": 1.05,
+      "ramp_up_duration": "2m",
+      "steady_duration": "8m",
+      "ramp_down_duration": "2m",
+      "pre_allocated_vus": 144,
+      "max_vus": 320,
+      "timeout_seconds": 300
+    },
+    "stream": {
+      "samples": null,
+      "concurrency": null
+    }
+  },
+  "serving_profile": {
+    "id": "long-context",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "served_model_name": "qwen2.5-0.5b",
+    "vllm_image": "vllm/vllm-openai:v0.9.0",
+    "dtype": "float16",
+    "kv_cache_dtype": null,
+    "calculate_kv_scales": null,
+    "tensor_parallel_size": null,
+    "node_profile": null,
+    "max_model_len": 9216,
+    "gpu_memory_utilization": 0.90,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 9216,
+    "quantization": {
+      "method": null,
+      "model_artifact_path": null,
+      "model_artifact_hash": null,
+      "recipe_hash": null,
+      "calibration": {
+        "dataset": null,
+        "split": null,
+        "samples": null,
+        "max_seq_len": null,
+        "seed": null
+      }
+    },
+    "accuracy_plan": {
+      "case_id": null,
+      "tasks": null,
+      "num_fewshot": null,
+      "limit": null,
+      "primary_metric": null
+    },
+    "cost_profile": {
+      "id": null,
+      "cost_scope": null,
+      "serving_hourly_cost_usd": null,
+      "cost_source": null,
+      "region": null,
+      "instance_type": null,
+      "instance_hourly_cost_usd": null,
+      "accelerator_count": null,
+      "accelerator_hourly_cost_usd": null,
+      "linux_hourly_cost_usd": null,
+      "quantization_build_hourly_cost_usd": null,
+      "quantization_build_hours": null,
+      "quantization_build_cost_usd": null,
+      "slo_p95_request_latency_seconds": null,
+      "slo_p99_request_latency_seconds": null
+    }
+  },
+  "run": {
+    "status": "complete",
+    "generated_at": "2026-05-13T23:53:40Z",
+    "source": "scripts/experiment run",
+    "requires_live_cluster": true
+  },
+  "results": {
+    "success": {
+      "completed_requests": 630,
+      "successful_requests": 630,
+      "failed_requests": 0,
+      "oom_events": null
+    },
+    "latency": {
+      "p50_request_latency_seconds": 13.9408783705,
+      "p95_request_latency_seconds": 14.3131759473,
+      "p99_request_latency_seconds": 15.00047961312
+    },
+    "serving": {
+      "p50_ttft_seconds": null,
+      "p95_ttft_seconds": null,
+      "p50_inter_token_latency_seconds": null,
+      "p95_inter_token_latency_seconds": null,
+      "requests_per_second": 0.8698965207374859,
+      "generated_tokens": 189000,
+      "run_duration_seconds": 724.224071463,
+      "generation_tokens_per_second": 260.9689562212458
+    },
+    "stream_shapes": [],
+    "queue": {
+      "peak_waiting_requests": 0,
+      "peak_running_requests": 16,
+      "peak_active_requests": 16,
+      "offered_iterations": 630,
+      "unserved_iterations": 0,
+      "delivery_ratio": 1.000000,
+      "dropped_iterations": 0,
+      "interrupted_iterations": 0,
+      "buffering_required_requests": 0,
+      "failure_attribution": "none"
+    },
+    "gpu": {
+      "average_gpu_utilization_percent": 80.25,
+      "max_gpu_utilization_percent": 100,
+      "gpu_memory_used_bytes": 15060172800,
+      "gpu_memory_free_bytes": 767033344
+    },
+    "accuracy": {
+      "tasks": null,
+      "num_fewshot": null,
+      "limit": null,
+      "primary_metric": null,
+      "raw_task_scores": {
+        "arc_easy": null,
+        "hellaswag": null,
+        "winogrande": null
+      },
+      "average_score": null,
+      "fp4_recovery_vs_bf16_percent": null,
+      "smoothquant_gain_vs_plain_nvfp4_percent": null
+    },
+    "scaling": {
+      "first_nodeclaim_seconds": null,
+      "first_gpu_node_seconds": null,
+      "pod_scheduled_seconds": null,
+      "container_started_seconds": null,
+      "model_ready_seconds": null,
+      "first_successful_completion_seconds": null
+    },
+    "slo": {
+      "p95_request_latency_target_seconds": null,
+      "p99_request_latency_target_seconds": null,
+      "passed": null
+    },
+    "cost": {
+      "cost_scope": null,
+      "serving_hourly_cost_usd": null,
+      "estimated_burst_cost_usd": null,
+      "estimated_serving_cost_usd": null,
+      "cost_per_1000_successful_requests_usd": null,
+      "cost_per_1k_successful_requests_usd": null,
+      "cost_per_1m_generated_tokens_usd": null,
+      "cost_per_accuracy_point_usd": null,
+      "cost_per_accuracy_recovered_percent_usd": null,
+      "quantization_build_cost_usd": null
+    }
+  },
+  "notes": [
+    "This report records the workload and serving contract for the selected case.",
+    "Unavailable fields remain null when the runner did not collect that signal; do not treat missing GPU, queue, scaling, or cost fields as measured evidence."
+  ]
+}

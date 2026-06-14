@@ -1,0 +1,125 @@
+{
+  "schema_version": "experiment-report/v1",
+  "experiment": {
+    "name": "kv-cache",
+    "title": "KV Cache Vs Concurrency"
+  },
+  "case": {
+    "id": "prompt-8192-output-300-rate-115",
+    "prompt_token_target": 8192,
+    "max_tokens": 300,
+    "request_shapes": [
+      {
+        "id": "prompt-8192-output-300-rate-115",
+        "prompt_token_target": 8192,
+        "max_tokens": 300,
+        "weight": 1
+      }
+    ],
+    "client_policy": {
+      "id": "direct",
+      "mode": "direct",
+      "executor": "ramping-arrival-rate",
+      "buffer_capacity_requests": 0,
+      "max_queue_wait_seconds": 0
+    },
+    "arrival": {
+      "start_rate": 0,
+      "target_rate": 1.15,
+      "ramp_up_duration": "2m",
+      "steady_duration": "8m",
+      "ramp_down_duration": "2m",
+      "pre_allocated_vus": 144,
+      "max_vus": 352,
+      "timeout_seconds": 300
+    }
+  },
+  "serving_profile": {
+    "id": "long-context-batched-16384",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "served_model_name": "qwen2.5-0.5b",
+    "vllm_image": "vllm/vllm-openai:v0.9.0",
+    "max_model_len": 9216,
+    "gpu_memory_utilization": 0.90,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 16384,
+    "cost_profile": {
+      "id": null,
+      "cost_scope": null,
+      "serving_hourly_cost_usd": null,
+      "slo_p95_request_latency_seconds": null,
+      "slo_p99_request_latency_seconds": null
+    }
+  },
+  "run": {
+    "status": "complete",
+    "generated_at": "2026-05-05T22:36:10Z",
+    "source": "scripts/experiment run",
+    "requires_live_cluster": true
+  },
+  "results": {
+    "success": {
+      "completed_requests": 689,
+      "successful_requests": 689,
+      "failed_requests": 0,
+      "oom_events": null
+    },
+    "latency": {
+      "p50_request_latency_seconds": 35.898130139,
+      "p95_request_latency_seconds": 46.576955382200005,
+      "p99_request_latency_seconds": 47.140581794080006
+    },
+    "serving": {
+      "p50_ttft_seconds": null,
+      "p95_ttft_seconds": null,
+      "p50_inter_token_latency_seconds": null,
+      "p95_inter_token_latency_seconds": null,
+      "requests_per_second": 0.9569434497947645,
+      "generated_tokens": 206700,
+      "run_duration_seconds": 720.00074837,
+      "generation_tokens_per_second": 287.08303493842936
+    },
+    "queue": {
+      "peak_waiting_requests": 20,
+      "peak_running_requests": 32,
+      "peak_active_requests": 52,
+      "offered_iterations": 689,
+      "unserved_iterations": 0,
+      "delivery_ratio": 1.000000,
+      "dropped_iterations": 0,
+      "interrupted_iterations": 0,
+      "buffering_required_requests": 0,
+      "failure_attribution": "none"
+    },
+    "gpu": {
+      "average_gpu_utilization_percent": 85.08333333333333,
+      "max_gpu_utilization_percent": 100,
+      "gpu_memory_used_bytes": 14808689322.666666,
+      "gpu_memory_free_bytes": 1018516821.3333334
+    },
+    "scaling": {
+      "first_nodeclaim_seconds": null,
+      "first_gpu_node_seconds": null,
+      "pod_scheduled_seconds": null,
+      "container_started_seconds": null,
+      "model_ready_seconds": null,
+      "first_successful_completion_seconds": null
+    },
+    "slo": {
+      "p95_request_latency_target_seconds": null,
+      "p99_request_latency_target_seconds": null,
+      "passed": null
+    },
+    "cost": {
+      "cost_scope": null,
+      "serving_hourly_cost_usd": null,
+      "estimated_burst_cost_usd": null,
+      "cost_per_1000_successful_requests_usd": null,
+      "cost_per_1m_generated_tokens_usd": null
+    }
+  },
+  "notes": [
+    "This report records the workload and serving contract for the selected case.",
+    "Unavailable fields remain null when the runner did not collect that signal; do not treat missing GPU, queue, scaling, or cost fields as measured evidence."
+  ]
+}

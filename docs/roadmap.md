@@ -16,6 +16,7 @@ and small-request useful-work cost. The current operator-facing readout lives in
 | --- | --- | --- |
 | Recommendation model | harden architecture output | workload inputs map to supported, partial, or rejected patterns with evidence links and stay current as new runs land |
 | Evidence matrices | make experiment results comparable | remaining matrices have curated summaries, graph artifacts, SLO notes, and boundary notes |
+| Auditable evidence | let any clone verify curated claims | reports behind each supported/rejected recommendation are promoted into `experiments/<name>/evidence/` and render through `./scripts/experiment replay` |
 | Queue precision | improve autoscaling and admission decisions | queueing delay, prefill time, decode time, and client timeout behavior are separated |
 | GPU efficiency | compare useful work across serving and capacity shapes | scheduler, node-size, placement, cost, latency, and failure-rate comparisons are captured |
 | Quantization decision path | prove when FP4 is worth selecting | BF16, NVFP4, and SmoothQuant results include accuracy, memory, latency, throughput, serving cost, and build cost |

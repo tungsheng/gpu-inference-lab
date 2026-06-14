@@ -15,11 +15,19 @@ These runs were produced on June 12, 2026 with the
 `vllm/vllm-openai:v0.22.1`. KV cache fields below are marked `observed`
 because they came from vLLM/Prometheus metrics in the experiment reports.
 
+The source reports are committed under
+`experiments/kv-cache-observatory/evidence/`, so every figure in this article
+can be replayed without a cluster:
+
+```bash
+./scripts/experiment replay --experiment kv-cache-observatory
+```
+
 | Case | Source report | Successful requests | p95 latency | p95 queue | p95 prefill | p95 decode | KV hit rate | KV utilization | GPU memory |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Shared system prompt | [JSON](../reports/experiment-kv-cache-observatory-shared-system-prompt-modern-vllm-0221-prefix-20260612-142711.json) | 1259/1259 | 1.229s | 0.285s | 0.285s | 1.475s | 97.25% observed | 0.289% observed | 14.42 GB observed |
-| Cache miss storm | [JSON](../reports/experiment-kv-cache-observatory-cache-miss-storm-modern-vllm-0221-prefix-20260612-143551.json) | 1259/1259 | 3.955s | 0.285s | 0.285s | 4.860s | 0.00% observed | 3.779% observed | 14.42 GB observed |
-| Long-context workload | [JSON](../reports/experiment-kv-cache-observatory-long-context-workload-modern-vllm-0221-prefix-20260612-144914.json) | 599/599 | 1.918s | 0.285s | 0.285s | 1.975s | 99.64% observed | 0.734% observed | 14.58 GB observed |
+| Shared system prompt | [JSON](../../experiments/kv-cache-observatory/evidence/experiment-kv-cache-observatory-shared-system-prompt-modern-vllm-0221-prefix-20260612-142711.json) | 1259/1259 | 1.229s | 0.285s | 0.285s | 1.475s | 97.25% observed | 0.289% observed | 14.42 GB observed |
+| Cache miss storm | [JSON](../../experiments/kv-cache-observatory/evidence/experiment-kv-cache-observatory-cache-miss-storm-modern-vllm-0221-prefix-20260612-143551.json) | 1259/1259 | 3.955s | 0.285s | 0.285s | 4.860s | 0.00% observed | 3.779% observed | 14.42 GB observed |
+| Long-context workload | [JSON](../../experiments/kv-cache-observatory/evidence/experiment-kv-cache-observatory-long-context-workload-modern-vllm-0221-prefix-20260612-144914.json) | 599/599 | 1.918s | 0.285s | 0.285s | 1.975s | 99.64% observed | 0.734% observed | 14.58 GB observed |
 
 The strongest current result is the controlled contrast between shared-prefix
 traffic and miss-storm traffic. With the same vLLM image and serving profile,
@@ -62,7 +70,7 @@ latency knee. The goal is to show whether rising KV utilization lines up with
 queue delay, prefill time, decode time, and GPU memory pressure.
 
 Live report:
-[experiment-kv-cache-observatory-long-context-workload-modern-vllm-0221-prefix-20260612-144914.json](../reports/experiment-kv-cache-observatory-long-context-workload-modern-vllm-0221-prefix-20260612-144914.json).
+[experiment-kv-cache-observatory-long-context-workload-modern-vllm-0221-prefix-20260612-144914.json](../../experiments/kv-cache-observatory/evidence/experiment-kv-cache-observatory-long-context-workload-modern-vllm-0221-prefix-20260612-144914.json).
 
 Observed result: the run completed 599/599 requests with 1.918s p95 request
 latency, 1.975s p95 decode time, 0.734% KV utilization, and 14.58 GB GPU memory
@@ -80,7 +88,7 @@ and request-specific suffixes. A healthy prefix-cache path should report higher
 hit tokens and a better hit rate than the miss-storm case.
 
 Live report:
-[experiment-kv-cache-observatory-shared-system-prompt-modern-vllm-0221-prefix-20260612-142711.json](../reports/experiment-kv-cache-observatory-shared-system-prompt-modern-vllm-0221-prefix-20260612-142711.json).
+[experiment-kv-cache-observatory-shared-system-prompt-modern-vllm-0221-prefix-20260612-142711.json](../../experiments/kv-cache-observatory/evidence/experiment-kv-cache-observatory-shared-system-prompt-modern-vllm-0221-prefix-20260612-142711.json).
 
 Observed result: the run completed 1259/1259 requests with a 97.25% KV hit rate
 and 1.229s p95 request latency. Compared with the cache miss storm, this run
@@ -107,7 +115,7 @@ Because block hashes chain from the beginning of the prompt, changing the early
 prefix should defeat reuse for the later repeated suffix too.
 
 Live report:
-[experiment-kv-cache-observatory-cache-miss-storm-modern-vllm-0221-prefix-20260612-143551.json](../reports/experiment-kv-cache-observatory-cache-miss-storm-modern-vllm-0221-prefix-20260612-143551.json).
+[experiment-kv-cache-observatory-cache-miss-storm-modern-vllm-0221-prefix-20260612-143551.json](../../experiments/kv-cache-observatory/evidence/experiment-kv-cache-observatory-cache-miss-storm-modern-vllm-0221-prefix-20260612-143551.json).
 
 Observed result: the run completed 1259/1259 requests with a 0.00% KV hit rate
 and 3.955s p95 request latency. This is the clean contrast for the shared-system
