@@ -30,3 +30,8 @@ override.tf.json
 artifacts/
 docs/reports/*
 !docs/reports/README.md
+
+# Agent skill caches (rehydrate from skills-lock.json)
+.claude/skills/
+.agents/skills/
+.claude/settings.local.json
