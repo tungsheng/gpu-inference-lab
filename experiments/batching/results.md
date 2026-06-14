@@ -1,5 +1,9 @@
 # Batching Scheduler Tradeoffs Results
 
+> Auditable evidence: the reports behind these tables are committed under
+> `evidence/`. Replay them without a cluster with
+> `./scripts/experiment replay --experiment batching`.
+
 Status: the steady and burst `512/128` cases have complete live-cluster profile
 matrices. Both cases support the same current conclusion: the unchecked vLLM
 dynamic scheduler defaults outperform the explicit caps for this small-request

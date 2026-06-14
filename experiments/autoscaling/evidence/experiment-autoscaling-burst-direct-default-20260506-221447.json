@@ -1,0 +1,130 @@
+{
+  "schema_version": "experiment-report/v1",
+  "experiment": {
+    "name": "autoscaling",
+    "title": "Autoscaling And Queueing Behavior"
+  },
+  "case": {
+    "id": "burst-direct",
+    "prompt_token_target": 512,
+    "max_tokens": 128,
+    "request_shapes": [
+      {
+        "id": "burst-direct",
+        "prompt_token_target": 512,
+        "max_tokens": 128,
+        "weight": 1
+      }
+    ],
+    "client_policy": {
+      "id": "direct",
+      "mode": "direct",
+      "executor": "ramping-arrival-rate",
+      "buffer_capacity_requests": 0,
+      "max_queue_wait_seconds": 0
+    },
+    "arrival": {
+      "start_rate": 0,
+      "target_rate": 24,
+      "ramp_up_duration": "15s",
+      "steady_duration": "2m",
+      "ramp_down_duration": "30s",
+      "pre_allocated_vus": 64,
+      "max_vus": 256,
+      "timeout_seconds": 180
+    },
+    "stream": {
+      "samples": null,
+      "concurrency": null
+    }
+  },
+  "serving_profile": {
+    "id": "default",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "served_model_name": "qwen2.5-0.5b",
+    "vllm_image": "vllm/vllm-openai:v0.9.0",
+    "max_model_len": 2048,
+    "gpu_memory_utilization": 0.85,
+    "max_num_seqs": null,
+    "max_num_batched_tokens": null,
+    "cost_profile": {
+      "id": null,
+      "cost_scope": null,
+      "serving_hourly_cost_usd": null,
+      "slo_p95_request_latency_seconds": null,
+      "slo_p99_request_latency_seconds": null
+    }
+  },
+  "run": {
+    "status": "complete",
+    "generated_at": "2026-05-07T05:14:47Z",
+    "source": "scripts/experiment run",
+    "requires_live_cluster": true
+  },
+  "results": {
+    "success": {
+      "completed_requests": 2632,
+      "successful_requests": 2632,
+      "failed_requests": 0,
+      "oom_events": null
+    },
+    "latency": {
+      "p50_request_latency_seconds": 14.168028263,
+      "p95_request_latency_seconds": 14.62343968435,
+      "p99_request_latency_seconds": 14.71111826102
+    },
+    "serving": {
+      "p50_ttft_seconds": null,
+      "p95_ttft_seconds": null,
+      "p50_inter_token_latency_seconds": null,
+      "p95_inter_token_latency_seconds": null,
+      "requests_per_second": 15.951366722404325,
+      "generated_tokens": 336896,
+      "run_duration_seconds": 165.00153534199998,
+      "generation_tokens_per_second": 2041.7749404677536
+    },
+    "stream_shapes": [],
+    "queue": {
+      "peak_waiting_requests": 1,
+      "peak_running_requests": 255,
+      "peak_active_requests": 255,
+      "offered_iterations": 3419,
+      "unserved_iterations": 787,
+      "delivery_ratio": 0.769816,
+      "dropped_iterations": 787,
+      "interrupted_iterations": 0,
+      "buffering_required_requests": 787,
+      "failure_attribution": "client_queue_limit"
+    },
+    "gpu": {
+      "average_gpu_utilization_percent": 77.33333333333333,
+      "max_gpu_utilization_percent": 80,
+      "gpu_memory_used_bytes": 14862516224,
+      "gpu_memory_free_bytes": 964689920
+    },
+    "scaling": {
+      "first_nodeclaim_seconds": null,
+      "first_gpu_node_seconds": null,
+      "pod_scheduled_seconds": null,
+      "container_started_seconds": null,
+      "model_ready_seconds": null,
+      "first_successful_completion_seconds": null
+    },
+    "slo": {
+      "p95_request_latency_target_seconds": null,
+      "p99_request_latency_target_seconds": null,
+      "passed": null
+    },
+    "cost": {
+      "cost_scope": null,
+      "serving_hourly_cost_usd": null,
+      "estimated_burst_cost_usd": null,
+      "cost_per_1000_successful_requests_usd": null,
+      "cost_per_1m_generated_tokens_usd": null
+    }
+  },
+  "notes": [
+    "This report records the workload and serving contract for the selected case.",
+    "Unavailable fields remain null when the runner did not collect that signal; do not treat missing GPU, queue, scaling, or cost fields as measured evidence."
+  ]
+}

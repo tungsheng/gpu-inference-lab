@@ -1,5 +1,9 @@
 # Cost Per Useful Work Results
 
+> Auditable evidence: the reports behind these tables are committed under
+> `evidence/`. Replay them without a cluster with
+> `./scripts/experiment replay --experiment cost`.
+
 Curated live-cluster run: 2026-05-15 UTC, one serving GPU, cost scope
 `serving-gpu-only`, hourly serving cost `$0.526`.
 

@@ -42,6 +42,8 @@ its decision inputs under `experiments/<name>/`:
 - `scenarios.csv`, `mitigations.csv`, and `suites.csv`: optional
   failure-drill orchestration inputs for `./scripts/failure`
 - `results.md`: curated conclusions or a result template
+- `evidence/`: promoted, endpoint-scrubbed report JSON that backs the curated
+  tables; rendered by `./scripts/experiment replay --experiment <name>`
 - `graphs/`: checked-in visuals derived from curated result tables
 - `observatory/kv-cache/`: KV-cache trace, collection, and visualization
   helpers used by the KV Cache Observatory initiative

@@ -4,6 +4,13 @@ Status: live validated on June 12, 2026. The catalog, local observatory
 renderer, vLLM `0.22.1` serving profile, and three promoted live reports are
 present.
 
+The promoted reports are committed under `evidence/`, so the table below is
+auditable without a cluster:
+
+```bash
+./scripts/experiment replay --experiment kv-cache-observatory
+```
+
 ## Live vLLM 0.22.1 Results
 
 All rows below use `modern-vllm-0221-prefix` with
@@ -12,9 +19,9 @@ from vLLM/Prometheus metrics in the linked JSON reports.
 
 | Case | Source report | Successful requests | p95 latency | p95 queue | p95 prefill | p95 decode | KV hit rate | KV utilization | GPU memory |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Shared system prompt | [JSON](../../docs/reports/experiment-kv-cache-observatory-shared-system-prompt-modern-vllm-0221-prefix-20260612-142711.json) | 1259/1259 | 1.229s | 0.285s | 0.285s | 1.475s | 97.25% | 0.289% | 14.42 GB |
-| Cache miss storm | [JSON](../../docs/reports/experiment-kv-cache-observatory-cache-miss-storm-modern-vllm-0221-prefix-20260612-143551.json) | 1259/1259 | 3.955s | 0.285s | 0.285s | 4.860s | 0.00% | 3.779% | 14.42 GB |
-| Long-context workload | [JSON](../../docs/reports/experiment-kv-cache-observatory-long-context-workload-modern-vllm-0221-prefix-20260612-144914.json) | 599/599 | 1.918s | 0.285s | 0.285s | 1.975s | 99.64% | 0.734% | 14.58 GB |
+| Shared system prompt | [JSON](evidence/experiment-kv-cache-observatory-shared-system-prompt-modern-vllm-0221-prefix-20260612-142711.json) | 1259/1259 | 1.229s | 0.285s | 0.285s | 1.475s | 97.25% | 0.289% | 14.42 GB |
+| Cache miss storm | [JSON](evidence/experiment-kv-cache-observatory-cache-miss-storm-modern-vllm-0221-prefix-20260612-143551.json) | 1259/1259 | 3.955s | 0.285s | 0.285s | 4.860s | 0.00% | 3.779% | 14.42 GB |
+| Long-context workload | [JSON](evidence/experiment-kv-cache-observatory-long-context-workload-modern-vllm-0221-prefix-20260612-144914.json) | 599/599 | 1.918s | 0.285s | 0.285s | 1.975s | 99.64% | 0.734% | 14.58 GB |
 
 ## Supported Conclusions
 

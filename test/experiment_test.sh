@@ -957,6 +957,89 @@ run_summarize_reports_test() {
   teardown_test_tmpdir
 }
 
+run_replay_test() {
+  setup_test_tmpdir
+  mkdir -p "${TEST_TMPDIR}/evidence"
+
+  printf '%s\n' \
+    '{"schema_version":"experiment-report/v1","experiment":{"name":"kv-cache","title":"KV Cache Vs Concurrency"},"case":{"id":"prompt-8192-output-300-rate-100","prompt_token_target":8192,"max_tokens":300,"arrival":{"target_rate":1.00}},"serving_profile":{"id":"long-context"},"run":{"status":"complete","generated_at":"2026-05-02T23:29:14Z"},"results":{"success":{"successful_requests":601,"failed_requests":0},"latency":{"p95_request_latency_seconds":12.50},"serving":{"requests_per_second":0.84},"queue":{"dropped_iterations":0,"interrupted_iterations":0,"buffering_required_requests":0,"delivery_ratio":1,"peak_waiting_requests":0,"peak_active_requests":12},"gpu":{"average_gpu_utilization_percent":58.4,"max_gpu_utilization_percent":96}}}' \
+    > "${TEST_TMPDIR}/evidence/experiment-kv-cache-prompt-8192-output-300-rate-100-long-context-20260502-232914.json"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" replay \
+    --experiment kv-cache \
+    --evidence-dir "${TEST_TMPDIR}/evidence"
+
+  assert_status 0 "${COMMAND_STATUS}" "replay should render committed evidence"
+  assert_contains "${COMMAND_OUTPUT}" "# KV Cache Vs Concurrency Replayed Evidence" "replay should title the evidence readout"
+  assert_contains "${COMMAND_OUTPUT}" "No live cluster or AWS access is required" "replay should state it needs no cluster"
+  assert_contains "${COMMAND_OUTPUT}" "| \`prompt-8192-output-300-rate-100\` | \`long-context\` | complete | 1.00 | 601 | 0 |" "replay should render the evidence row"
+
+  teardown_test_tmpdir
+}
+
+run_replay_missing_evidence_test() {
+  setup_test_tmpdir
+  mkdir -p "${TEST_TMPDIR}/evidence"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" replay \
+    --experiment kv-cache \
+    --evidence-dir "${TEST_TMPDIR}/evidence"
+
+  assert_status 1 "${COMMAND_STATUS}" "replay should fail when no committed evidence exists"
+  assert_contains "${COMMAND_OUTPUT}" "promote-evidence" "replay should point to promote-evidence when evidence is missing"
+
+  teardown_test_tmpdir
+}
+
+run_promote_evidence_scrub_test() {
+  setup_test_tmpdir
+  mkdir -p "${TEST_TMPDIR}/reports" "${TEST_TMPDIR}/evidence"
+
+  local source="${TEST_TMPDIR}/reports/experiment-kv-cache-prompt-512-output-100-default-20260501-160128.json"
+  printf '%s\n' \
+    '{"schema_version":"experiment-report/v1","experiment":{"name":"kv-cache","title":"KV Cache Vs Concurrency"},"case":{"id":"prompt-512-output-100"},"serving_profile":{"id":"default"},"run":{"status":"complete","generated_at":"2026-05-01T16:01:28Z","public_endpoint":"http://k8s-publicedge-9857f58927-1264520422.us-west-2.elb.amazonaws.com/v1/completions"},"results":{"success":{"successful_requests":900,"failed_requests":0}}}' \
+    > "${source}"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" promote-evidence \
+    --experiment kv-cache \
+    --report "${source}" \
+    --evidence-dir "${TEST_TMPDIR}/evidence"
+
+  assert_status 0 "${COMMAND_STATUS}" "promote-evidence should copy the report into the evidence dir"
+
+  local promoted="${TEST_TMPDIR}/evidence/experiment-kv-cache-prompt-512-output-100-default-20260501-160128.json"
+  assert_file_exists "${promoted}" "promote-evidence should keep the source basename so replay can find it"
+
+  local promoted_contents
+  promoted_contents=$(cat "${promoted}")
+  assert_not_contains "${promoted_contents}" "public_endpoint" "promote-evidence should scrub operational endpoints"
+  assert_not_contains "${promoted_contents}" "amazonaws.com" "promote-evidence should not leak cluster hostnames"
+  assert_contains "${promoted_contents}" "\"successful_requests\": 900" "promote-evidence should preserve measured results"
+
+  teardown_test_tmpdir
+}
+
+run_promote_evidence_rejects_foreign_report_test() {
+  setup_test_tmpdir
+  mkdir -p "${TEST_TMPDIR}/reports" "${TEST_TMPDIR}/evidence"
+
+  local source="${TEST_TMPDIR}/reports/experiment-kv-cache-prompt-512-output-100-default-20260501-160128.json"
+  printf '%s\n' \
+    '{"schema_version":"experiment-report/v1","experiment":{"name":"batching","title":"Batching Scheduler Tradeoffs"},"case":{"id":"prompt-512-output-100"},"serving_profile":{"id":"default"},"run":{"status":"complete"},"results":{}}' \
+    > "${source}"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" promote-evidence \
+    --experiment kv-cache \
+    --report "${source}" \
+    --evidence-dir "${TEST_TMPDIR}/evidence"
+
+  assert_status 1 "${COMMAND_STATUS}" "promote-evidence should reject a report from another experiment"
+  assert_contains "${COMMAND_OUTPUT}" "belongs to experiment" "promote-evidence should explain the experiment mismatch"
+  assert_file_not_exists "${TEST_TMPDIR}/evidence/experiment-kv-cache-prompt-512-output-100-default-20260501-160128.json" "promote-evidence should not write a mismatched report"
+
+  teardown_test_tmpdir
+}
+
 write_experiment_run_kubectl_stub() {
   write_stub kubectl \
 "#!/usr/bin/env bash" \
@@ -1717,6 +1800,10 @@ run_render_cost_report_test
 run_render_fp4_report_test
 run_render_report_default_path_test
 run_summarize_reports_test
+run_replay_test
+run_replay_missing_evidence_test
+run_promote_evidence_scrub_test
+run_promote_evidence_rejects_foreign_report_test
 run_live_experiment_runner_test
 run_autoscaling_experiment_runner_timeline_test
 run_cost_experiment_runner_test

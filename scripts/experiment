@@ -32,6 +32,8 @@ Usage:
   ./scripts/experiment render-serving --experiment name --profile profile-id [--output path]
   ./scripts/experiment render-report --experiment name --case case-id --profile profile-id [--report path] [--json-report path]
   ./scripts/experiment summarize-reports --experiment name [--reports-dir path]
+  ./scripts/experiment promote-evidence --experiment name --report path [--evidence-dir path] [--force]
+  ./scripts/experiment replay --experiment name [--evidence-dir path]
   ./scripts/experiment run --experiment name --case case-id --profile profile-id [--report path] [--json-report path] [--preserve-serving] [--preserve-load]
   ./scripts/experiment run-stream --experiment name --case case-id --profile profile-id [--samples count] [--concurrency count] [--report path] [--json-report path] [--preserve-serving] [--preserve-load]
 
@@ -46,6 +48,8 @@ Examples:
   ./scripts/experiment render-serving --experiment kv-cache --profile long-context --output /tmp/vllm-long-context.yaml
   ./scripts/experiment render-report --experiment kv-cache --case prompt-512-output-100 --profile default
   ./scripts/experiment summarize-reports --experiment kv-cache
+  ./scripts/experiment promote-evidence --experiment kv-cache --report docs/reports/experiment-kv-cache-prompt-8192-output-300-rate-115-long-context-20260513-172605.json
+  ./scripts/experiment replay --experiment kv-cache-observatory
   ./scripts/experiment run --experiment kv-cache --case prompt-512-output-100 --profile default
   ./scripts/experiment run-stream --experiment prefill-decode --case prefill-heavy --profile default
 EOF
@@ -4655,40 +4659,17 @@ render_report_command() {
   printf 'Rendered JSON report: %s\n' "${json_report_path}"
 }
 
-summarize_reports_command() {
-  local experiment_name=""
-  local reports_dir="${REPORTS_DIR}"
+experiment_evidence_dir() {
+  local experiment_name=$1
+  printf '%s/evidence\n' "$(experiment_dir "${experiment_name}")"
+}
+
+render_reports_table() {
+  local experiment_name=$1
+  local reports_dir=$2
   local report_path
   local rows
 
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --experiment)
-        experiment_name=$(require_option_value "$1" "${2-}")
-        shift 2
-        ;;
-      --reports-dir)
-        reports_dir=$(require_option_value "$1" "${2-}")
-        shift 2
-        ;;
-      -h|--help)
-        usage
-        exit 0
-        ;;
-      *)
-        die "Unexpected argument: $1"
-        ;;
-    esac
-  done
-
-  if [[ -z "${experiment_name}" ]]; then
-    die "summarize-reports requires --experiment"
-  fi
-
-  require_experiment "${experiment_name}"
-  require_commands jq
-
-  printf '# %s Report Summary\n\n' "$(experiment_title "${experiment_name}")"
   printf '| Case | Profile | Status | Target | Successful | Failed | Dropped | Interrupted | Buffering required | Delivery ratio | p95 latency | Requests/sec | Peak waiting | Peak active | Avg GPU | Max GPU | Report |\n'
   printf '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n'
 
@@ -4746,6 +4727,191 @@ summarize_reports_command() {
     printf "| `%s` | `%s` | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | [%s](%s) |\n",
       $2, $3, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, name, file
   }'
+}
+
+summarize_reports_command() {
+  local experiment_name=""
+  local reports_dir="${REPORTS_DIR}"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --reports-dir)
+        reports_dir=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "summarize-reports requires --experiment"
+  fi
+
+  require_experiment "${experiment_name}"
+  require_commands jq
+
+  printf '# %s Report Summary\n\n' "$(experiment_title "${experiment_name}")"
+  render_reports_table "${experiment_name}" "${reports_dir}"
+}
+
+replay_command() {
+  local experiment_name=""
+  local evidence_dir=""
+  local match_count
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --evidence-dir)
+        evidence_dir=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "replay requires --experiment"
+  fi
+
+  require_experiment "${experiment_name}"
+  require_commands jq
+
+  if [[ -z "${evidence_dir}" ]]; then
+    evidence_dir=$(experiment_evidence_dir "${experiment_name}")
+  fi
+
+  if [[ ! -d "${evidence_dir}" ]]; then
+    die "No committed evidence for ${experiment_name}. Promote a report first: ./scripts/experiment promote-evidence --experiment ${experiment_name} --report <path>"
+  fi
+
+  match_count=$(find "${evidence_dir}" -maxdepth 1 -type f -name "experiment-${experiment_name}-*.json" -print 2>/dev/null | wc -l | tr -d '[:space:]')
+  if [[ "${match_count}" == "0" ]]; then
+    die "No committed evidence for ${experiment_name} in ${evidence_dir}. Promote a report first: ./scripts/experiment promote-evidence --experiment ${experiment_name} --report <path>"
+  fi
+
+  printf '# %s Replayed Evidence\n\n' "$(experiment_title "${experiment_name}")"
+  # shellcheck disable=SC2016  # backticks are literal Markdown, not command substitution
+  printf 'Rendered from %s committed report(s) under `%s`.\n' "${match_count}" "${evidence_dir}"
+  printf 'No live cluster or AWS access is required; the table is derived from checked-in JSON.\n\n'
+  render_reports_table "${experiment_name}" "${evidence_dir}"
+}
+
+promote_evidence_command() {
+  local experiment_name=""
+  local report_path=""
+  local evidence_dir=""
+  local force=0
+  local report_name
+  local report_experiment
+  local report_schema
+  local destination
+  local tmp_destination
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment)
+        experiment_name=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --report)
+        report_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --evidence-dir)
+        evidence_dir=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --force)
+        force=1
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unexpected argument: $1"
+        ;;
+    esac
+  done
+
+  if [[ -z "${experiment_name}" ]]; then
+    die "promote-evidence requires --experiment"
+  fi
+
+  if [[ -z "${report_path}" ]]; then
+    die "promote-evidence requires --report <path>"
+  fi
+
+  require_experiment "${experiment_name}"
+  require_commands jq
+
+  if [[ ! -f "${report_path}" ]]; then
+    die "Report not found: ${report_path}"
+  fi
+
+  report_name=$(basename "${report_path}")
+  case "${report_name}" in
+    experiment-${experiment_name}-*.json) ;;
+    *)
+      die "Report basename must match experiment-${experiment_name}-*.json so replay can find it: ${report_name}"
+      ;;
+  esac
+
+  report_schema=$(jq -r '.schema_version // ""' "${report_path}" 2>/dev/null || true)
+  case "${report_schema}" in
+    experiment-report/*) ;;
+    *)
+      die "Report ${report_path} is not an experiment-report (schema_version: ${report_schema:-none})"
+      ;;
+  esac
+
+  report_experiment=$(jq -r '.experiment.name // ""' "${report_path}" 2>/dev/null || true)
+  if [[ "${report_experiment}" != "${experiment_name}" ]]; then
+    die "Report belongs to experiment '${report_experiment}', not '${experiment_name}'"
+  fi
+
+  if [[ -z "${evidence_dir}" ]]; then
+    evidence_dir=$(experiment_evidence_dir "${experiment_name}")
+  fi
+  destination="${evidence_dir}/${report_name}"
+
+  if [[ -e "${destination}" && "${force}" -ne 1 ]]; then
+    die "Evidence already exists: ${destination} (use --force to overwrite)"
+  fi
+
+  mkdir -p "${evidence_dir}"
+  tmp_destination="${destination}.tmp.$$"
+
+  # Strip operational endpoints (e.g. public_endpoint load-balancer hostnames)
+  # so committed evidence stays auditable without leaking cluster addresses.
+  if ! jq 'walk(if type == "object" then del(.public_endpoint) else . end)' "${report_path}" > "${tmp_destination}"; then
+    rm -f "${tmp_destination}"
+    die "Failed to scrub and write evidence from ${report_path}"
+  fi
+
+  mv "${tmp_destination}" "${destination}"
+  printf 'Promoted evidence: %s\n' "${destination}"
 }
 
 validate_command() {
@@ -5005,6 +5171,14 @@ main() {
     summarize-reports)
       shift
       summarize_reports_command "$@"
+      ;;
+    promote-evidence)
+      shift
+      promote_evidence_command "$@"
+      ;;
+    replay)
+      shift
+      replay_command "$@"
       ;;
     run)
       shift

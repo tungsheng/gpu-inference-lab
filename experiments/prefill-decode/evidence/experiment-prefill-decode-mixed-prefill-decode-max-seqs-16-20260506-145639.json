@@ -1,0 +1,169 @@
+{
+  "schema_version": "experiment-report/v1",
+  "experiment": {
+    "name": "prefill-decode",
+    "title": "Prefill Vs Decode Timing"
+  },
+  "case": {
+    "id": "mixed-prefill-decode",
+    "prompt_token_target": 1536,
+    "max_tokens": 64,
+    "request_shapes": [
+      {
+        "id": "prefill-heavy",
+        "prompt_token_target": 1536,
+        "max_tokens": 64,
+        "weight": 1
+      },
+      {
+        "id": "decode-heavy",
+        "prompt_token_target": 128,
+        "max_tokens": 768,
+        "weight": 1
+      }
+    ],
+    "client_policy": {
+      "id": "direct",
+      "mode": "direct",
+      "executor": "ramping-arrival-rate",
+      "buffer_capacity_requests": 0,
+      "max_queue_wait_seconds": 0
+    },
+    "arrival": {
+      "start_rate": 1,
+      "target_rate": 1,
+      "ramp_up_duration": "1m",
+      "steady_duration": "3m",
+      "ramp_down_duration": "1m",
+      "pre_allocated_vus": 16,
+      "max_vus": 32,
+      "timeout_seconds": 300
+    },
+    "stream": {
+      "samples": 640,
+      "concurrency": 32
+    }
+  },
+  "serving_profile": {
+    "id": "max-seqs-16",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "served_model_name": "qwen2.5-0.5b",
+    "vllm_image": "vllm/vllm-openai:v0.9.0",
+    "max_model_len": 2048,
+    "gpu_memory_utilization": 0.85,
+    "max_num_seqs": 16,
+    "max_num_batched_tokens": null,
+    "cost_profile": {
+      "id": null,
+      "cost_scope": null,
+      "serving_hourly_cost_usd": null,
+      "slo_p95_request_latency_seconds": null,
+      "slo_p99_request_latency_seconds": null
+    }
+  },
+  "run": {
+    "status": "complete",
+    "generated_at": "2026-05-06T21:56:39Z",
+    "source": "scripts/experiment run-stream",
+    "requires_live_cluster": true
+  },
+  "results": {
+    "success": {
+      "completed_requests": 640,
+      "successful_requests": 640,
+      "failed_requests": 0,
+      "oom_events": null
+    },
+    "latency": {
+      "p50_request_latency_seconds": 9.872764,
+      "p95_request_latency_seconds": 17.559118,
+      "p99_request_latency_seconds": 18.565942
+    },
+    "serving": {
+      "p50_ttft_seconds": 5.265896,
+      "p95_ttft_seconds": 8.270965,
+      "p50_inter_token_latency_seconds": 0.010682,
+      "p95_inter_token_latency_seconds": 0.011982,
+      "requests_per_second": null,
+      "generated_tokens": null,
+      "run_duration_seconds": 218.081931,
+      "generation_tokens_per_second": 83.732359
+    },
+    "stream_shapes": [
+      {
+        "id": "prefill-heavy",
+        "prompt_token_target": 1536,
+        "max_tokens": 64,
+        "weight": 1,
+        "completed_requests": 310,
+        "failed_requests": 0,
+        "p50_request_latency_seconds": 6.187325,
+        "p95_request_latency_seconds": 9.122669,
+        "p99_request_latency_seconds": 9.866265,
+        "p50_ttft_seconds": 5.409204,
+        "p95_ttft_seconds": 8.287569,
+        "p50_inter_token_latency_seconds": 0.010922,
+        "p95_inter_token_latency_seconds": 0.012115,
+        "generation_tokens_per_second": 85.45978128004481
+      },
+      {
+        "id": "decode-heavy",
+        "prompt_token_target": 128,
+        "max_tokens": 768,
+        "weight": 1,
+        "completed_requests": 330,
+        "failed_requests": 0,
+        "p50_request_latency_seconds": 14.775589,
+        "p95_request_latency_seconds": 17.747695,
+        "p99_request_latency_seconds": 18.59335,
+        "p50_ttft_seconds": 5.079899,
+        "p95_ttft_seconds": 8.234835,
+        "p50_inter_token_latency_seconds": 0.010661,
+        "p95_inter_token_latency_seconds": 0.011964,
+        "generation_tokens_per_second": 82.1096295636937
+      }
+    ],
+    "queue": {
+      "peak_waiting_requests": 17,
+      "peak_running_requests": 16,
+      "peak_active_requests": 32,
+      "offered_iterations": 640,
+      "unserved_iterations": 0,
+      "delivery_ratio": 1.000000,
+      "dropped_iterations": null,
+      "interrupted_iterations": null,
+      "buffering_required_requests": null,
+      "failure_attribution": null
+    },
+    "gpu": {
+      "average_gpu_utilization_percent": 90.33333333333333,
+      "max_gpu_utilization_percent": 97,
+      "gpu_memory_used_bytes": 14361296896,
+      "gpu_memory_free_bytes": 1465909248
+    },
+    "scaling": {
+      "first_nodeclaim_seconds": null,
+      "first_gpu_node_seconds": null,
+      "pod_scheduled_seconds": null,
+      "container_started_seconds": null,
+      "model_ready_seconds": null,
+      "first_successful_completion_seconds": null
+    },
+    "slo": {
+      "p95_request_latency_target_seconds": null,
+      "p99_request_latency_target_seconds": null,
+      "passed": null
+    },
+    "cost": {
+      "cost_scope": null,
+      "serving_hourly_cost_usd": null,
+      "estimated_burst_cost_usd": null,
+      "cost_per_1000_successful_requests_usd": null,
+      "cost_per_1m_generated_tokens_usd": null
+    }
+  },
+  "notes": [
+    "This report records the workload and serving contract for the selected case.",
+    "Unavailable fields remain null when the runner did not collect that signal; do not treat missing GPU, queue, scaling, or cost fields as measured evidence."
+  ]
+}

@@ -1,0 +1,210 @@
+{
+  "schema_version": "experiment-report/v1",
+  "experiment": {
+    "name": "kv-cache",
+    "title": "KV Cache Vs Concurrency"
+  },
+  "case": {
+    "id": "prompt-8192-output-300-rate-125-admission-032",
+    "prompt_token_target": 8192,
+    "max_tokens": 300,
+    "request_shapes": [
+      {
+        "id": "prompt-8192-output-300-rate-125-admission-032",
+        "prompt_token_target": 8192,
+        "max_tokens": 300,
+        "weight": 1
+      }
+    ],
+    "client_policy": {
+      "id": "admission-control",
+      "mode": "admission-control",
+      "executor": "ramping-arrival-rate",
+      "buffer_capacity_requests": 0,
+      "max_queue_wait_seconds": 15
+    },
+    "arrival": {
+      "start_rate": 0,
+      "target_rate": 1.25,
+      "ramp_up_duration": "2m",
+      "steady_duration": "8m",
+      "ramp_down_duration": "2m",
+      "pre_allocated_vus": 32,
+      "max_vus": 32,
+      "timeout_seconds": 300
+    },
+    "stream": {
+      "samples": null,
+      "concurrency": null
+    }
+  },
+  "serving_profile": {
+    "id": "long-context",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "served_model_name": "qwen2.5-0.5b",
+    "vllm_image": "vllm/vllm-openai:v0.9.0",
+    "dtype": "float16",
+    "kv_cache_dtype": null,
+    "calculate_kv_scales": null,
+    "tensor_parallel_size": null,
+    "node_profile": null,
+    "max_model_len": 9216,
+    "gpu_memory_utilization": 0.90,
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 9216,
+    "quantization": {
+      "method": null,
+      "model_artifact_path": null,
+      "model_artifact_hash": null,
+      "recipe_hash": null,
+      "calibration": {
+        "dataset": null,
+        "split": null,
+        "samples": null,
+        "max_seq_len": null,
+        "seed": null
+      }
+    },
+    "accuracy_plan": {
+      "case_id": null,
+      "tasks": null,
+      "num_fewshot": null,
+      "limit": null,
+      "primary_metric": null
+    },
+    "cost_profile": {
+      "id": null,
+      "cost_scope": null,
+      "serving_hourly_cost_usd": null,
+      "cost_source": null,
+      "region": null,
+      "instance_type": null,
+      "instance_hourly_cost_usd": null,
+      "accelerator_count": null,
+      "accelerator_hourly_cost_usd": null,
+      "linux_hourly_cost_usd": null,
+      "quantization_build_hourly_cost_usd": null,
+      "quantization_build_hours": null,
+      "quantization_build_cost_usd": null,
+      "slo_p95_request_latency_seconds": null,
+      "slo_p99_request_latency_seconds": null
+    }
+  },
+  "run": {
+    "status": "complete",
+    "generated_at": "2026-05-18T06:00:18Z",
+    "source": "scripts/experiment run",
+    "requires_live_cluster": true
+  },
+  "results": {
+    "success": {
+      "completed_requests": 690,
+      "successful_requests": 690,
+      "failed_requests": 0,
+      "oom_events": null
+    },
+    "latency": {
+      "p50_request_latency_seconds": 27.107424642500003,
+      "p95_request_latency_seconds": 27.980543215999997,
+      "p99_request_latency_seconds": 28.01996481447
+    },
+    "client_timing": {
+      "p50_client_waiting_seconds": 27.105953768,
+      "p95_client_waiting_seconds": 27.9803063999,
+      "p99_client_waiting_seconds": 28.016791063200003,
+      "p95_client_blocked_seconds": 0.0011144460999999999,
+      "p95_client_connecting_seconds": 0.0010137222,
+      "p95_client_tls_handshaking_seconds": 0,
+      "p95_client_sending_seconds": 0.0008725494499999944,
+      "p95_client_receiving_seconds": 0.0001013329
+    },
+    "server_timing": {
+      "p50_queue_seconds": 0.15,
+      "p95_queue_seconds": 0.285,
+      "p50_prefill_seconds": 0.4296992481203008,
+      "p95_prefill_seconds": 0.734493670886076,
+      "p50_decode_seconds": 23.872113676731793,
+      "p95_decode_seconds": 29.38721136767318,
+      "p50_ttft_seconds": 0.45011600928074247,
+      "p95_ttft_seconds": 0.7175387596899225,
+      "p50_inter_token_latency_seconds": 0.03765010583378159,
+      "p95_inter_token_latency_seconds": 0.5973134991119002,
+      "p50_e2e_request_latency_seconds": 23.90459363957597,
+      "p95_e2e_request_latency_seconds": 29.390459363957596
+    },
+    "serving": {
+      "p50_ttft_seconds": null,
+      "p95_ttft_seconds": null,
+      "p50_inter_token_latency_seconds": null,
+      "p95_inter_token_latency_seconds": null,
+      "requests_per_second": 0.9583325838733292,
+      "generated_tokens": 207000,
+      "run_duration_seconds": 720.0005630730001,
+      "generation_tokens_per_second": 287.49977516199874
+    },
+    "stream_shapes": [],
+    "queue": {
+      "peak_waiting_requests": 0,
+      "peak_running_requests": 32,
+      "peak_active_requests": 32,
+      "offered_iterations": 749,
+      "unserved_iterations": 59,
+      "delivery_ratio": 0.921228,
+      "dropped_iterations": 59,
+      "interrupted_iterations": 0,
+      "buffering_required_requests": 59,
+      "failure_attribution": "client_queue_limit"
+    },
+    "gpu": {
+      "average_gpu_utilization_percent": 91.25,
+      "max_gpu_utilization_percent": 100,
+      "gpu_memory_used_bytes": 15141437440,
+      "gpu_memory_free_bytes": 685768704
+    },
+    "accuracy": {
+      "tasks": null,
+      "num_fewshot": null,
+      "limit": null,
+      "primary_metric": null,
+      "raw_task_scores": {
+        "arc_easy": null,
+        "hellaswag": null,
+        "winogrande": null
+      },
+      "average_score": null,
+      "fp4_recovery_vs_bf16_percent": null,
+      "smoothquant_gain_vs_plain_nvfp4_percent": null
+    },
+    "scaling": {
+      "first_nodeclaim_seconds": null,
+      "first_gpu_node_seconds": null,
+      "pod_scheduled_seconds": null,
+      "container_started_seconds": null,
+      "model_ready_seconds": null,
+      "first_successful_completion_seconds": null
+    },
+    "slo": {
+      "p95_request_latency_target_seconds": null,
+      "p99_request_latency_target_seconds": null,
+      "passed": null
+    },
+    "cost": {
+      "cost_scope": null,
+      "serving_hourly_cost_usd": null,
+      "estimated_burst_cost_usd": null,
+      "estimated_serving_cost_usd": null,
+      "cost_per_1000_successful_requests_usd": null,
+      "cost_per_1k_successful_requests_usd": null,
+      "cost_per_1m_generated_tokens_usd": null,
+      "cost_per_accuracy_point_usd": null,
+      "cost_per_accuracy_recovered_percent_usd": null,
+      "quantization_build_cost_usd": null
+    }
+  },
+  "notes": [
+    "This report records the workload and serving contract for the selected case.",
+    "Unavailable fields remain null when the runner did not collect that signal; do not treat missing GPU, queue, scaling, or cost fields as measured evidence.",
+    "Client timing fields use k6 HTTP phases; client waiting is time to first byte, not a dedicated server-side queue histogram.",
+    "Server timing fields use vLLM Prometheus histograms when the active vLLM image exposes them; missing queue, prefill, decode, TTFT, or inter-token histograms remain null."
+  ]
+}

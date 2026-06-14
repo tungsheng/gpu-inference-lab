@@ -51,8 +51,12 @@ Local checks do not require AWS:
 ```bash
 ./scripts/experiment list
 ./scripts/experiment validate
+./scripts/experiment replay --experiment kv-cache-observatory
 ./test/run.sh
 ```
+
+`replay` renders the committed evidence behind a curated `results.md` table from
+checked-in JSON, so the measured conclusions are auditable without a cluster.
 
 Measured runs require Terraform, AWS CLI, `kubectl`, `helm`, AWS credentials,
 access to `us-west-2`, and a live cluster:
