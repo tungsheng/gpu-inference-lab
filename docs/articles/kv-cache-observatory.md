@@ -47,7 +47,9 @@ This run did not produce an eviction or reload signal; those fields remain
 
 The vLLM `0.22.1` path is the default target for this initiative. The repo keeps
 older `0.9.0` KV-cache results as historical evidence, but new observatory
-claims should be produced with the `modern-vllm-0221` serving profile.
+claims should be produced with a `modern-vllm-0221` serving profile. Use
+`modern-vllm-0221-prefix` for prefix-cache hit/miss claims, because that is the
+profile used by the promoted live evidence.
 
 The observatory separates three evidence classes:
 
@@ -142,7 +144,7 @@ directly observed from vLLM KV events, the figure caption should say so.
 ```bash
 ./scripts/kv-observe preflight \
   --experiment kv-cache-observatory \
-  --profile modern-vllm-0221
+  --profile modern-vllm-0221-prefix
 
 ./scripts/experiment run \
   --experiment kv-cache-observatory \
