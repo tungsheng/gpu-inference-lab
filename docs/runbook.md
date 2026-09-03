@@ -5,8 +5,10 @@ choose what to measure and [Evidence](evidence.md) to read current conclusions.
 
 ## Prerequisites
 
-Local catalog commands need only the repository. Live runs also need Terraform,
-AWS CLI, `kubectl`, `helm`, AWS credentials, and access to `us-west-2`.
+Local catalog commands need the repository plus `jq` and `python3`: `replay` and
+`summarize-reports` read committed evidence with `jq`, and `validate` checks it
+against the report schema with `python3`. Live runs also need Terraform, AWS
+CLI, `kubectl`, `helm`, `curl`, AWS credentials, and access to `us-west-2`.
 
 Run local tests at any point:
 
@@ -19,7 +21,7 @@ Run local tests at any point:
 | Need | Command |
 | --- | --- |
 | Inspect experiment definitions | `./scripts/experiment list` |
-| Validate catalog contracts | `./scripts/experiment validate` |
+| Validate catalog contracts and curated evidence | `./scripts/experiment validate` |
 | Show one experiment | `./scripts/experiment show kv-cache` |
 | Render a KV cache timeline demo | `./scripts/kv-observe demo --output /tmp/kv-cache-observatory.html` |
 | Bring up the dev platform | `./scripts/up` |

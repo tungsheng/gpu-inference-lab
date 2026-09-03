@@ -17,3 +17,5 @@ Current library files:
   EKS node security-group cleanup helpers for `./scripts/down`
 - `evaluate-reports.sh`: schema metadata for `./scripts/evaluate` report
   artifacts
+- `validate_report.py`: JSON Schema checker for `experiment-report/v1`
+  artifacts, used by `./scripts/experiment validate` and `promote-evidence`

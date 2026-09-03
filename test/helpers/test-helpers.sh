@@ -41,8 +41,10 @@ assert_occurs_before() {
   local first_line
   local second_line
 
-  first_line=$(printf '%s\n' "${haystack}" | awk -v needle="${first_needle}" 'index($0, needle) { print NR; exit }')
-  second_line=$(printf '%s\n' "${haystack}" | awk -v needle="${second_needle}" 'index($0, needle) { print NR; exit }')
+  # awk must consume the whole stream: exiting on the first match closes the
+  # pipe early and makes printf die with SIGPIPE under `set -o pipefail`.
+  first_line=$(printf '%s\n' "${haystack}" | awk -v needle="${first_needle}" 'index($0, needle) && !found { line = NR; found = 1 } END { if (found) print line }')
+  second_line=$(printf '%s\n' "${haystack}" | awk -v needle="${second_needle}" 'index($0, needle) && !found { line = NR; found = 1 } END { if (found) print line }')
 
   if [[ -z "${first_line}" || -z "${second_line}" || "${first_line}" -ge "${second_line}" ]]; then
     fail "${message}"

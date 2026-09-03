@@ -9,10 +9,22 @@ per-experiment conclusions in `experiments/<name>/results.md`.
 
 ## Schemas
 
-| Producer | Schema |
-| --- | --- |
-| `./scripts/evaluate` | `evaluate-report/v1` |
-| `./scripts/experiment` | `experiment-report/v1` |
+| Producer | Schema | Definition |
+| --- | --- | --- |
+| `./scripts/evaluate` | `evaluate-report/v1` | `scripts/lib/evaluate-reports.sh` |
+| `./scripts/experiment` | `experiment-report/v1` | `experiments/_schemas/experiment-report.v1.json` |
+
+`experiment-report/v1` is enforced, not just documented. `./scripts/experiment
+validate` checks every committed evidence file against it, and
+`promote-evidence` refuses to admit a report that does not match. The schema is
+closed: an unexpected field fails validation, so adding a field to the report
+renderer means updating the schema in the same change.
+
+```bash
+python3 scripts/lib/validate_report.py \
+  --schema experiments/_schemas/experiment-report.v1.json \
+  experiments/kv-cache/evidence/*.json
+```
 
 ## Evaluation Reports
 
@@ -61,8 +73,9 @@ here:
 ```
 
 `promote-evidence` validates that the report matches the named experiment,
-strips operational endpoints (such as load-balancer hostnames), and copies it
-under `experiments/<name>/evidence/`. `replay` renders the committed evidence —
+strips operational endpoints (such as load-balancer hostnames), checks the
+scrubbed document against `experiment-report/v1`, and copies it under
+`experiments/<name>/evidence/`. `replay` renders the committed evidence —
 latest report per case/profile — with the same table as `summarize-reports`,
 using only `jq` and no cluster or AWS access. That makes every promoted
 `results.md` table reproducible from the repository alone.

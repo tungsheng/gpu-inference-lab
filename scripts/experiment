@@ -14,6 +14,8 @@ LOAD_CLIENT_TEMPLATE="${TEMPLATES_DIR}/experiment-load-test.js.tpl"
 STREAM_CLIENT_TEMPLATE="${TEMPLATES_DIR}/experiment-stream-client.py.tpl"
 ACCURACY_CLIENT_TEMPLATE="${TEMPLATES_DIR}/experiment-accuracy-client.py.tpl"
 MODEL_ARTIFACT_PVC_NAME="${EXPERIMENT_MODEL_ARTIFACT_PVC_NAME:-model-artifacts}"
+REPORT_SCHEMA_PATH="${EXPERIMENT_REPORT_SCHEMA_PATH:-${EXPERIMENTS_DIR}/_schemas/experiment-report.v1.json}"
+REPORT_SCHEMA_VALIDATOR="${SCRIPT_DIR}/lib/validate_report.py"
 EXPERIMENT_PROMETHEUS_LOCAL_PORT=""
 EXPERIMENT_PROMETHEUS_PORT_FORWARD_PID=""
 EXPERIMENT_PROMETHEUS_PORT_FORWARD_LOG=""
@@ -1888,6 +1890,40 @@ validate_experiment() {
   validate_quantization_job_rows "${experiment_name}"
 }
 
+check_reports_against_schema() {
+  if [[ ! -f "${REPORT_SCHEMA_PATH}" ]]; then
+    die "Missing report schema: ${REPORT_SCHEMA_PATH}"
+  fi
+
+  if [[ ! -f "${REPORT_SCHEMA_VALIDATOR}" ]]; then
+    die "Missing report schema validator: ${REPORT_SCHEMA_VALIDATOR}"
+  fi
+
+  require_commands python3
+
+  python3 "${REPORT_SCHEMA_VALIDATOR}" --schema "${REPORT_SCHEMA_PATH}" "$@"
+}
+
+validate_evidence_reports() {
+  local reports=()
+  local report_path
+
+  while IFS= read -r report_path; do
+    reports+=("${report_path}")
+  done < <(find "${EXPERIMENTS_DIR}" -mindepth 3 -maxdepth 3 -type f -path '*/evidence/*.json' | sort)
+
+  if ((${#reports[@]} == 0)); then
+    printf 'Validated 0 evidence report(s).\n'
+    return 0
+  fi
+
+  if ! check_reports_against_schema "${reports[@]}"; then
+    die "Curated evidence does not match ${REPORT_SCHEMA_PATH##*/}"
+  fi
+
+  printf 'Validated %s evidence report(s) against %s.\n' "${#reports[@]}" "${REPORT_SCHEMA_PATH##*/}"
+}
+
 validate_experiment_catalog() {
   local experiment_path
   local experiment_name
@@ -1899,13 +1935,16 @@ validate_experiment_catalog() {
   require_template "${STREAM_CLIENT_TEMPLATE}"
   require_template "${ACCURACY_CLIENT_TEMPLATE}"
 
+  # Underscore-prefixed directories are reserved for shared catalog assets
+  # (_profiles, _schemas, _templates), not experiments.
   while read -r experiment_path; do
     experiment_name=$(basename "${experiment_path}")
     validate_experiment "${experiment_name}"
     validated_count=$((validated_count + 1))
-  done < <(find "${EXPERIMENTS_DIR}" -mindepth 1 -maxdepth 1 -type d ! -name '_profiles' ! -name '_templates' | sort)
+  done < <(find "${EXPERIMENTS_DIR}" -mindepth 1 -maxdepth 1 -type d ! -name '_*' | sort)
 
   printf 'Validated %s experiment(s).\n' "${validated_count}"
+  validate_evidence_reports
 }
 
 render_arrival_rate_scenario_values() {
@@ -2238,18 +2277,26 @@ EOF
           ports:
             - containerPort: 8000
               name: http
-          readinessProbe:
+          # The startup probe owns the cold-start budget (620s) so image pull
+          # and model load cannot trip the liveness probe and crash-loop the
+          # pod. Readiness and liveness only begin once startup succeeds.
+          startupProbe:
             httpGet:
               path: /health
               port: http
             initialDelaySeconds: 20
             periodSeconds: 10
             failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 60
             periodSeconds: 20
             failureThreshold: 6
           resources:
@@ -4908,6 +4955,11 @@ promote_evidence_command() {
   if ! jq 'walk(if type == "object" then del(.public_endpoint) else . end)' "${report_path}" > "${tmp_destination}"; then
     rm -f "${tmp_destination}"
     die "Failed to scrub and write evidence from ${report_path}"
+  fi
+
+  if ! check_reports_against_schema "${tmp_destination}"; then
+    rm -f "${tmp_destination}"
+    die "Report ${report_path} does not match ${REPORT_SCHEMA_PATH##*/}"
   fi
 
   mv "${tmp_destination}" "${destination}"
