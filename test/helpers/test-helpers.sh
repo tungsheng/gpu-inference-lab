@@ -4,6 +4,10 @@ TEST_HELPERS_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC2034
 REPO_ROOT=$(cd -- "${TEST_HELPERS_DIR}/../.." && pwd)
 
+# Pin the inference edge source range so stubbed runs never reach the public-IP
+# lookup service. Tests that exercise resolution set their own value.
+export GPU_INFERENCE_INBOUND_CIDRS="${GPU_INFERENCE_INBOUND_CIDRS:-203.0.113.10/32}"
+
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1

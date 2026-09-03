@@ -73,7 +73,7 @@ write_stub kubectl \
 "  'get deployment gpu-warm-placeholder -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get hpa vllm-openai -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/inference/ingress.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete ingress vllm-openai-ingress -n app --ignore-not-found=true') exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/service.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get service vllm-openai -n app') exit 1 ;;" \

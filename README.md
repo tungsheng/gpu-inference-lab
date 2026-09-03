@@ -59,7 +59,9 @@ Local checks do not require AWS:
 checked-in JSON, so the measured conclusions are auditable without a cluster.
 
 Measured runs require Terraform, AWS CLI, `kubectl`, `helm`, AWS credentials,
-access to `us-west-2`, and a live cluster:
+access to `us-west-2`, and a live cluster. The inference ALB is restricted to
+the public IP of the machine running the command unless you set
+`GPU_INFERENCE_INBOUND_CIDRS`:
 
 ```bash
 ./scripts/up

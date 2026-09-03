@@ -29,7 +29,7 @@ write_evaluate_kubectl_stub() {
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true')" \

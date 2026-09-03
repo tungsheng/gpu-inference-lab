@@ -126,3 +126,9 @@ The active environment keeps the EKS API public:
 
 Production requires private cluster access, a documented operator path, and
 narrower public CIDR controls.
+
+The inference ALB is narrower than the EKS API. Its listener carries an explicit
+`inbound-cidrs` source range chosen at apply time and defaults to the operator
+public IP; see [Edge Exposure](../platform/inference/README.md#edge-exposure).
+It still terminates plain HTTP with no authentication, so production also
+requires TLS and an authenticated path in front of `/v1`.

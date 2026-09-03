@@ -1289,7 +1289,7 @@ require_spot_interruption_first_gpu_spot() {
 prepare_edge_and_profile() {
   ensure_namespace || return 1
   kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}" || return 1
-  kubectl apply -f "${GPU_INFERENCE_INGRESS_MANIFEST}" || return 1
+  apply_inference_ingress || return 1
   wait_for_apiservice_available "${PROMETHEUS_ADAPTER_APISERVICE_NAME}" "${MONITORING_TIMEOUT_SECONDS}" || return 1
   PUBLIC_INFERENCE_URL=$(public_inference_url "$(wait_for_ingress_hostname "${INGRESS_HOSTNAME_TIMEOUT_SECONDS}")") || return 1
 

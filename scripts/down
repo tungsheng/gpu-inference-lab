@@ -103,7 +103,7 @@ teardown_runtime_surface() {
   wait_for_resource_deletion deployment "${GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   kubectl delete -f "${GPU_INFERENCE_HPA_MANIFEST}" --ignore-not-found=true || return 1
   wait_for_resource_deletion hpa "${GPU_INFERENCE_HPA_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
-  kubectl delete -f "${GPU_INFERENCE_INGRESS_MANIFEST}" --ignore-not-found=true || return 1
+  kubectl delete ingress "${GPU_INFERENCE_INGRESS_NAME}" -n "${APP_NAMESPACE}" --ignore-not-found=true || return 1
   wait_for_resource_deletion ingress "${GPU_INFERENCE_INGRESS_NAME}" "${APP_NAMESPACE}" "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" || return 1
   if ((${#ingress_alb_hostnames[@]} > 0)); then
     wait_for_alb_deletions "${VERIFY_CLEANUP_TIMEOUT_SECONDS}" "${ingress_alb_hostnames[@]}" || return 1

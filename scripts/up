@@ -21,7 +21,7 @@ EOF
 }
 
 check_up_prereqs() {
-  require_commands aws helm kubectl terraform
+  require_commands aws curl helm kubectl terraform
 }
 
 run_terraform_init() {
@@ -97,7 +97,7 @@ install_karpenter_stack() {
 apply_inference_edge() {
   ensure_namespace || return 1
   kubectl apply -f "${GPU_INFERENCE_SERVICE_MANIFEST}" || return 1
-  kubectl apply -f "${GPU_INFERENCE_INGRESS_MANIFEST}" || return 1
+  apply_inference_ingress || return 1
   INGRESS_HOSTNAME=$(wait_for_ingress_hostname "${INGRESS_HOSTNAME_TIMEOUT_SECONDS}") || return 1
   wait_for_all_gpu_nodes_at_most 0 "${UP_ZERO_GPU_TIMEOUT_SECONDS}"
 }

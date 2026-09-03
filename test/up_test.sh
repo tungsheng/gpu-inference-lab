@@ -97,7 +97,7 @@ write_stub kubectl \
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com' ;;" \
 "  'get nodes -l workload=gpu -o name') exit 0 ;;" \
 "  *) printf 'unexpected kubectl command: %s\n' \"\$*\" >&2; exit 1 ;;" \
@@ -123,6 +123,8 @@ assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/observability/v
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml" "up should apply the GPU metrics exporter"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" "up should install the on-demand serving NodePool"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml" "up should install the spot serving NodePool"
-assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/inference/ingress.yaml" "up should apply the inference ingress"
+assert_contains "${KUBECTL_LOG}" "apply -f " "up should apply the rendered inference ingress"
+assert_contains "${COMMAND_OUTPUT}" "Inference edge scheme=internet-facing inbound-cidrs=203.0.113.10/32" "up should report the resolved edge scheme and source range"
+assert_not_contains "${COMMAND_OUTPUT}" "0.0.0.0/0" "up should not open the edge to the internet by default"
 assert_contains "${KUBECTL_LOG}" "get nodes -l workload=gpu -o name" "up should verify the zero-GPU baseline before reporting ready"
 assert_not_contains "${KUBECTL_LOG}" "platform/examples/echo" "up should not reference the sample app"
