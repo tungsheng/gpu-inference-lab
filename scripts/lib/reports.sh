@@ -22,6 +22,8 @@ EXPERIMENT_REPORT_SCHEMA_VERSION="experiment-report/v1"
 EVALUATE_REPORT_SCHEMA_VERSION="evaluate-report/v1"
 FAILURE_DRILL_REPORT_SCHEMA_VERSION="failure-drill-report/v1"
 KV_CACHE_TRACE_SCHEMA_VERSION="kv-cache-trace/v1"
+EXPERIMENT_CASE_SCHEMA_VERSION="experiment-case/v1"
+EVALUATE_MEASUREMENT_SCHEMA_VERSION="evaluate-measurement/v1"
 
 report_generated_at() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"

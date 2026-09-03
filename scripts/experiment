@@ -24,6 +24,7 @@ usage() {
 Usage:
   ./scripts/experiment list
   ./scripts/experiment validate
+  ./scripts/experiment resolve --experiment name --case case-id [--profile profile-id] [--output path]
   ./scripts/experiment show <experiment>
   ./scripts/experiment render-load --experiment name --case case-id [--output path]
   ./scripts/experiment render-stream --experiment name --case case-id [--samples count] [--concurrency count] [--output path]
@@ -2733,6 +2734,181 @@ ${STREAM_SHAPE_SUMMARY_ROWS}
 EOF
 }
 
+# The resolved case is the catalog's interface.
+#
+# Nine CSV loaders publish 74 shell globals, and the order they run in matters
+# without saying so: load_client_policy is passed ${CASE_ID}, which only exists
+# once load_case has run. Called first it resolves the default "direct" policy
+# with a zero buffer instead of the case's real admission model -- a silently
+# wrong answer, not an error, in the variable these experiments measure.
+# Sequencing the loaders by hand at each call site was the hazard, so callers
+# resolve a case once and read the result.
+
+experiment_case_fields() {
+  cat <<'FIELDS'
+  ACCURACY_CASE_ID
+  ACCURACY_LIMIT
+  ACCURACY_NUM_FEWSHOT
+  ACCURACY_PRIMARY_METRIC
+  ACCURACY_TASKS
+  CALCULATE_KV_SCALES
+  CALIBRATION_DATASET
+  CALIBRATION_MAX_SEQ_LEN
+  CALIBRATION_SAMPLES
+  CALIBRATION_SEED
+  CALIBRATION_SPLIT
+  CASE_ID
+  CLIENT_BUFFER_CAPACITY_REQUESTS
+  CLIENT_EXECUTOR
+  CLIENT_MAX_QUEUE_WAIT_SECONDS
+  CLIENT_MODE
+  CLIENT_POLICY_ID
+  COST_ACCELERATOR_COUNT
+  COST_ACCELERATOR_HOURLY_COST_USD
+  COST_INSTANCE_HOURLY_COST_USD
+  COST_INSTANCE_TYPE
+  COST_LINUX_HOURLY_COST_USD
+  COST_PROFILE_ID
+  COST_QUANTIZATION_BUILD_COST_USD
+  COST_QUANTIZATION_BUILD_HOURLY_COST_USD
+  COST_QUANTIZATION_BUILD_HOURS
+  COST_REGION
+  COST_SCOPE
+  COST_SERVING_HOURLY_COST_USD
+  COST_SLO_P95_REQUEST_LATENCY_SECONDS
+  COST_SLO_P99_REQUEST_LATENCY_SECONDS
+  COST_SOURCE
+  CPU_LIMIT
+  CPU_REQUEST
+  GPU_MEMORY_UTILIZATION
+  KV_CACHE_DTYPE
+  MAX_MODEL_LEN
+  MAX_NUM_BATCHED_TOKENS
+  MAX_NUM_SEQS
+  MAX_TOKENS
+  MAX_VUS
+  MEMORY_LIMIT
+  MEMORY_REQUEST
+  MODEL
+  MODEL_ARTIFACT_HASH
+  MODEL_ARTIFACT_PATH
+  MODEL_CACHE_SIZE
+  PRE_ALLOCATED_VUS
+  PROFILE_DESCRIPTION
+  PROFILE_ID
+  PROMPT_TOKEN_TARGET
+  QUANTIZATION_BASE_MODEL
+  QUANTIZATION_CALIBRATION_DATASET
+  QUANTIZATION_CALIBRATION_MAX_SEQ_LEN
+  QUANTIZATION_CALIBRATION_SAMPLES
+  QUANTIZATION_CALIBRATION_SEED
+  QUANTIZATION_CALIBRATION_SPLIT
+  QUANTIZATION_IMAGE
+  QUANTIZATION_METHOD
+  QUANTIZATION_OUTPUT_MODEL
+  QUANTIZATION_RECIPE_PATH
+  RAMP_DOWN_DURATION
+  RAMP_UP_DURATION
+  RECIPE_HASH
+  SERVED_MODEL_NAME
+  SERVING_DTYPE
+  SERVING_NODE_PROFILE
+  SERVING_TENSOR_PARALLEL_SIZE
+  SHM_SIZE
+  START_RATE
+  STEADY_DURATION
+  TARGET_RATE
+  TIMEOUT_SECONDS
+  VLLM_IMAGE
+FIELDS
+}
+
+resolve_experiment_case() {
+  local experiment_name=$1
+  local case_id=$2
+  local profile_id=$3
+
+  require_experiment "${experiment_name}"
+  load_case "${experiment_name}" "${case_id}"
+  load_client_policy "${experiment_name}" "${CASE_ID}"
+  load_serving_profile "${experiment_name}" "${profile_id}"
+  load_cost_profile "${experiment_name}" "${profile_id}"
+  load_cost_detail_profile "${experiment_name}" "${profile_id}"
+  load_accuracy_case "${experiment_name}"
+}
+
+write_resolved_case() {
+  local experiment_name=$1
+  local destination=$2
+  local field
+  local value
+  local first=1
+
+  {
+    printf '{\n'
+    printf '  "schema_version": %s,\n' "$(json_escape "${EXPERIMENT_CASE_SCHEMA_VERSION}")"
+    printf '  "experiment": %s,\n' "$(json_escape "${experiment_name}")"
+    printf '  "resolved": {\n'
+    while IFS= read -r field; do
+      field=${field// /}
+      [[ -z "${field}" ]] && continue
+      value=${!field-}
+      if (( first )); then first=0; else printf ',\n'; fi
+      printf '    %s: %s' "$(json_escape "${field}")" "$(json_escape "${value}")"
+    done < <(experiment_case_fields)
+    printf '\n  }\n}\n'
+  } > "${destination}"
+
+  if ! check_reports_against_schema "${EXPERIMENT_CASE_SCHEMA_VERSION}" "${destination}"; then
+    printf 'Resolved case %s does not match %s\n' "${destination}" "${EXPERIMENT_CASE_SCHEMA_VERSION}" >&2
+    return 1
+  fi
+}
+
+resolve_command() {
+  local experiment_name=""
+  local case_id=""
+  local profile_id="default"
+  local output=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --experiment) experiment_name=$(require_option_value "$1" "${2-}"); shift 2 ;;
+      --case)       case_id=$(require_option_value "$1" "${2-}"); shift 2 ;;
+      --profile)    profile_id=$(require_option_value "$1" "${2-}"); shift 2 ;;
+      --output)     output=$(require_option_value "$1" "${2-}"); shift 2 ;;
+      -h|--help)    usage; exit 0 ;;
+      *)            die "Unexpected argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${experiment_name}" ]] || die "resolve requires --experiment"
+  [[ -n "${case_id}" ]] || die "resolve requires --case"
+
+  resolve_experiment_case "${experiment_name}" "${case_id}" "${profile_id}"
+  validate_case_profile_compatibility "${experiment_name}"
+
+  if [[ -n "${output}" ]]; then
+    mkdir -p "$(dirname "${output}")"
+    write_resolved_case "${experiment_name}" "${output}"
+    printf 'Resolved case: %s\n' "${output}"
+    return 0
+  fi
+
+  # The document is validated by re-reading it, so it is written to a file even
+  # when the caller wants it on stdout.
+  local rendered
+  rendered=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-resolved-case.XXXXXX")
+  if write_resolved_case "${experiment_name}" "${rendered}"; then
+    cat "${rendered}"
+    rm -f "${rendered}"
+    return 0
+  fi
+
+  rm -f "${rendered}"
+  return 1
+}
+
 render_report_markdown() {
   local experiment_name=$1
   local case_id=$2
@@ -2854,13 +3030,7 @@ render_report_markdown() {
   local stream_concurrency_display
   local stream_shape_summary_section
 
-  require_experiment "${experiment_name}"
-  load_case "${experiment_name}" "${case_id}"
-  load_client_policy "${experiment_name}" "${CASE_ID}"
-  load_serving_profile "${experiment_name}" "${profile_id}"
-  load_cost_profile "${experiment_name}" "${profile_id}"
-  load_cost_detail_profile "${experiment_name}" "${profile_id}"
-  load_accuracy_case "${experiment_name}"
+  resolve_experiment_case "${experiment_name}" "${case_id}" "${profile_id}"
 
   experiment_title_value=$(experiment_title "${experiment_name}")
   request_shapes_display_value=$(request_shapes_display "${experiment_name}")
@@ -3187,13 +3357,7 @@ render_report_json() {
   local run_status="${RUN_STATUS:-pending}"
   local run_source="${RUN_SOURCE:-scripts/experiment render-report}"
 
-  require_experiment "${experiment_name}"
-  load_case "${experiment_name}" "${case_id}"
-  load_client_policy "${experiment_name}" "${CASE_ID}"
-  load_serving_profile "${experiment_name}" "${profile_id}"
-  load_cost_profile "${experiment_name}" "${profile_id}"
-  load_cost_detail_profile "${experiment_name}" "${profile_id}"
-  load_accuracy_case "${experiment_name}"
+  resolve_experiment_case "${experiment_name}" "${case_id}" "${profile_id}"
 
   experiment_title_value=$(experiment_title "${experiment_name}")
   max_num_seqs_json=$(json_optional_integer "${MAX_NUM_SEQS}")
@@ -3466,9 +3630,7 @@ write_report_files() {
   mkdir -p "$(dirname "${report_path}")"
   mkdir -p "$(dirname "${json_report_path}")"
 
-  require_experiment "${experiment_name}"
-  load_case "${experiment_name}" "${case_id}"
-  load_serving_profile "${experiment_name}" "${profile_id}"
+  resolve_experiment_case "${experiment_name}" "${case_id}" "${profile_id}"
   validate_case_profile_compatibility "${experiment_name}"
 
   render_report_markdown "${experiment_name}" "${case_id}" "${profile_id}" "${generated_at}" > "${report_path}"
@@ -4296,9 +4458,7 @@ run_experiment_case() {
   local job_status
 
   require_commands kubectl
-  require_experiment "${experiment_name}"
-  load_case "${experiment_name}" "${case_id}"
-  load_serving_profile "${experiment_name}" "${profile_id}"
+  resolve_experiment_case "${experiment_name}" "${case_id}" "${profile_id}"
   validate_case_profile_compatibility "${experiment_name}"
 
   generated_at=$(utc_timestamp)
@@ -4385,9 +4545,7 @@ run_stream_case() {
   local job_status
 
   require_commands kubectl
-  require_experiment "${experiment_name}"
-  load_case "${experiment_name}" "${case_id}"
-  load_serving_profile "${experiment_name}" "${profile_id}"
+  resolve_experiment_case "${experiment_name}" "${case_id}" "${profile_id}"
   require_positive_integer "${samples}" "stream samples"
   require_positive_integer "${stream_concurrency}" "stream concurrency"
   validate_case_profile_compatibility "${experiment_name}"
@@ -5206,6 +5364,10 @@ main() {
     validate)
       shift
       validate_command "$@"
+      ;;
+    resolve)
+      shift
+      resolve_command "$@"
       ;;
     show)
       shift

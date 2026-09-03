@@ -1,0 +1,326 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/gpu-inference-lab/experiment-case.schema.json",
+  "title": "Resolved experiment case",
+  "description": "The catalog's interface: one experiment, case and serving profile resolved into a single document. Produced by ./scripts/experiment resolve.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "experiment",
+    "resolved"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "experiment-case/v1"
+    },
+    "experiment": {
+      "type": "string"
+    },
+    "resolved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ACCURACY_CASE_ID",
+        "ACCURACY_LIMIT",
+        "ACCURACY_NUM_FEWSHOT",
+        "ACCURACY_PRIMARY_METRIC",
+        "ACCURACY_TASKS",
+        "CALCULATE_KV_SCALES",
+        "CALIBRATION_DATASET",
+        "CALIBRATION_MAX_SEQ_LEN",
+        "CALIBRATION_SAMPLES",
+        "CALIBRATION_SEED",
+        "CALIBRATION_SPLIT",
+        "CASE_ID",
+        "CLIENT_BUFFER_CAPACITY_REQUESTS",
+        "CLIENT_EXECUTOR",
+        "CLIENT_MAX_QUEUE_WAIT_SECONDS",
+        "CLIENT_MODE",
+        "CLIENT_POLICY_ID",
+        "COST_ACCELERATOR_COUNT",
+        "COST_ACCELERATOR_HOURLY_COST_USD",
+        "COST_INSTANCE_HOURLY_COST_USD",
+        "COST_INSTANCE_TYPE",
+        "COST_LINUX_HOURLY_COST_USD",
+        "COST_PROFILE_ID",
+        "COST_QUANTIZATION_BUILD_COST_USD",
+        "COST_QUANTIZATION_BUILD_HOURLY_COST_USD",
+        "COST_QUANTIZATION_BUILD_HOURS",
+        "COST_REGION",
+        "COST_SCOPE",
+        "COST_SERVING_HOURLY_COST_USD",
+        "COST_SLO_P95_REQUEST_LATENCY_SECONDS",
+        "COST_SLO_P99_REQUEST_LATENCY_SECONDS",
+        "COST_SOURCE",
+        "CPU_LIMIT",
+        "CPU_REQUEST",
+        "GPU_MEMORY_UTILIZATION",
+        "KV_CACHE_DTYPE",
+        "MAX_MODEL_LEN",
+        "MAX_NUM_BATCHED_TOKENS",
+        "MAX_NUM_SEQS",
+        "MAX_TOKENS",
+        "MAX_VUS",
+        "MEMORY_LIMIT",
+        "MEMORY_REQUEST",
+        "MODEL",
+        "MODEL_ARTIFACT_HASH",
+        "MODEL_ARTIFACT_PATH",
+        "MODEL_CACHE_SIZE",
+        "PRE_ALLOCATED_VUS",
+        "PROFILE_DESCRIPTION",
+        "PROFILE_ID",
+        "PROMPT_TOKEN_TARGET",
+        "QUANTIZATION_BASE_MODEL",
+        "QUANTIZATION_CALIBRATION_DATASET",
+        "QUANTIZATION_CALIBRATION_MAX_SEQ_LEN",
+        "QUANTIZATION_CALIBRATION_SAMPLES",
+        "QUANTIZATION_CALIBRATION_SEED",
+        "QUANTIZATION_CALIBRATION_SPLIT",
+        "QUANTIZATION_IMAGE",
+        "QUANTIZATION_METHOD",
+        "QUANTIZATION_OUTPUT_MODEL",
+        "QUANTIZATION_RECIPE_PATH",
+        "RAMP_DOWN_DURATION",
+        "RAMP_UP_DURATION",
+        "RECIPE_HASH",
+        "SERVED_MODEL_NAME",
+        "SERVING_DTYPE",
+        "SERVING_NODE_PROFILE",
+        "SERVING_TENSOR_PARALLEL_SIZE",
+        "SHM_SIZE",
+        "START_RATE",
+        "STEADY_DURATION",
+        "TARGET_RATE",
+        "TIMEOUT_SECONDS",
+        "VLLM_IMAGE"
+      ],
+      "properties": {
+        "ACCURACY_CASE_ID": {
+          "type": "string"
+        },
+        "ACCURACY_LIMIT": {
+          "type": "string"
+        },
+        "ACCURACY_NUM_FEWSHOT": {
+          "type": "string"
+        },
+        "ACCURACY_PRIMARY_METRIC": {
+          "type": "string"
+        },
+        "ACCURACY_TASKS": {
+          "type": "string"
+        },
+        "CALCULATE_KV_SCALES": {
+          "type": "string"
+        },
+        "CALIBRATION_DATASET": {
+          "type": "string"
+        },
+        "CALIBRATION_MAX_SEQ_LEN": {
+          "type": "string"
+        },
+        "CALIBRATION_SAMPLES": {
+          "type": "string"
+        },
+        "CALIBRATION_SEED": {
+          "type": "string"
+        },
+        "CALIBRATION_SPLIT": {
+          "type": "string"
+        },
+        "CASE_ID": {
+          "type": "string"
+        },
+        "CLIENT_BUFFER_CAPACITY_REQUESTS": {
+          "type": "string"
+        },
+        "CLIENT_EXECUTOR": {
+          "type": "string"
+        },
+        "CLIENT_MAX_QUEUE_WAIT_SECONDS": {
+          "type": "string"
+        },
+        "CLIENT_MODE": {
+          "type": "string"
+        },
+        "CLIENT_POLICY_ID": {
+          "type": "string"
+        },
+        "COST_ACCELERATOR_COUNT": {
+          "type": "string"
+        },
+        "COST_ACCELERATOR_HOURLY_COST_USD": {
+          "type": "string"
+        },
+        "COST_INSTANCE_HOURLY_COST_USD": {
+          "type": "string"
+        },
+        "COST_INSTANCE_TYPE": {
+          "type": "string"
+        },
+        "COST_LINUX_HOURLY_COST_USD": {
+          "type": "string"
+        },
+        "COST_PROFILE_ID": {
+          "type": "string"
+        },
+        "COST_QUANTIZATION_BUILD_COST_USD": {
+          "type": "string"
+        },
+        "COST_QUANTIZATION_BUILD_HOURLY_COST_USD": {
+          "type": "string"
+        },
+        "COST_QUANTIZATION_BUILD_HOURS": {
+          "type": "string"
+        },
+        "COST_REGION": {
+          "type": "string"
+        },
+        "COST_SCOPE": {
+          "type": "string"
+        },
+        "COST_SERVING_HOURLY_COST_USD": {
+          "type": "string"
+        },
+        "COST_SLO_P95_REQUEST_LATENCY_SECONDS": {
+          "type": "string"
+        },
+        "COST_SLO_P99_REQUEST_LATENCY_SECONDS": {
+          "type": "string"
+        },
+        "COST_SOURCE": {
+          "type": "string"
+        },
+        "CPU_LIMIT": {
+          "type": "string"
+        },
+        "CPU_REQUEST": {
+          "type": "string"
+        },
+        "GPU_MEMORY_UTILIZATION": {
+          "type": "string"
+        },
+        "KV_CACHE_DTYPE": {
+          "type": "string"
+        },
+        "MAX_MODEL_LEN": {
+          "type": "string"
+        },
+        "MAX_NUM_BATCHED_TOKENS": {
+          "type": "string"
+        },
+        "MAX_NUM_SEQS": {
+          "type": "string"
+        },
+        "MAX_TOKENS": {
+          "type": "string"
+        },
+        "MAX_VUS": {
+          "type": "string"
+        },
+        "MEMORY_LIMIT": {
+          "type": "string"
+        },
+        "MEMORY_REQUEST": {
+          "type": "string"
+        },
+        "MODEL": {
+          "type": "string"
+        },
+        "MODEL_ARTIFACT_HASH": {
+          "type": "string"
+        },
+        "MODEL_ARTIFACT_PATH": {
+          "type": "string"
+        },
+        "MODEL_CACHE_SIZE": {
+          "type": "string"
+        },
+        "PRE_ALLOCATED_VUS": {
+          "type": "string"
+        },
+        "PROFILE_DESCRIPTION": {
+          "type": "string"
+        },
+        "PROFILE_ID": {
+          "type": "string"
+        },
+        "PROMPT_TOKEN_TARGET": {
+          "type": "string"
+        },
+        "QUANTIZATION_BASE_MODEL": {
+          "type": "string"
+        },
+        "QUANTIZATION_CALIBRATION_DATASET": {
+          "type": "string"
+        },
+        "QUANTIZATION_CALIBRATION_MAX_SEQ_LEN": {
+          "type": "string"
+        },
+        "QUANTIZATION_CALIBRATION_SAMPLES": {
+          "type": "string"
+        },
+        "QUANTIZATION_CALIBRATION_SEED": {
+          "type": "string"
+        },
+        "QUANTIZATION_CALIBRATION_SPLIT": {
+          "type": "string"
+        },
+        "QUANTIZATION_IMAGE": {
+          "type": "string"
+        },
+        "QUANTIZATION_METHOD": {
+          "type": "string"
+        },
+        "QUANTIZATION_OUTPUT_MODEL": {
+          "type": "string"
+        },
+        "QUANTIZATION_RECIPE_PATH": {
+          "type": "string"
+        },
+        "RAMP_DOWN_DURATION": {
+          "type": "string"
+        },
+        "RAMP_UP_DURATION": {
+          "type": "string"
+        },
+        "RECIPE_HASH": {
+          "type": "string"
+        },
+        "SERVED_MODEL_NAME": {
+          "type": "string"
+        },
+        "SERVING_DTYPE": {
+          "type": "string"
+        },
+        "SERVING_NODE_PROFILE": {
+          "type": "string"
+        },
+        "SERVING_TENSOR_PARALLEL_SIZE": {
+          "type": "string"
+        },
+        "SHM_SIZE": {
+          "type": "string"
+        },
+        "START_RATE": {
+          "type": "string"
+        },
+        "STEADY_DURATION": {
+          "type": "string"
+        },
+        "TARGET_RATE": {
+          "type": "string"
+        },
+        "TIMEOUT_SECONDS": {
+          "type": "string"
+        },
+        "VLLM_IMAGE": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

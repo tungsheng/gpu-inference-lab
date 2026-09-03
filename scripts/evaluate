@@ -2004,7 +2004,6 @@ estimate_costs() {
 # computation over these fields. `run` writes a record, `render-report` reads
 # one, and both then take the identical derive-and-render path, so the readout
 # can be exercised without a cluster.
-EVALUATE_MEASUREMENT_SCHEMA_VERSION="evaluate-measurement/v1"
 
 evaluate_measurement_fields() {
   cat <<'FIELDS'
