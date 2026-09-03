@@ -136,6 +136,7 @@ SWEEP_RECOMMENDATION_REASON=""
 usage() {
   cat <<EOF
 Usage:
+  ./scripts/evaluate render-report --record path [--report path] [--json-report path]
   ./scripts/evaluate [--profile zero-idle|warm-1] [--policy running|active-pressure|compare|sweep] [--compare-order running,active-pressure|active-pressure,running] [--resilience healthy|spot-unavailable|spot-interruption] [--active-target requests] [--active-targets csv] [--report path] [--json-report path]
 
 Examples:
@@ -1997,6 +1998,153 @@ estimate_costs() {
   fi
 }
 
+# The measurement record is the seam between the live run and the readout.
+#
+# Everything above this line touches a cluster; everything below it is pure
+# computation over these fields. `run` writes a record, `render-report` reads
+# one, and both then take the identical derive-and-render path, so the readout
+# can be exercised without a cluster.
+EVALUATE_MEASUREMENT_SCHEMA_VERSION="evaluate-measurement/v1"
+
+evaluate_measurement_fields() {
+  cat <<'FIELDS'
+  ACTIVE_PRESSURE_TARGET
+  AVG_COMPLETED_REQUESTS_PER_SECOND
+  AVG_GENERATION_TOKENS_PER_SECOND
+  AVG_GPU_UTILIZATION_PERCENT
+  CLEANUP_FINISH_TIME
+  COMPARE_ORDER_INPUT
+  CURRENT_HPA_METRIC_NAME
+  CURRENT_HPA_TARGET_AVERAGE_VALUE
+  CURRENT_POLICY
+  CURRENT_REPORT_KEY
+  CURRENT_STAGE_PREFIX
+  DEPLOYMENT_APPLIED
+  EVALUATION_POLICY
+  EVALUATION_PROFILE
+  EVALUATION_RESILIENCE
+  EVALUATION_START_TIME
+  EVALUATION_TIMESTAMP
+  FIRST_CONTAINER_STARTED_TIME
+  FIRST_GPU_AVAILABILITY_ZONE
+  FIRST_GPU_CAPACITY_TYPE
+  FIRST_GPU_INSTANCE_TYPE
+  FIRST_GPU_NODEPOOL_NAME
+  FIRST_GPU_NODE_NAME
+  FIRST_GPU_NODE_TIME
+  FIRST_NODECLAIM_NAME
+  FIRST_NODECLAIM_TIME
+  FIRST_POD_NAME
+  FIRST_POD_SCHEDULED_TIME
+  FIRST_READY_TIME
+  FIRST_RESPONSE_TIME
+  HPA_APPLIED
+  HPA_SCALE_OUT_TIME
+  INTERRUPTED_GPU_NODE_REMOVED_TIME
+  INTERRUPTED_NODECLAIM_REMOVED_TIME
+  INTERRUPTION_TRIGGER_TIME
+  LOAD_FINISH_TIME
+  LOAD_START_TIME
+  LOAD_TEST_APPLIED
+  MAX_GPU_UTILIZATION_PERCENT
+  METRICS_COLLECTION_REASON
+  METRICS_COLLECTION_STATUS
+  P95_ESTIMATED_QUEUE_WAIT_SECONDS
+  P95_REQUEST_LATENCY_SECONDS
+  P95_SERVER_DECODE_SECONDS
+  P95_SERVER_INTER_TOKEN_LATENCY_SECONDS
+  P95_SERVER_PREFILL_SECONDS
+  P95_SERVER_QUEUE_SECONDS
+  P95_TTFT_SECONDS
+  PEAK_ACTIVE_NODECLAIMS
+  PEAK_ACTIVE_ONDEMAND_NODECLAIMS
+  PEAK_ACTIVE_REQUESTS
+  PEAK_ACTIVE_SPOT_NODECLAIMS
+  PEAK_RUNNING_REQUESTS
+  PEAK_WAITING_REQUESTS
+  POLICY_FINISH_TIME
+  PRESERVE_PROFILE_BASELINE
+  PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS
+  PROFILE_BASELINE_RESTORED_TIME
+  PUBLIC_INFERENCE_URL
+  RECOVERY_GPU_AVAILABILITY_ZONE
+  RECOVERY_GPU_CAPACITY_TYPE
+  RECOVERY_GPU_INSTANCE_TYPE
+  RECOVERY_GPU_NODEPOOL_NAME
+  RECOVERY_GPU_NODE_NAME
+  RECOVERY_GPU_NODE_TIME
+  RECOVERY_NODECLAIM_NAME
+  RECOVERY_NODECLAIM_TIME
+  RECOVERY_READY_TIME
+  RESILIENCE_OUTCOME
+  RESILIENCE_OUTCOME_REASON
+  SCALE_IN_TIME
+  SECOND_GPU_AVAILABILITY_ZONE
+  SECOND_GPU_CAPACITY_TYPE
+  SECOND_GPU_INSTANCE_TYPE
+  SECOND_GPU_NODEPOOL_NAME
+  SECOND_GPU_NODE_NAME
+  SECOND_GPU_NODE_TIME
+  SECOND_NODECLAIM_NAME
+  SECOND_NODECLAIM_TIME
+  SECOND_READY_TIME
+FIELDS
+}
+
+write_measurement_record() {
+  local destination=$1
+  local field
+  local value
+  local first=1
+
+  {
+    printf '{\n'
+    printf '  "schema_version": %s,\n' "$(json_escape "${EVALUATE_MEASUREMENT_SCHEMA_VERSION}")"
+    printf '  "generated_at": %s,\n' "$(json_escape "$(report_generated_at)")"
+    printf '  "measurements": {\n'
+    while IFS= read -r field; do
+      field=${field// /}
+      [[ -z "${field}" ]] && continue
+      value=${!field-}
+      if (( first )); then
+        first=0
+      else
+        printf ',\n'
+      fi
+      printf '    %s: %s' "$(json_escape "${field}")" "$(json_escape "${value}")"
+    done < <(evaluate_measurement_fields)
+    printf '\n  }\n}\n'
+  } > "${destination}"
+
+  if ! check_reports_against_schema "${EVALUATE_MEASUREMENT_SCHEMA_VERSION}" "${destination}"; then
+    printf 'Measurement record %s does not match %s\n' "${destination}" "${EVALUATE_MEASUREMENT_SCHEMA_VERSION}" >&2
+    return 1
+  fi
+}
+
+load_measurement_record() {
+  local source=$1
+  local field
+  local value
+
+  if [[ ! -f "${source}" ]]; then
+    printf 'Measurement record not found: %s\n' "${source}" >&2
+    return 1
+  fi
+
+  if ! check_reports_against_schema "${EVALUATE_MEASUREMENT_SCHEMA_VERSION}" "${source}"; then
+    printf 'Measurement record %s does not match %s\n' "${source}" "${EVALUATE_MEASUREMENT_SCHEMA_VERSION}" >&2
+    return 1
+  fi
+
+  while IFS= read -r field; do
+    field=${field// /}
+    [[ -z "${field}" ]] && continue
+    value=$(jq -r --arg key "${field}" '.measurements[$key] // ""' "${source}") || return 1
+    printf -v "${field}" '%s' "${value}"
+  done < <(evaluate_measurement_fields)
+}
+
 finalize_derived_readouts() {
   estimate_costs
   derive_capacity_readout
@@ -3338,8 +3486,69 @@ collect_metrics_and_write_reports() {
   fi
 
   push_summary_metrics || true
+
+  # The record is written before the readout runs, so a run that produced
+  # measurements can always be re-rendered without repeating it.
+  write_measurement_record "$(measurement_record_path "${JSON_REPORT_PATH}")" || return 1
+
   write_reports
   check_written_report "${JSON_REPORT_PATH}" || return 1
+}
+
+measurement_record_path() {
+  local json_report_path=$1
+
+  printf '%s.measurement.json\n' "$(strip_report_extension "${json_report_path}")"
+}
+
+render_report_command() {
+  local record_path=""
+  local report_path=""
+  local json_report_path=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --record)
+        record_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --report)
+        report_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      --json-report)
+        json_report_path=$(require_option_value "$1" "${2-}")
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        printf 'Unexpected argument: %s\n' "$1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ -z "${record_path}" ]]; then
+    printf 'render-report requires --record <path>\n' >&2
+    exit 1
+  fi
+
+  require_commands jq python3 || exit 1
+  load_measurement_record "${record_path}" || exit 1
+
+  REPORT_PATH=${report_path:-$(strip_report_extension "${record_path}").md}
+  JSON_REPORT_PATH=${json_report_path:-$(strip_report_extension "${record_path}").json}
+
+  # Same derive-and-render path the live run takes, from the same fields.
+  finalize_derived_readouts
+  write_reports
+  check_written_report "${JSON_REPORT_PATH}" || exit 1
+
+  printf 'Rendered Markdown report: %s\n' "${REPORT_PATH}"
+  printf 'Rendered JSON report: %s\n' "${JSON_REPORT_PATH}"
 }
 
 run_single_policy_evaluation() {
@@ -3480,6 +3689,16 @@ print_sweep_summary() {
 }
 
 main() {
+  # Subcommands are opt-in: anything starting with a flag stays the historical
+  # "run an evaluation" form, so existing invocations are unchanged.
+  case "${1-}" in
+    render-report)
+      shift
+      render_report_command "$@"
+      return 0
+      ;;
+  esac
+
   local stage_prefix=""
   local last_target_index
   local target_index
@@ -3548,4 +3767,8 @@ main() {
   print_single_policy_summary
 }
 
-main "$@"
+# Only run when executed. Sourcing loads the functions so they can be exercised
+# directly, without a process fake standing in for a cluster.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

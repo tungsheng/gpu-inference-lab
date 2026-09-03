@@ -1,0 +1,350 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/gpu-inference-lab/evaluate-measurement.schema.json",
+  "title": "Evaluation measurement record",
+  "description": "The seam between a live evaluation run and the readout. Carries every raw measurement the cost model, capacity verdict, resilience verdict and report renderers read, and nothing they derive.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "measurements"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "evaluate-measurement/v1"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "measurements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ACTIVE_PRESSURE_TARGET",
+        "AVG_COMPLETED_REQUESTS_PER_SECOND",
+        "AVG_GENERATION_TOKENS_PER_SECOND",
+        "AVG_GPU_UTILIZATION_PERCENT",
+        "CLEANUP_FINISH_TIME",
+        "COMPARE_ORDER_INPUT",
+        "CURRENT_HPA_METRIC_NAME",
+        "CURRENT_HPA_TARGET_AVERAGE_VALUE",
+        "CURRENT_POLICY",
+        "CURRENT_REPORT_KEY",
+        "CURRENT_STAGE_PREFIX",
+        "DEPLOYMENT_APPLIED",
+        "EVALUATION_POLICY",
+        "EVALUATION_PROFILE",
+        "EVALUATION_RESILIENCE",
+        "EVALUATION_START_TIME",
+        "EVALUATION_TIMESTAMP",
+        "FIRST_CONTAINER_STARTED_TIME",
+        "FIRST_GPU_AVAILABILITY_ZONE",
+        "FIRST_GPU_CAPACITY_TYPE",
+        "FIRST_GPU_INSTANCE_TYPE",
+        "FIRST_GPU_NODEPOOL_NAME",
+        "FIRST_GPU_NODE_NAME",
+        "FIRST_GPU_NODE_TIME",
+        "FIRST_NODECLAIM_NAME",
+        "FIRST_NODECLAIM_TIME",
+        "FIRST_POD_NAME",
+        "FIRST_POD_SCHEDULED_TIME",
+        "FIRST_READY_TIME",
+        "FIRST_RESPONSE_TIME",
+        "HPA_APPLIED",
+        "HPA_SCALE_OUT_TIME",
+        "INTERRUPTED_GPU_NODE_REMOVED_TIME",
+        "INTERRUPTED_NODECLAIM_REMOVED_TIME",
+        "INTERRUPTION_TRIGGER_TIME",
+        "LOAD_FINISH_TIME",
+        "LOAD_START_TIME",
+        "LOAD_TEST_APPLIED",
+        "MAX_GPU_UTILIZATION_PERCENT",
+        "METRICS_COLLECTION_REASON",
+        "METRICS_COLLECTION_STATUS",
+        "P95_ESTIMATED_QUEUE_WAIT_SECONDS",
+        "P95_REQUEST_LATENCY_SECONDS",
+        "P95_SERVER_DECODE_SECONDS",
+        "P95_SERVER_INTER_TOKEN_LATENCY_SECONDS",
+        "P95_SERVER_PREFILL_SECONDS",
+        "P95_SERVER_QUEUE_SECONDS",
+        "P95_TTFT_SECONDS",
+        "PEAK_ACTIVE_NODECLAIMS",
+        "PEAK_ACTIVE_ONDEMAND_NODECLAIMS",
+        "PEAK_ACTIVE_REQUESTS",
+        "PEAK_ACTIVE_SPOT_NODECLAIMS",
+        "PEAK_RUNNING_REQUESTS",
+        "PEAK_WAITING_REQUESTS",
+        "POLICY_FINISH_TIME",
+        "PRESERVE_PROFILE_BASELINE",
+        "PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS",
+        "PROFILE_BASELINE_RESTORED_TIME",
+        "PUBLIC_INFERENCE_URL",
+        "RECOVERY_GPU_AVAILABILITY_ZONE",
+        "RECOVERY_GPU_CAPACITY_TYPE",
+        "RECOVERY_GPU_INSTANCE_TYPE",
+        "RECOVERY_GPU_NODEPOOL_NAME",
+        "RECOVERY_GPU_NODE_NAME",
+        "RECOVERY_GPU_NODE_TIME",
+        "RECOVERY_NODECLAIM_NAME",
+        "RECOVERY_NODECLAIM_TIME",
+        "RECOVERY_READY_TIME",
+        "RESILIENCE_OUTCOME",
+        "RESILIENCE_OUTCOME_REASON",
+        "SCALE_IN_TIME",
+        "SECOND_GPU_AVAILABILITY_ZONE",
+        "SECOND_GPU_CAPACITY_TYPE",
+        "SECOND_GPU_INSTANCE_TYPE",
+        "SECOND_GPU_NODEPOOL_NAME",
+        "SECOND_GPU_NODE_NAME",
+        "SECOND_GPU_NODE_TIME",
+        "SECOND_NODECLAIM_NAME",
+        "SECOND_NODECLAIM_TIME",
+        "SECOND_READY_TIME"
+      ],
+      "properties": {
+        "ACTIVE_PRESSURE_TARGET": {
+          "type": "string"
+        },
+        "AVG_COMPLETED_REQUESTS_PER_SECOND": {
+          "type": "string"
+        },
+        "AVG_GENERATION_TOKENS_PER_SECOND": {
+          "type": "string"
+        },
+        "AVG_GPU_UTILIZATION_PERCENT": {
+          "type": "string"
+        },
+        "CLEANUP_FINISH_TIME": {
+          "type": "string"
+        },
+        "COMPARE_ORDER_INPUT": {
+          "type": "string"
+        },
+        "CURRENT_HPA_METRIC_NAME": {
+          "type": "string"
+        },
+        "CURRENT_HPA_TARGET_AVERAGE_VALUE": {
+          "type": "string"
+        },
+        "CURRENT_POLICY": {
+          "type": "string"
+        },
+        "CURRENT_REPORT_KEY": {
+          "type": "string"
+        },
+        "CURRENT_STAGE_PREFIX": {
+          "type": "string"
+        },
+        "DEPLOYMENT_APPLIED": {
+          "type": "string"
+        },
+        "EVALUATION_POLICY": {
+          "type": "string"
+        },
+        "EVALUATION_PROFILE": {
+          "type": "string"
+        },
+        "EVALUATION_RESILIENCE": {
+          "type": "string"
+        },
+        "EVALUATION_START_TIME": {
+          "type": "string"
+        },
+        "EVALUATION_TIMESTAMP": {
+          "type": "string"
+        },
+        "FIRST_CONTAINER_STARTED_TIME": {
+          "type": "string"
+        },
+        "FIRST_GPU_AVAILABILITY_ZONE": {
+          "type": "string"
+        },
+        "FIRST_GPU_CAPACITY_TYPE": {
+          "type": "string"
+        },
+        "FIRST_GPU_INSTANCE_TYPE": {
+          "type": "string"
+        },
+        "FIRST_GPU_NODEPOOL_NAME": {
+          "type": "string"
+        },
+        "FIRST_GPU_NODE_NAME": {
+          "type": "string"
+        },
+        "FIRST_GPU_NODE_TIME": {
+          "type": "string"
+        },
+        "FIRST_NODECLAIM_NAME": {
+          "type": "string"
+        },
+        "FIRST_NODECLAIM_TIME": {
+          "type": "string"
+        },
+        "FIRST_POD_NAME": {
+          "type": "string"
+        },
+        "FIRST_POD_SCHEDULED_TIME": {
+          "type": "string"
+        },
+        "FIRST_READY_TIME": {
+          "type": "string"
+        },
+        "FIRST_RESPONSE_TIME": {
+          "type": "string"
+        },
+        "HPA_APPLIED": {
+          "type": "string"
+        },
+        "HPA_SCALE_OUT_TIME": {
+          "type": "string"
+        },
+        "INTERRUPTED_GPU_NODE_REMOVED_TIME": {
+          "type": "string"
+        },
+        "INTERRUPTED_NODECLAIM_REMOVED_TIME": {
+          "type": "string"
+        },
+        "INTERRUPTION_TRIGGER_TIME": {
+          "type": "string"
+        },
+        "LOAD_FINISH_TIME": {
+          "type": "string"
+        },
+        "LOAD_START_TIME": {
+          "type": "string"
+        },
+        "LOAD_TEST_APPLIED": {
+          "type": "string"
+        },
+        "MAX_GPU_UTILIZATION_PERCENT": {
+          "type": "string"
+        },
+        "METRICS_COLLECTION_REASON": {
+          "type": "string"
+        },
+        "METRICS_COLLECTION_STATUS": {
+          "type": "string"
+        },
+        "P95_ESTIMATED_QUEUE_WAIT_SECONDS": {
+          "type": "string"
+        },
+        "P95_REQUEST_LATENCY_SECONDS": {
+          "type": "string"
+        },
+        "P95_SERVER_DECODE_SECONDS": {
+          "type": "string"
+        },
+        "P95_SERVER_INTER_TOKEN_LATENCY_SECONDS": {
+          "type": "string"
+        },
+        "P95_SERVER_PREFILL_SECONDS": {
+          "type": "string"
+        },
+        "P95_SERVER_QUEUE_SECONDS": {
+          "type": "string"
+        },
+        "P95_TTFT_SECONDS": {
+          "type": "string"
+        },
+        "PEAK_ACTIVE_NODECLAIMS": {
+          "type": "string"
+        },
+        "PEAK_ACTIVE_ONDEMAND_NODECLAIMS": {
+          "type": "string"
+        },
+        "PEAK_ACTIVE_REQUESTS": {
+          "type": "string"
+        },
+        "PEAK_ACTIVE_SPOT_NODECLAIMS": {
+          "type": "string"
+        },
+        "PEAK_RUNNING_REQUESTS": {
+          "type": "string"
+        },
+        "PEAK_WAITING_REQUESTS": {
+          "type": "string"
+        },
+        "POLICY_FINISH_TIME": {
+          "type": "string"
+        },
+        "PRESERVE_PROFILE_BASELINE": {
+          "type": "string"
+        },
+        "PRESERVE_WARM_PROFILE_DEBUG_ARTIFACTS": {
+          "type": "string"
+        },
+        "PROFILE_BASELINE_RESTORED_TIME": {
+          "type": "string"
+        },
+        "PUBLIC_INFERENCE_URL": {
+          "type": "string"
+        },
+        "RECOVERY_GPU_AVAILABILITY_ZONE": {
+          "type": "string"
+        },
+        "RECOVERY_GPU_CAPACITY_TYPE": {
+          "type": "string"
+        },
+        "RECOVERY_GPU_INSTANCE_TYPE": {
+          "type": "string"
+        },
+        "RECOVERY_GPU_NODEPOOL_NAME": {
+          "type": "string"
+        },
+        "RECOVERY_GPU_NODE_NAME": {
+          "type": "string"
+        },
+        "RECOVERY_GPU_NODE_TIME": {
+          "type": "string"
+        },
+        "RECOVERY_NODECLAIM_NAME": {
+          "type": "string"
+        },
+        "RECOVERY_NODECLAIM_TIME": {
+          "type": "string"
+        },
+        "RECOVERY_READY_TIME": {
+          "type": "string"
+        },
+        "RESILIENCE_OUTCOME": {
+          "type": "string"
+        },
+        "RESILIENCE_OUTCOME_REASON": {
+          "type": "string"
+        },
+        "SCALE_IN_TIME": {
+          "type": "string"
+        },
+        "SECOND_GPU_AVAILABILITY_ZONE": {
+          "type": "string"
+        },
+        "SECOND_GPU_CAPACITY_TYPE": {
+          "type": "string"
+        },
+        "SECOND_GPU_INSTANCE_TYPE": {
+          "type": "string"
+        },
+        "SECOND_GPU_NODEPOOL_NAME": {
+          "type": "string"
+        },
+        "SECOND_GPU_NODE_NAME": {
+          "type": "string"
+        },
+        "SECOND_GPU_NODE_TIME": {
+          "type": "string"
+        },
+        "SECOND_NODECLAIM_NAME": {
+          "type": "string"
+        },
+        "SECOND_NODECLAIM_TIME": {
+          "type": "string"
+        },
+        "SECOND_READY_TIME": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

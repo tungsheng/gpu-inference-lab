@@ -373,6 +373,25 @@ run_running_policy_test() {
   REPORT_CONTENT=$(cat "${TEST_TMPDIR}/report.md")
   JSON_REPORT_CONTENT=$(cat "${TEST_TMPDIR}/report.json")
   KUBECTL_LOG=$(cat "${TEST_TMPDIR}/kubectl.log")
+
+  # The measurement record is the seam: re-rendering from it, with no cluster
+  # and no stubs on PATH, must reproduce what the live run just wrote. If this
+  # drifts, the offline readout is no longer the same readout.
+  assert_file_exists "${TEST_TMPDIR}/report.measurement.json" "a run should write the measurement record beside its reports"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/evaluate" render-report \
+    --record "${TEST_TMPDIR}/report.measurement.json" \
+    --report "${TEST_TMPDIR}/replayed.md" \
+    --json-report "${TEST_TMPDIR}/replayed.json"
+  assert_status 0 "${COMMAND_STATUS}" "render-report should rebuild the readout from the record without a cluster"
+
+  REPLAYED_JSON=$(sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g' "${TEST_TMPDIR}/replayed.json")
+  LIVE_JSON=$(sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g' "${TEST_TMPDIR}/report.json")
+  assert_eq "${LIVE_JSON}" "${REPLAYED_JSON}" "the JSON readout rendered from the record should match the live run"
+
+  REPLAYED_MD=$(sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g' "${TEST_TMPDIR}/replayed.md")
+  LIVE_MD=$(sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g' "${TEST_TMPDIR}/report.md")
+  assert_eq "${LIVE_MD}" "${REPLAYED_MD}" "the Markdown readout rendered from the record should match the live run"
   CURL_LOG=$(cat "${TEST_TMPDIR}/curl.log")
 
   assert_contains "${REPORT_CONTENT}" "Policy: running" "the Markdown report should include the policy metadata"

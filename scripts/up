@@ -168,4 +168,8 @@ main() {
   printf '  Next steps: ./scripts/verify or ./scripts/evaluate --profile zero-idle\n'
 }
 
-main "$@"
+# Only run when executed. Sourcing loads the functions so they can be exercised
+# directly, without a process fake standing in for a cluster.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

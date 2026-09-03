@@ -12,7 +12,26 @@ per-experiment conclusions in `experiments/<name>/results.md`.
 | Producer | Schema | Definition |
 | --- | --- | --- |
 | `./scripts/evaluate` | `evaluate-report/v1` | `schemas/evaluate-report.v1.json` |
+| `./scripts/evaluate` | `evaluate-measurement/v1` | `schemas/evaluate-measurement.v1.json` |
 | `./scripts/experiment` | `experiment-report/v1` | `schemas/experiment-report.v1.json` |
+| `./scripts/failure` | `failure-drill-report/v1` | `schemas/failure-drill-report.v1.json` |
+| `./scripts/kv-observe` | `kv-cache-trace/v1` | `schemas/kv-cache-trace.v1.json` |
+
+## Measurement Records
+
+`./scripts/evaluate` writes a measurement record beside every report it
+produces. The record is the seam between the live run and the readout: it
+carries every raw measurement the cost model, capacity verdict, resilience
+verdict and report renderers read, and none of the values they derive.
+
+```bash
+./scripts/evaluate render-report --record docs/reports/<report>.measurement.json
+```
+
+Rendering from a record takes the same derive-and-render path a run takes, so a
+readout can be rebuilt, reviewed, and tested without a cluster. The evaluation
+tests assert that a rendered readout matches the one its live run wrote, which
+is what keeps the two paths the same path.
 
 `experiment-report/v1` is enforced, not just documented. `./scripts/experiment
 validate` checks every committed evidence file against it, and
