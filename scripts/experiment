@@ -998,6 +998,10 @@ require_serving_profiles() {
 }
 
 validate_loaded_serving_profile() {
+  # Both serving-profile loaders end here, so this is the single point where a
+  # symbolic @VLLM_IMAGE_*@ reference becomes a concrete image.
+  VLLM_IMAGE=$(resolve_serving_image "${VLLM_IMAGE}") || die "Unresolved vLLM image reference for profile ${PROFILE_ID:-default}"
+
   require_safe_text "${MODEL}" "model"
   require_safe_text "${SERVED_MODEL_NAME}" "served model name"
   require_safe_text "${VLLM_IMAGE}" "vLLM image"
@@ -1904,6 +1908,35 @@ check_reports_against_schema() {
   python3 "${REPORT_SCHEMA_VALIDATOR}" --schema "${REPORT_SCHEMA_PATH}" "$@"
 }
 
+validate_serving_image_alignment() {
+  local manifest_image
+  local defaults_image
+
+  manifest_image=$(awk '/^[[:space:]]*image:[[:space:]]*/ { sub(/^[[:space:]]*image:[[:space:]]*/, ""); print; exit }' \
+    "${GPU_INFERENCE_DEPLOYMENT_MANIFEST}")
+
+  if [[ -z "${manifest_image}" ]]; then
+    die "Could not read the serving image from ${GPU_INFERENCE_DEPLOYMENT_MANIFEST}"
+  fi
+
+  if [[ "${manifest_image}" != "${VLLM_IMAGE_DEFAULT}" ]]; then
+    die "$(printf '%s pins %s but %s declares VLLM_IMAGE_DEFAULT=%s' \
+      "${GPU_INFERENCE_DEPLOYMENT_MANIFEST#"${REPO_ROOT}/"}" "${manifest_image}" \
+      "${GPU_INFERENCE_VERSIONS_ENV#"${REPO_ROOT}/"}" "${VLLM_IMAGE_DEFAULT}")"
+  fi
+
+  load_default_serving_profile
+  defaults_image=${VLLM_IMAGE}
+
+  if [[ "${defaults_image}" != "${VLLM_IMAGE_DEFAULT}" ]]; then
+    die "$(printf '%s resolves to %s but %s declares VLLM_IMAGE_DEFAULT=%s' \
+      "${SERVING_DEFAULTS_PATH#"${REPO_ROOT}/"}" "${defaults_image}" \
+      "${GPU_INFERENCE_VERSIONS_ENV#"${REPO_ROOT}/"}" "${VLLM_IMAGE_DEFAULT}")"
+  fi
+
+  printf 'Serving images aligned with %s.\n' "${GPU_INFERENCE_VERSIONS_ENV##*/}"
+}
+
 validate_evidence_reports() {
   local reports=()
   local report_path
@@ -1944,6 +1977,7 @@ validate_experiment_catalog() {
   done < <(find "${EXPERIMENTS_DIR}" -mindepth 1 -maxdepth 1 -type d ! -name '_*' | sort)
 
   printf 'Validated %s experiment(s).\n' "${validated_count}"
+  validate_serving_image_alignment
   validate_evidence_reports
 }
 

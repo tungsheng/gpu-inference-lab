@@ -78,3 +78,9 @@ assert_contains "${SPOT_NODEPOOL_MANIFEST_CONTENT}" 'spot' "the spot serving Nod
 assert_contains "${EXPERIMENT_SCRIPT_CONTENT}" 'startupProbe:' "the experiment serving renderer should use the same startup-probe shape as the checked-in deployment"
 assert_occurs_before "${EXPERIMENT_SCRIPT_CONTENT}" 'startupProbe:' 'livenessProbe:' "the experiment serving renderer should declare the startup probe before the liveness probe"
 
+VERSIONS_ENV_CONTENT=$(cat "${REPO_ROOT}/platform/inference/versions.env")
+
+assert_contains "${VERSIONS_ENV_CONTENT}" 'VLLM_IMAGE_DEFAULT=' "versions.env should declare the baseline serving image"
+assert_contains "${VERSIONS_ENV_CONTENT}" 'VLLM_IMAGE_MODERN=' "versions.env should declare the current serving image"
+assert_contains "${VERSIONS_ENV_CONTENT}" 'VLLM_IMAGE_BLACKWELL=' "versions.env should declare the Blackwell serving image"
+assert_not_contains "${DEPLOYMENT_MANIFEST_CONTENT}" '@VLLM_IMAGE' "the checked-in deployment should pin a concrete image, kept in step by scripts/experiment validate"

@@ -1,4 +1,4 @@
 profile_id,model,served_model_name,vllm_image,max_model_len,gpu_memory_utilization,max_num_seqs,max_num_batched_tokens,cpu_request,memory_request,cpu_limit,memory_limit,model_cache_size,shm_size,description
-bf16-baseline,Qwen/Qwen2.5-7B-Instruct,qwen2.5-7b-bf16,vllm/vllm-openai:v0.20.1,4096,0.90,,,64000m,512Gi,96000m,768Gi,80Gi,64Gi,BF16 baseline on a full p6-b200 instance
-nvfp4-plain,/models/qwen25-7b-nvfp4-plain,qwen2.5-7b-nvfp4-plain,vllm/vllm-openai:v0.20.1,4096,0.90,,,64000m,512Gi,96000m,768Gi,80Gi,64Gi,NVFP4 W4A4 artifact without pre optimization
-nvfp4-smoothquant,/models/qwen25-7b-nvfp4-smoothquant,qwen2.5-7b-nvfp4-smoothquant,vllm/vllm-openai:v0.20.1,4096,0.90,,,64000m,512Gi,96000m,768Gi,80Gi,64Gi,SmoothQuant followed by NVFP4 W4A4 artifact
+bf16-baseline,Qwen/Qwen2.5-7B-Instruct,qwen2.5-7b-bf16,@VLLM_IMAGE_BLACKWELL@,4096,0.90,,,64000m,512Gi,96000m,768Gi,80Gi,64Gi,BF16 baseline on a full p6-b200 instance
+nvfp4-plain,/models/qwen25-7b-nvfp4-plain,qwen2.5-7b-nvfp4-plain,@VLLM_IMAGE_BLACKWELL@,4096,0.90,,,64000m,512Gi,96000m,768Gi,80Gi,64Gi,NVFP4 W4A4 artifact without pre optimization
+nvfp4-smoothquant,/models/qwen25-7b-nvfp4-smoothquant,qwen2.5-7b-nvfp4-smoothquant,@VLLM_IMAGE_BLACKWELL@,4096,0.90,,,64000m,512Gi,96000m,768Gi,80Gi,64Gi,SmoothQuant followed by NVFP4 W4A4 artifact

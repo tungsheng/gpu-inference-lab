@@ -21,7 +21,7 @@ Run local tests at any point:
 | Need | Command |
 | --- | --- |
 | Inspect experiment definitions | `./scripts/experiment list` |
-| Validate catalog contracts and curated evidence | `./scripts/experiment validate` |
+| Validate catalog contracts, serving images, and curated evidence | `./scripts/experiment validate` |
 | Show one experiment | `./scripts/experiment show kv-cache` |
 | Render a KV cache timeline demo | `./scripts/kv-observe demo --output /tmp/kv-cache-observatory.html` |
 | Bring up the dev platform | `./scripts/up` |

@@ -39,6 +39,51 @@ run_experiment_validate_test() {
   assert_not_contains "${COMMAND_OUTPUT}" "Validated 0 evidence report(s)." "validate should find the checked-in evidence corpus"
 }
 
+run_serving_image_alignment_test() {
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" validate
+  assert_contains "${COMMAND_OUTPUT}" "Serving images aligned with versions.env." "validate should confirm the serving images match the single source"
+
+  # A profile CSV that names an image directly must still resolve, but a stale
+  # tag that no longer matches versions.env has to be caught rather than served.
+  setup_test_tmpdir
+  local defaults="${TEST_TMPDIR}/serving-defaults.csv"
+  sed 's|@VLLM_IMAGE_DEFAULT@|vllm/vllm-openai:v0.0.1|' \
+    "${REPO_ROOT}/experiments/_profiles/serving-defaults.csv" > "${defaults}"
+
+  run_and_capture env EXPERIMENT_SERVING_DEFAULTS_PATH="${defaults}" \
+    /bin/bash "${REPO_ROOT}/scripts/experiment" validate
+
+  assert_status 1 "${COMMAND_STATUS}" "validate should fail when the default profile drifts from versions.env"
+  assert_contains "${COMMAND_OUTPUT}" "declares VLLM_IMAGE_DEFAULT=vllm/vllm-openai:v0.9.0" "the drift failure should name the declared image"
+
+  # An unknown reference must fail loudly instead of reaching a cluster.
+  sed 's|@VLLM_IMAGE_DEFAULT@|@VLLM_IMAGE_NOPE@|' \
+    "${REPO_ROOT}/experiments/_profiles/serving-defaults.csv" > "${defaults}"
+
+  run_and_capture env EXPERIMENT_SERVING_DEFAULTS_PATH="${defaults}" \
+    /bin/bash "${REPO_ROOT}/scripts/experiment" validate
+
+  assert_status 1 "${COMMAND_STATUS}" "validate should fail on an unknown image reference"
+  assert_contains "${COMMAND_OUTPUT}" "Unknown serving image reference" "the failure should name the unresolved reference"
+
+  teardown_test_tmpdir
+}
+
+run_serving_image_reference_resolution_test() {
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-serving \
+    --experiment kv-cache-observatory --profile modern-vllm-0221
+
+  assert_status 0 "${COMMAND_STATUS}" "render-serving should resolve a symbolic modern image"
+  assert_contains "${COMMAND_OUTPUT}" "image: vllm/vllm-openai:v0.22.1" "the modern reference should resolve to the declared image"
+  assert_not_contains "${COMMAND_OUTPUT}" "@VLLM_IMAGE" "no symbolic reference should reach a rendered manifest"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-serving \
+    --experiment fp4 --profile nvfp4-plain
+
+  assert_status 0 "${COMMAND_STATUS}" "render-serving should resolve a symbolic Blackwell image"
+  assert_contains "${COMMAND_OUTPUT}" "image: vllm/vllm-openai:v0.20.1" "the Blackwell reference should resolve to the declared image"
+}
+
 run_experiment_show_test() {
   run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" show kv-cache
 
@@ -1794,6 +1839,8 @@ run_stream_experiment_runner_test() {
 run_experiment_list_test
 run_experiment_validate_test
 run_experiment_show_test
+run_serving_image_alignment_test
+run_serving_image_reference_resolution_test
 run_prefill_decode_show_test
 run_batching_show_test
 run_request_patterns_show_test

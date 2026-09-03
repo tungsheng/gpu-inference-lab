@@ -74,6 +74,7 @@ KARPENTER_SPOT_NODEPOOL_MANIFEST="${REPO_ROOT}/platform/karpenter/nodepool-gpu-s
 KARPENTER_WARM_NODEPOOL_MANIFEST="${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml"
 NVIDIA_DEVICE_PLUGIN_MANIFEST="${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml"
 GPU_INFERENCE_DEPLOYMENT_MANIFEST="${REPO_ROOT}/platform/inference/vllm-openai.yaml"
+GPU_INFERENCE_VERSIONS_ENV="${REPO_ROOT}/platform/inference/versions.env"
 GPU_INFERENCE_HPA_MANIFEST="${REPO_ROOT}/platform/inference/hpa.yaml"
 GPU_INFERENCE_ACTIVE_PRESSURE_HPA_MANIFEST="${REPO_ROOT}/platform/inference/hpa-active-pressure.yaml"
 GPU_INFERENCE_SERVICE_MANIFEST="${REPO_ROOT}/platform/inference/service.yaml"
@@ -111,6 +112,42 @@ CLUSTER_NAME=""
 AWS_REGION=""
 VPC_ID=""
 ALB_CONTROLLER_ROLE_ARN=""
+
+load_serving_image_versions() {
+  if [[ ! -f "${GPU_INFERENCE_VERSIONS_ENV}" ]]; then
+    printf 'Missing serving image versions: %s\n' "${GPU_INFERENCE_VERSIONS_ENV}" >&2
+    return 1
+  fi
+
+  # shellcheck disable=SC1090
+  . "${GPU_INFERENCE_VERSIONS_ENV}"
+
+  local name
+  for name in VLLM_IMAGE_DEFAULT VLLM_IMAGE_MODERN VLLM_IMAGE_BLACKWELL; do
+    if [[ -z "${!name:-}" ]]; then
+      printf '%s does not define %s\n' "${GPU_INFERENCE_VERSIONS_ENV}" "${name}" >&2
+      return 1
+    fi
+  done
+}
+
+load_serving_image_versions || exit 1
+
+# Expand @VLLM_IMAGE_*@ references from platform/inference/versions.env.
+resolve_serving_image() {
+  local image=$1
+
+  image=${image//@VLLM_IMAGE_DEFAULT@/${VLLM_IMAGE_DEFAULT}}
+  image=${image//@VLLM_IMAGE_MODERN@/${VLLM_IMAGE_MODERN}}
+  image=${image//@VLLM_IMAGE_BLACKWELL@/${VLLM_IMAGE_BLACKWELL}}
+
+  if [[ "${image}" == *@VLLM_IMAGE_* ]]; then
+    printf 'Unknown serving image reference in %s (see %s)\n' "$1" "${GPU_INFERENCE_VERSIONS_ENV}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "${image}"
+}
 
 FAILURE_HINTS=()
 

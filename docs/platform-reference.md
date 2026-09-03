@@ -42,7 +42,7 @@ Default checked-in serving manifest:
 
 | Field | Value |
 | --- | --- |
-| Image | `vllm/vllm-openai:v0.9.0` |
+| Image | `VLLM_IMAGE_DEFAULT` from `platform/inference/versions.env` (currently `vllm/vllm-openai:v0.9.0`) |
 | Model | `Qwen/Qwen2.5-0.5B-Instruct` |
 | Served model name | `qwen2.5-0.5b` |
 | Health path | `/health` |
@@ -114,8 +114,14 @@ cost from one-time quantization build cost.
 | Prometheus Adapter chart | `5.2.0` |
 | GPU node AMI | `amazon-eks-node-al2023-x86_64-nvidia-1.35-v20260304` |
 | NVIDIA device plugin | `v0.18.1` |
-| default vLLM image | `v0.9.0` |
-| Blackwell FP4 vLLM image | `v0.20.1` |
+| default vLLM image (`VLLM_IMAGE_DEFAULT`) | `v0.9.0` |
+| current vLLM image (`VLLM_IMAGE_MODERN`) | `v0.22.1` |
+| Blackwell FP4 vLLM image (`VLLM_IMAGE_BLACKWELL`) | `v0.20.1` |
+
+All three are declared in `platform/inference/versions.env`. Serving-profile
+CSVs reference them symbolically, and `./scripts/experiment validate` fails if
+the checked-in deployment manifest and the default profile stop agreeing with
+`VLLM_IMAGE_DEFAULT`.
 
 ## Dev Boundary
 

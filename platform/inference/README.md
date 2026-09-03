@@ -10,15 +10,21 @@ This directory contains the manifests for the public inference surface:
 - `service.yaml`: stable in-cluster `ClusterIP` service
 - `ingress.yaml.tpl`: ALB-backed `/v1` route, rendered at apply time with an
   explicit source range (see [Edge Exposure](#edge-exposure))
+- `versions.env`: the single source of truth for every vLLM image this lab runs
 
 ## Current Behavior
 
 The deployment uses:
 
-- image `vllm/vllm-openai:v0.9.0`
+- image `VLLM_IMAGE_DEFAULT` from `versions.env` (currently
+  `vllm/vllm-openai:v0.9.0`)
 - model `Qwen/Qwen2.5-0.5B-Instruct`
 - served model name `qwen2.5-0.5b`
 - one requested and limited GPU per replica
+
+A `startupProbe` owns the cold-start budget (620s) so image pull and model load
+cannot trip the liveness probe and crash-loop the pod. Readiness and liveness
+only begin counting once the startup probe succeeds.
 
 The scripts consume these manifests in different ways:
 
@@ -28,6 +34,33 @@ The scripts consume these manifests in different ways:
 - `./scripts/evaluate` applies the deployment plus the selected HPA policy to
   prove burst scale-out, runs both policies sequentially in compare mode, or
   sweeps active-pressure targets
+
+## Serving Images
+
+`versions.env` declares every vLLM image the lab runs:
+
+| Name | Purpose |
+| --- | --- |
+| `VLLM_IMAGE_DEFAULT` | legacy baseline; the engine behind the curated evidence in `experiments/*/evidence/` |
+| `VLLM_IMAGE_MODERN` | current target for new KV-cache observatory work |
+| `VLLM_IMAGE_BLACKWELL` | Blackwell / NVFP4 quantization path |
+
+Serving-profile CSVs reference these symbolically and the reference is expanded
+when the profile is loaded:
+
+```csv
+modern-vllm-0221,,,@VLLM_IMAGE_MODERN@,9216,0.90,32,9216,,,,,,,modern vLLM profile
+```
+
+`vllm-openai.yaml` still pins a concrete tag because `./scripts/up`,
+`./scripts/verify`, and `./scripts/evaluate` apply it directly. Rather than
+template it, `./scripts/experiment validate` fails if that tag and the default
+profile stop matching `VLLM_IMAGE_DEFAULT`, so the two cannot drift apart
+unnoticed.
+
+Changing a value in `versions.env` changes the engine future runs measure.
+Evidence already curated under a previous engine keeps its recorded image and is
+not rewritten; see `experiments/kv-cache-observatory/experiment.yaml`.
 
 ## Edge Exposure
 

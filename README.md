@@ -58,6 +58,10 @@ Local checks do not require AWS:
 `replay` renders the committed evidence behind a curated `results.md` table from
 checked-in JSON, so the measured conclusions are auditable without a cluster.
 
+`validate` also checks the checked-in serving images against
+`platform/inference/versions.env` and every committed evidence file against
+`experiments/_schemas/experiment-report.v1.json`.
+
 Measured runs require Terraform, AWS CLI, `kubectl`, `helm`, AWS credentials,
 access to `us-west-2`, and a live cluster. The inference ALB is restricted to
 the public IP of the machine running the command unless you set

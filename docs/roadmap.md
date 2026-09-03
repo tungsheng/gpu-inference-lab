@@ -29,6 +29,10 @@ and small-request useful-work cost. The current operator-facing readout lives in
 - The inference ALB restricts its source range at apply time but still serves an
   unauthenticated OpenAI-compatible API over plain HTTP. TLS and an
   authenticated path are production requirements, not lab defaults.
+- Curated evidence was measured on `VLLM_IMAGE_DEFAULT`
+  (`vllm/vllm-openai:v0.9.0`). Conclusions scoped to that engine — notably the
+  FP8 KV-cache regression on the long-context profile — are pending
+  re-validation on `VLLM_IMAGE_MODERN`.
 - Non-streaming reports now have nullable vLLM server-side timing fields for
   queue, prefill, decode, TTFT, inter-token, and e2e latency, but curated
   evidence still needs a live rerun that populates the queue/prefill/decode
