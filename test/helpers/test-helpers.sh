@@ -8,6 +8,9 @@ REPO_ROOT=$(cd -- "${TEST_HELPERS_DIR}/../.." && pwd)
 # lookup service. Tests that exercise resolution set their own value.
 export GPU_INFERENCE_INBOUND_CIDRS="${GPU_INFERENCE_INBOUND_CIDRS:-203.0.113.10/32}"
 
+# shellcheck disable=SC1091
+. "${TEST_HELPERS_DIR}/cluster-stub.sh"
+
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1

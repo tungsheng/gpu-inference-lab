@@ -9,23 +9,8 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 setup_test_tmpdir
 trap teardown_test_tmpdir EXIT
 
-write_stub terraform \
-"#!/usr/bin/env bash" \
-"set -euo pipefail" \
-"case \"\$2\" in" \
-"  init) exit 0 ;;" \
-"  destroy) exit 0 ;;" \
-"  output)" \
-"    case \"\$4\" in" \
-"      cluster_name) printf '%s\n' 'gpu-inference' ;;" \
-"      aws_region) printf '%s\n' 'us-west-2' ;;" \
-"      vpc_id) printf '%s\n' 'vpc-12345' ;;" \
-"      aws_load_balancer_controller_role_arn) printf '%s\n' 'arn:aws:iam::123456789012:role/alb-controller' ;;" \
-"      *) exit 1 ;;" \
-"    esac" \
-"    ;;" \
-"  *) exit 1 ;;" \
-"esac"
+stub_terraform "init|destroy"
+stub_helm_teardown
 
 write_stub aws \
 "#!/usr/bin/env bash" \
@@ -51,45 +36,13 @@ write_stub aws \
 "printf 'unexpected aws command: %s\n' \"\$*\" >&2" \
 "exit 1"
 
-write_stub helm \
-"#!/usr/bin/env bash" \
-"set -euo pipefail" \
-"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/helm.log\"" \
-"case \"\$1\" in" \
-"  status) exit 1 ;;" \
-"  *) exit 1 ;;" \
-"esac"
 
-write_stub kubectl \
-"#!/usr/bin/env bash" \
-"set -euo pipefail" \
-"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/kubectl.log\"" \
-"case \"\$*\" in" \
-"  'cluster-info') exit 0 ;;" \
-"  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get job gpu-load-test -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get deployment gpu-warm-placeholder -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get hpa vllm-openai -n app') exit 1 ;;" \
-"  'delete ingress vllm-openai-ingress -n app --ignore-not-found=true') exit 0 ;;" \
-"  'get ingress vllm-openai-ingress -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/inference/service.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get service vllm-openai -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get deployment vllm-openai -n app') exit 1 ;;" \
-"  'get crd nodepools.karpenter.sh') exit 1 ;;" \
-"  'get crd ec2nodeclasses.karpenter.k8s.aws') exit 1 ;;" \
-"  'get crd nodeclaims.karpenter.sh') exit 1 ;;" \
-"  'get nodes -l workload=gpu -o name') exit 0 ;;" \
-"  'get namespace monitoring') exit 1 ;;" \
-"  'get apiservice v1beta1.custom.metrics.k8s.io') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/serviceaccount.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get daemonset nvidia-device-plugin-daemonset -n kube-system') exit 1 ;;" \
-"  *) printf 'unexpected kubectl command: %s\n' \"\$*\" >&2; exit 1 ;;" \
-"esac"
+# The ingress reports no hostname, so teardown has to discover the ALB from its
+# controller stack tag instead of reading it off the ingress.
+kubectl_stub_reset
+kubectl_arm "'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}'" "exit 0"
+kubectl_bundle_down_happy_path
+kubectl_stub_write
 
 run_and_capture env PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" /bin/bash "${REPO_ROOT}/scripts/down" -auto-approve
 
