@@ -1,0 +1,1102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/gpu-inference-lab/evaluate-report.schema.json",
+  "title": "Evaluation report",
+  "description": "Reports written by ./scripts/evaluate. One schema_version covers three document shapes: a single run, a policy comparison, and an active-pressure target sweep.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capacity_assessment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "status"
+          ]
+        },
+        "cost": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "estimated_burst_cost": {
+              "type": "number"
+            },
+            "estimated_burst_cost_by_capacity_type": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "on_demand": {
+                  "type": "number"
+                },
+                "spot": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "on_demand",
+                "spot"
+              ]
+            },
+            "estimated_idle_cost_per_hour": {
+              "type": "number"
+            },
+            "estimated_idle_cost_per_hour_by_capacity_type": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "on_demand": {
+                  "type": "number"
+                },
+                "spot": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "on_demand",
+                "spot"
+              ]
+            }
+          },
+          "required": [
+            "estimated_burst_cost",
+            "estimated_burst_cost_by_capacity_type",
+            "estimated_idle_cost_per_hour",
+            "estimated_idle_cost_per_hour_by_capacity_type"
+          ]
+        },
+        "first_gpu_availability_zone": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "first_gpu_capacity_type": {
+          "type": "string"
+        },
+        "first_gpu_instance_type": {
+          "type": "string"
+        },
+        "first_gpu_nodepool": {
+          "type": "string"
+        },
+        "generated_at": {
+          "type": "string"
+        },
+        "hpa_metric_name": {
+          "type": "string"
+        },
+        "hpa_target_average_value": {
+          "type": "string"
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "average_completed_requests_per_second": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "average_generation_tokens_per_second": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "average_gpu_headroom_percent": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "average_gpu_utilization_percent": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "max_gpu_utilization_percent": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "p95_estimated_queue_wait_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "p95_request_latency_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "p95_server_decode_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "p95_server_inter_token_latency_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "p95_server_prefill_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "p95_server_queue_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "p95_ttft_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "peak_active_nodeclaims": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "peak_active_nodeclaims_by_capacity_type": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "on_demand": {
+                  "type": [
+                    "null",
+                    "number"
+                  ]
+                },
+                "spot": {
+                  "type": [
+                    "null",
+                    "number"
+                  ]
+                }
+              },
+              "required": [
+                "on_demand",
+                "spot"
+              ]
+            },
+            "peak_active_requests": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "peak_active_requests_per_gpu_node": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "peak_running_requests": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "peak_waiting_requests": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          },
+          "required": [
+            "average_completed_requests_per_second",
+            "average_generation_tokens_per_second",
+            "average_gpu_headroom_percent",
+            "average_gpu_utilization_percent",
+            "max_gpu_utilization_percent",
+            "p95_estimated_queue_wait_seconds",
+            "p95_request_latency_seconds",
+            "p95_server_decode_seconds",
+            "p95_server_inter_token_latency_seconds",
+            "p95_server_prefill_seconds",
+            "p95_server_queue_seconds",
+            "p95_ttft_seconds",
+            "peak_active_nodeclaims",
+            "peak_active_nodeclaims_by_capacity_type",
+            "peak_active_requests",
+            "peak_active_requests_per_gpu_node",
+            "peak_running_requests",
+            "peak_waiting_requests"
+          ]
+        },
+        "metrics_collection_reason": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "metrics_collection_status": {
+          "type": "string"
+        },
+        "operator_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "container_started_to_ready_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "interruption_to_recovery_gpu_node_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "interruption_to_recovery_ready_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "pod_scheduled_to_ready_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          },
+          "required": [
+            "container_started_to_ready_seconds",
+            "interruption_to_recovery_gpu_node_seconds",
+            "interruption_to_recovery_ready_seconds",
+            "pod_scheduled_to_ready_seconds"
+          ]
+        },
+        "policy": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "public_endpoint": {
+          "type": "string"
+        },
+        "recovery_gpu_availability_zone": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "recovery_gpu_capacity_type": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "recovery_gpu_instance_type": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "recovery_gpu_nodepool": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "resilience": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "expected_recovery_capacity_type": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "mode": {
+              "type": "string"
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "preferred_burst_capacity_type": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "expected_recovery_capacity_type",
+            "mode",
+            "outcome",
+            "preferred_burst_capacity_type",
+            "reason"
+          ]
+        },
+        "resilience_mode": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string",
+          "const": "evaluate-report/v1"
+        },
+        "second_gpu_availability_zone": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "second_gpu_capacity_type": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "second_gpu_instance_type": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "second_gpu_nodepool": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "timeline": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cleanup_finish_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "first_gpu_node_seconds": {
+              "type": "number"
+            },
+            "first_nodeclaim_seconds": {
+              "type": "number"
+            },
+            "first_public_response_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "first_ready_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "hpa_scale_out_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "interrupted_gpu_node_removed_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "interrupted_nodeclaim_removed_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "interruption_trigger_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "load_complete_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "load_started_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "recovery_gpu_node_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "recovery_nodeclaim_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "recovery_ready_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "scale_in_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "second_gpu_node_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "second_nodeclaim_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "second_ready_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "warm_baseline_restored_seconds": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          },
+          "required": [
+            "cleanup_finish_seconds",
+            "first_gpu_node_seconds",
+            "first_nodeclaim_seconds",
+            "first_public_response_seconds",
+            "first_ready_seconds",
+            "hpa_scale_out_seconds",
+            "interrupted_gpu_node_removed_seconds",
+            "interrupted_nodeclaim_removed_seconds",
+            "interruption_trigger_seconds",
+            "load_complete_seconds",
+            "load_started_seconds",
+            "recovery_gpu_node_seconds",
+            "recovery_nodeclaim_seconds",
+            "recovery_ready_seconds",
+            "scale_in_seconds",
+            "second_gpu_node_seconds",
+            "second_nodeclaim_seconds",
+            "second_ready_seconds",
+            "warm_baseline_restored_seconds"
+          ]
+        }
+      },
+      "required": [
+        "capacity_assessment",
+        "cost",
+        "first_gpu_availability_zone",
+        "first_gpu_capacity_type",
+        "first_gpu_instance_type",
+        "first_gpu_nodepool",
+        "generated_at",
+        "hpa_metric_name",
+        "hpa_target_average_value",
+        "metrics",
+        "metrics_collection_reason",
+        "metrics_collection_status",
+        "operator_summary",
+        "policy",
+        "profile",
+        "public_endpoint",
+        "recovery_gpu_availability_zone",
+        "recovery_gpu_capacity_type",
+        "recovery_gpu_instance_type",
+        "recovery_gpu_nodepool",
+        "resilience",
+        "resilience_mode",
+        "schema_version",
+        "second_gpu_availability_zone",
+        "second_gpu_capacity_type",
+        "second_gpu_instance_type",
+        "second_gpu_nodepool",
+        "timeline"
+      ],
+      "title": "single run"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "active_pressure": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "capacity_assessment": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "reason": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reason",
+                "status"
+              ]
+            },
+            "hpa_metric_name": {
+              "type": "string"
+            },
+            "hpa_target_average_value": {
+              "type": "string"
+            },
+            "json_report_path": {
+              "type": "string"
+            },
+            "metrics": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "average_completed_requests_per_second": {
+                  "type": "number"
+                },
+                "average_gpu_headroom_percent": {
+                  "type": "number"
+                },
+                "average_gpu_utilization_percent": {
+                  "type": "number"
+                },
+                "estimated_burst_cost": {
+                  "type": "number"
+                },
+                "max_gpu_utilization_percent": {
+                  "type": "number"
+                },
+                "p95_estimated_queue_wait_seconds": {
+                  "type": "number"
+                },
+                "p95_request_latency_seconds": {
+                  "type": "number"
+                },
+                "p95_server_decode_seconds": {
+                  "type": "number"
+                },
+                "p95_server_inter_token_latency_seconds": {
+                  "type": "number"
+                },
+                "p95_server_prefill_seconds": {
+                  "type": "number"
+                },
+                "p95_server_queue_seconds": {
+                  "type": "number"
+                },
+                "p95_ttft_seconds": {
+                  "type": "number"
+                },
+                "peak_active_nodeclaims": {
+                  "type": "integer"
+                },
+                "peak_active_requests": {
+                  "type": "integer"
+                },
+                "peak_active_requests_per_gpu_node": {
+                  "type": "number"
+                },
+                "peak_waiting_requests": {
+                  "type": "integer"
+                },
+                "recovery_ready_seconds": {
+                  "type": "null"
+                },
+                "second_ready_seconds": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "average_completed_requests_per_second",
+                "average_gpu_headroom_percent",
+                "average_gpu_utilization_percent",
+                "estimated_burst_cost",
+                "max_gpu_utilization_percent",
+                "p95_estimated_queue_wait_seconds",
+                "p95_request_latency_seconds",
+                "p95_server_decode_seconds",
+                "p95_server_inter_token_latency_seconds",
+                "p95_server_prefill_seconds",
+                "p95_server_queue_seconds",
+                "p95_ttft_seconds",
+                "peak_active_nodeclaims",
+                "peak_active_requests",
+                "peak_active_requests_per_gpu_node",
+                "peak_waiting_requests",
+                "recovery_ready_seconds",
+                "second_ready_seconds"
+              ]
+            },
+            "metrics_collection_reason": {
+              "type": "null"
+            },
+            "metrics_collection_status": {
+              "type": "string"
+            },
+            "report_path": {
+              "type": "string"
+            },
+            "resilience": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "outcome": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "outcome"
+              ]
+            }
+          },
+          "required": [
+            "capacity_assessment",
+            "hpa_metric_name",
+            "hpa_target_average_value",
+            "json_report_path",
+            "metrics",
+            "metrics_collection_reason",
+            "metrics_collection_status",
+            "report_path",
+            "resilience"
+          ]
+        },
+        "compare_order": {
+          "type": "string"
+        },
+        "generated_at": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "resilience_mode": {
+          "type": "string"
+        },
+        "running": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "capacity_assessment": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "reason": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reason",
+                "status"
+              ]
+            },
+            "hpa_metric_name": {
+              "type": "string"
+            },
+            "hpa_target_average_value": {
+              "type": "string"
+            },
+            "json_report_path": {
+              "type": "string"
+            },
+            "metrics": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "average_completed_requests_per_second": {
+                  "type": "number"
+                },
+                "average_gpu_headroom_percent": {
+                  "type": "number"
+                },
+                "average_gpu_utilization_percent": {
+                  "type": "number"
+                },
+                "estimated_burst_cost": {
+                  "type": "number"
+                },
+                "max_gpu_utilization_percent": {
+                  "type": "number"
+                },
+                "p95_estimated_queue_wait_seconds": {
+                  "type": "number"
+                },
+                "p95_request_latency_seconds": {
+                  "type": "number"
+                },
+                "p95_server_decode_seconds": {
+                  "type": "number"
+                },
+                "p95_server_inter_token_latency_seconds": {
+                  "type": "number"
+                },
+                "p95_server_prefill_seconds": {
+                  "type": "number"
+                },
+                "p95_server_queue_seconds": {
+                  "type": "number"
+                },
+                "p95_ttft_seconds": {
+                  "type": "number"
+                },
+                "peak_active_nodeclaims": {
+                  "type": "integer"
+                },
+                "peak_active_requests": {
+                  "type": "integer"
+                },
+                "peak_active_requests_per_gpu_node": {
+                  "type": "number"
+                },
+                "peak_waiting_requests": {
+                  "type": "integer"
+                },
+                "recovery_ready_seconds": {
+                  "type": "null"
+                },
+                "second_ready_seconds": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "average_completed_requests_per_second",
+                "average_gpu_headroom_percent",
+                "average_gpu_utilization_percent",
+                "estimated_burst_cost",
+                "max_gpu_utilization_percent",
+                "p95_estimated_queue_wait_seconds",
+                "p95_request_latency_seconds",
+                "p95_server_decode_seconds",
+                "p95_server_inter_token_latency_seconds",
+                "p95_server_prefill_seconds",
+                "p95_server_queue_seconds",
+                "p95_ttft_seconds",
+                "peak_active_nodeclaims",
+                "peak_active_requests",
+                "peak_active_requests_per_gpu_node",
+                "peak_waiting_requests",
+                "recovery_ready_seconds",
+                "second_ready_seconds"
+              ]
+            },
+            "metrics_collection_reason": {
+              "type": "null"
+            },
+            "metrics_collection_status": {
+              "type": "string"
+            },
+            "report_path": {
+              "type": "string"
+            },
+            "resilience": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "outcome": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "outcome"
+              ]
+            }
+          },
+          "required": [
+            "capacity_assessment",
+            "hpa_metric_name",
+            "hpa_target_average_value",
+            "json_report_path",
+            "metrics",
+            "metrics_collection_reason",
+            "metrics_collection_status",
+            "report_path",
+            "resilience"
+          ]
+        },
+        "schema_version": {
+          "type": "string",
+          "const": "evaluate-report/v1"
+        }
+      },
+      "required": [
+        "active_pressure",
+        "compare_order",
+        "generated_at",
+        "profile",
+        "resilience_mode",
+        "running",
+        "schema_version"
+      ],
+      "title": "policy comparison"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "generated_at": {
+          "type": "string"
+        },
+        "heuristic": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "balanced_max_gpu_utilization_percent_max": {
+              "type": "number"
+            },
+            "balanced_p95_estimated_queue_wait_seconds_max": {
+              "type": "number"
+            },
+            "balanced_p95_ttft_seconds_max": {
+              "type": "number"
+            },
+            "balanced_waiting_at_or_below_target": {
+              "type": "boolean"
+            },
+            "underutilized_average_gpu_utilization_percent_max": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "balanced_max_gpu_utilization_percent_max",
+            "balanced_p95_estimated_queue_wait_seconds_max",
+            "balanced_p95_ttft_seconds_max",
+            "balanced_waiting_at_or_below_target",
+            "underutilized_average_gpu_utilization_percent_max"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "policy": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "recommendation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "active_target": {
+              "type": "integer"
+            },
+            "rationale": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "active_target",
+            "rationale",
+            "status"
+          ]
+        },
+        "resilience_mode": {
+          "type": "string"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "active_target": {
+                "type": "integer"
+              },
+              "hpa_metric_name": {
+                "type": "string"
+              },
+              "hpa_target_average_value": {
+                "type": "string"
+              },
+              "json_report_path": {
+                "type": "string"
+              },
+              "metrics": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "average_completed_requests_per_second": {
+                    "type": "number"
+                  },
+                  "average_gpu_headroom_percent": {
+                    "type": "number"
+                  },
+                  "average_gpu_utilization_percent": {
+                    "type": "number"
+                  },
+                  "estimated_burst_cost": {
+                    "type": "number"
+                  },
+                  "max_gpu_utilization_percent": {
+                    "type": "number"
+                  },
+                  "p95_estimated_queue_wait_seconds": {
+                    "type": "number"
+                  },
+                  "p95_request_latency_seconds": {
+                    "type": "number"
+                  },
+                  "p95_server_decode_seconds": {
+                    "type": "number"
+                  },
+                  "p95_server_inter_token_latency_seconds": {
+                    "type": "number"
+                  },
+                  "p95_server_prefill_seconds": {
+                    "type": "number"
+                  },
+                  "p95_server_queue_seconds": {
+                    "type": "number"
+                  },
+                  "p95_ttft_seconds": {
+                    "type": "number"
+                  },
+                  "peak_active_nodeclaims": {
+                    "type": "integer"
+                  },
+                  "peak_active_requests": {
+                    "type": "integer"
+                  },
+                  "peak_active_requests_per_gpu_node": {
+                    "type": "number"
+                  },
+                  "peak_waiting_requests": {
+                    "type": "integer"
+                  },
+                  "recovery_ready_seconds": {
+                    "type": "null"
+                  },
+                  "second_ready_seconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "average_completed_requests_per_second",
+                  "average_gpu_headroom_percent",
+                  "average_gpu_utilization_percent",
+                  "estimated_burst_cost",
+                  "max_gpu_utilization_percent",
+                  "p95_estimated_queue_wait_seconds",
+                  "p95_request_latency_seconds",
+                  "p95_server_decode_seconds",
+                  "p95_server_inter_token_latency_seconds",
+                  "p95_server_prefill_seconds",
+                  "p95_server_queue_seconds",
+                  "p95_ttft_seconds",
+                  "peak_active_nodeclaims",
+                  "peak_active_requests",
+                  "peak_active_requests_per_gpu_node",
+                  "peak_waiting_requests",
+                  "recovery_ready_seconds",
+                  "second_ready_seconds"
+                ]
+              },
+              "metrics_collection_reason": {
+                "type": "null"
+              },
+              "metrics_collection_status": {
+                "type": "string"
+              },
+              "report_path": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              },
+              "status": {
+                "type": "string"
+              },
+              "status_reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "active_target",
+              "hpa_metric_name",
+              "hpa_target_average_value",
+              "json_report_path",
+              "metrics",
+              "metrics_collection_reason",
+              "metrics_collection_status",
+              "report_path",
+              "score",
+              "status",
+              "status_reason"
+            ]
+          }
+        },
+        "schema_version": {
+          "type": "string",
+          "const": "evaluate-report/v1"
+        },
+        "targets_evaluated": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      },
+      "required": [
+        "generated_at",
+        "heuristic",
+        "mode",
+        "policy",
+        "profile",
+        "recommendation",
+        "resilience_mode",
+        "results",
+        "schema_version",
+        "targets_evaluated"
+      ],
+      "title": "target sweep"
+    }
+  ]
+}

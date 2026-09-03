@@ -4,6 +4,8 @@
 set -Eeuo pipefail
 
 SCRIPT_LIB_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${SCRIPT_LIB_DIR}/reports.sh"
 COMMON_DIR=$(cd -- "${SCRIPT_LIB_DIR}/.." && pwd)
 REPO_ROOT=$(cd -- "${COMMON_DIR}/.." && pwd)
 

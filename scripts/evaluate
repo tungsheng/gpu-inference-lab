@@ -6,7 +6,6 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/_common.sh"
 # shellcheck disable=SC1091
-. "${SCRIPT_DIR}/lib/evaluate-reports.sh"
 
 TOTAL_STAGES=11
 EVALUATION_PROFILE="zero-idle"
@@ -1253,6 +1252,7 @@ write_resilience_precondition_report() {
 
   finalize_derived_readouts || return 1
   write_reports || return 1
+  check_written_report "${JSON_REPORT_PATH}" || return 1
 
   printf 'Wrote partial precondition report: %s\n' "${REPORT_PATH}" >&2
   printf 'Wrote partial precondition JSON: %s\n' "${JSON_REPORT_PATH}" >&2
@@ -2135,17 +2135,6 @@ push_summary_metrics() {
   rm -f "${payload_file}"
 }
 
-json_escape() {
-  local value=$1
-
-  value=${value//\\/\\\\}
-  value=${value//\"/\\\"}
-  value=${value//$'\n'/\\n}
-  value=${value//$'\r'/\\r}
-  value=${value//$'\t'/\\t}
-  printf '"%s"' "${value}"
-}
-
 json_nullable_string() {
   local value=${1:-}
 
@@ -2430,7 +2419,7 @@ write_reports() {
 # Load-Aware GPU Serving Report
 
 - Schema version: ${EVALUATE_REPORT_SCHEMA_VERSION}
-- Generated at: $(evaluate_report_generated_at)
+- Generated at: $(report_generated_at)
 - Profile: ${EVALUATION_PROFILE}
 - Policy: ${CURRENT_POLICY}
 - Resilience mode: ${EVALUATION_RESILIENCE}
@@ -2547,7 +2536,7 @@ EOF
   cat > "${JSON_REPORT_PATH}" <<EOF
 {
   "schema_version": $(json_escape "${EVALUATE_REPORT_SCHEMA_VERSION}"),
-  "generated_at": $(json_escape "$(evaluate_report_generated_at)"),
+  "generated_at": $(json_escape "$(report_generated_at)"),
   "profile": $(json_escape "${EVALUATION_PROFILE}"),
   "policy": $(json_escape "${CURRENT_POLICY}"),
   "resilience_mode": $(json_escape "${EVALUATION_RESILIENCE}"),
@@ -2643,6 +2632,19 @@ EOF
   }
 }
 EOF
+}
+
+check_written_report() {
+  local json_report_path=$1
+
+  if [[ ! -f "${json_report_path}" ]]; then
+    return 0
+  fi
+
+  if ! check_reports_against_schema "${EVALUATE_REPORT_SCHEMA_VERSION}" "${json_report_path}"; then
+    printf 'Report %s does not match %s\n' "${json_report_path}" "${EVALUATE_REPORT_SCHEMA_VERSION}" >&2
+    return 1
+  fi
 }
 
 policy_snapshot_key() {
@@ -3043,7 +3045,7 @@ write_compare_reports() {
 # Capacity-Aware Autoscaling Compare Report
 
 - Schema version: ${EVALUATE_REPORT_SCHEMA_VERSION}
-- Generated at: $(evaluate_report_generated_at)
+- Generated at: $(report_generated_at)
 - Profile: ${EVALUATION_PROFILE}
 - Resilience mode: ${EVALUATION_RESILIENCE}
 - Compare order: ${COMPARE_ORDER_INPUT}
@@ -3098,7 +3100,7 @@ EOF
   cat > "${COMPARE_JSON_REPORT_PATH}" <<EOF
 {
   "schema_version": $(json_escape "${EVALUATE_REPORT_SCHEMA_VERSION}"),
-  "generated_at": $(json_escape "$(evaluate_report_generated_at)"),
+  "generated_at": $(json_escape "$(report_generated_at)"),
   "profile": $(json_escape "${EVALUATION_PROFILE}"),
   "resilience_mode": $(json_escape "${EVALUATION_RESILIENCE}"),
   "compare_order": $(json_escape "${COMPARE_ORDER_INPUT}"),
@@ -3188,7 +3190,7 @@ write_sweep_reports() {
 # Active-Pressure Target Sweep Report
 
 - Schema version: ${EVALUATE_REPORT_SCHEMA_VERSION}
-- Generated at: $(evaluate_report_generated_at)
+- Generated at: $(report_generated_at)
 - Profile: ${EVALUATION_PROFILE}
 - Policy: active-pressure
 - Resilience mode: ${EVALUATION_RESILIENCE}
@@ -3254,7 +3256,7 @@ EOF
   {
     printf '{\n'
     printf '  "schema_version": %s,\n' "$(json_escape "${EVALUATE_REPORT_SCHEMA_VERSION}")"
-    printf '  "generated_at": %s,\n' "$(json_escape "$(evaluate_report_generated_at)")"
+    printf '  "generated_at": %s,\n' "$(json_escape "$(report_generated_at)")"
     printf '  "profile": %s,\n' "$(json_escape "${EVALUATION_PROFILE}")"
     printf '  "resilience_mode": %s,\n' "$(json_escape "${EVALUATION_RESILIENCE}")"
     printf '  "policy": "active-pressure",\n'
@@ -3337,6 +3339,7 @@ collect_metrics_and_write_reports() {
 
   push_summary_metrics || true
   write_reports
+  check_written_report "${JSON_REPORT_PATH}" || return 1
 }
 
 run_single_policy_evaluation() {
@@ -3502,6 +3505,7 @@ main() {
     capture_compare_policy_result "${COMPARE_SECOND_POLICY}"
 
     write_compare_reports
+    check_written_report "${COMPARE_JSON_REPORT_PATH:-${JSON_REPORT_PATH}}" || return 1
     restore_resilience_mode
     print_compare_summary
     return 0
@@ -3529,6 +3533,7 @@ main() {
     done
 
     write_sweep_reports
+    check_written_report "${SWEEP_JSON_REPORT_PATH:-${JSON_REPORT_PATH}}" || return 1
     restore_resilience_mode
     print_sweep_summary
     return 0

@@ -15,7 +15,8 @@ Current library files:
   scripts
 - `destroy-recovery.sh`: teardown diagnostics plus guarded orphan CNI ENI and
   EKS node security-group cleanup helpers for `./scripts/down`
-- `evaluate-reports.sh`: schema metadata for `./scripts/evaluate` report
-  artifacts
-- `validate_report.py`: JSON Schema checker for `experiment-report/v1`
-  artifacts, used by `./scripts/experiment validate` and `promote-evidence`
+- `reports.sh`: the report contract shared by every script that writes a report
+  artifact — schema versions for all four families, `json_escape`,
+  `report_generated_at`, and `check_reports_against_schema`
+- `validate_report.py`: JSON Schema checker behind that contract, also used
+  directly by `observatory/kv-cache/kv_observe.py`

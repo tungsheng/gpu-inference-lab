@@ -567,13 +567,6 @@ preflight_command() {
   printf '  JSON report path: %s\n' "${JSON_REPORT_PATH}"
 }
 
-json_escape() {
-  local value=${1:-}
-  value=${value//\\/\\\\}
-  value=${value//\"/\\\"}
-  printf '"%s"' "${value}"
-}
-
 write_injector_report() {
   local status=$1
   local target_kind=$2
@@ -586,7 +579,9 @@ write_injector_report() {
   local note=$9
   local generated_at
 
-  generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  local FAILURE_DRILL_REPORT_SCHEMA_VERSION_JSON
+  generated_at=$(report_generated_at)
+  FAILURE_DRILL_REPORT_SCHEMA_VERSION_JSON=$(json_escape "${FAILURE_DRILL_REPORT_SCHEMA_VERSION}")
 
   cat > "${REPORT_PATH}" <<EOF
 # Failure Drill Report
@@ -622,7 +617,7 @@ EOF
 
   cat > "${JSON_REPORT_PATH}" <<EOF
 {
-  "schema_version": "failure-drill-report/v1",
+  "schema_version": ${FAILURE_DRILL_REPORT_SCHEMA_VERSION_JSON},
   "generated_at": $(json_escape "${generated_at}"),
   "status": $(json_escape "${status}"),
   "run_id": $(json_escape "${RUN_ID}"),
@@ -645,6 +640,11 @@ EOF
   "note": $(json_escape "${note}")
 }
 EOF
+
+  if ! check_reports_against_schema "${FAILURE_DRILL_REPORT_SCHEMA_VERSION}" "${JSON_REPORT_PATH}"; then
+    printf 'Report %s does not match %s\n' "${JSON_REPORT_PATH}" "${FAILURE_DRILL_REPORT_SCHEMA_VERSION}" >&2
+    return 1
+  fi
 }
 
 first_vllm_pod_name() {

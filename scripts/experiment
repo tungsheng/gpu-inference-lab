@@ -14,8 +14,6 @@ LOAD_CLIENT_TEMPLATE="${TEMPLATES_DIR}/experiment-load-test.js.tpl"
 STREAM_CLIENT_TEMPLATE="${TEMPLATES_DIR}/experiment-stream-client.py.tpl"
 ACCURACY_CLIENT_TEMPLATE="${TEMPLATES_DIR}/experiment-accuracy-client.py.tpl"
 MODEL_ARTIFACT_PVC_NAME="${EXPERIMENT_MODEL_ARTIFACT_PVC_NAME:-model-artifacts}"
-REPORT_SCHEMA_PATH="${EXPERIMENT_REPORT_SCHEMA_PATH:-${EXPERIMENTS_DIR}/_schemas/experiment-report.v1.json}"
-REPORT_SCHEMA_VALIDATOR="${SCRIPT_DIR}/lib/validate_report.py"
 EXPERIMENT_PROMETHEUS_LOCAL_PORT=""
 EXPERIMENT_PROMETHEUS_PORT_FORWARD_PID=""
 EXPERIMENT_PROMETHEUS_PORT_FORWARD_LOG=""
@@ -1894,20 +1892,6 @@ validate_experiment() {
   validate_quantization_job_rows "${experiment_name}"
 }
 
-check_reports_against_schema() {
-  if [[ ! -f "${REPORT_SCHEMA_PATH}" ]]; then
-    die "Missing report schema: ${REPORT_SCHEMA_PATH}"
-  fi
-
-  if [[ ! -f "${REPORT_SCHEMA_VALIDATOR}" ]]; then
-    die "Missing report schema validator: ${REPORT_SCHEMA_VALIDATOR}"
-  fi
-
-  require_commands python3
-
-  python3 "${REPORT_SCHEMA_VALIDATOR}" --schema "${REPORT_SCHEMA_PATH}" "$@"
-}
-
 validate_serving_image_alignment() {
   local manifest_image
   local defaults_image
@@ -1950,11 +1934,11 @@ validate_evidence_reports() {
     return 0
   fi
 
-  if ! check_reports_against_schema "${reports[@]}"; then
-    die "Curated evidence does not match ${REPORT_SCHEMA_PATH##*/}"
+  if ! check_reports_against_schema "${EXPERIMENT_REPORT_SCHEMA_VERSION}" "${reports[@]}"; then
+    die "Curated evidence does not match $(basename "$(report_schema_path "${EXPERIMENT_REPORT_SCHEMA_VERSION}")")"
   fi
 
-  printf 'Validated %s evidence report(s) against %s.\n' "${#reports[@]}" "${REPORT_SCHEMA_PATH##*/}"
+  printf 'Validated %s evidence report(s) against %s.\n' "${#reports[@]}" "$(basename "$(report_schema_path "${EXPERIMENT_REPORT_SCHEMA_VERSION}")")"
 }
 
 validate_experiment_catalog() {
@@ -1969,7 +1953,7 @@ validate_experiment_catalog() {
   require_template "${ACCURACY_CLIENT_TEMPLATE}"
 
   # Underscore-prefixed directories are reserved for shared catalog assets
-  # (_profiles, _schemas, _templates), not experiments.
+  # (_profiles, _templates), not experiments.
   while read -r experiment_path; do
     experiment_name=$(basename "${experiment_path}")
     validate_experiment "${experiment_name}"
@@ -4991,9 +4975,9 @@ promote_evidence_command() {
     die "Failed to scrub and write evidence from ${report_path}"
   fi
 
-  if ! check_reports_against_schema "${tmp_destination}"; then
+  if ! check_reports_against_schema "${EXPERIMENT_REPORT_SCHEMA_VERSION}" "${tmp_destination}"; then
     rm -f "${tmp_destination}"
-    die "Report ${report_path} does not match ${REPORT_SCHEMA_PATH##*/}"
+    die "Report ${report_path} does not match $(basename "$(report_schema_path "${EXPERIMENT_REPORT_SCHEMA_VERSION}")")"
   fi
 
   mv "${tmp_destination}" "${destination}"

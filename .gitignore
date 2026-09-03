@@ -26,6 +26,10 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
+# Python bytecode
+__pycache__/
+*.py[cod]
+
 # Generated lab artifacts
 artifacts/
 docs/reports/*

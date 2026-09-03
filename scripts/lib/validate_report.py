@@ -17,7 +17,7 @@ from pathlib import Path
 SUPPORTED = {
     "$schema", "$id", "title", "description",
     "type", "properties", "required", "additionalProperties", "items",
-    "enum", "const",
+    "enum", "const", "oneOf", "minimum", "maximum",
 }
 
 TYPE_CHECKS = {
@@ -60,6 +60,25 @@ def validate(value, schema, path, errors):
             f"{', '.join(sorted(unsupported))}"
         )
 
+    if "oneOf" in schema:
+        branches = schema["oneOf"]
+        attempts = []
+        for branch in branches:
+            branch_errors = []
+            validate(value, branch, path, branch_errors)
+            if not branch_errors:
+                return
+            attempts.append((branch.get("title", "?"), branch_errors))
+        # Report the closest branch rather than "matched nothing", which says
+        # nothing useful when the branches are whole document shapes.
+        name, best = min(attempts, key=lambda a: len(a[1]))
+        errors.append(
+            f"{path or '<root>'}: matched none of {len(branches)} allowed shapes; "
+            f"closest is {name!r}"
+        )
+        errors.extend(best)
+        return
+
     if "const" in schema and value != schema["const"]:
         errors.append(f"{path or '<root>'}: expected {schema['const']!r}, found {value!r}")
         return
@@ -82,6 +101,12 @@ def validate(value, schema, path, errors):
                 f"found {type_name(value)}"
             )
             return
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if "minimum" in schema and value < schema["minimum"]:
+            errors.append(f"{path or '<root>'}: {value} is below minimum {schema['minimum']}")
+        if "maximum" in schema and value > schema["maximum"]:
+            errors.append(f"{path or '<root>'}: {value} is above maximum {schema['maximum']}")
 
     if isinstance(value, dict):
         properties = schema.get("properties", {})

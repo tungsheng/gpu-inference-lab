@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import importlib.util
 import html
 import json
 import sys
@@ -214,7 +215,38 @@ def write_text(path: str | None, content: str) -> None:
         sys.stdout.write(content)
 
 
+def trace_schema_path() -> Path:
+    return repo_root() / "schemas" / "kv-cache-trace.v1.json"
+
+
+def validate_trace(trace: dict) -> list[str]:
+    """Check a trace against the checked-in kv-cache-trace schema.
+
+    Shares the validator with the report families so one schema dialect is
+    enforced everywhere; a missing validator or schema is reported rather than
+    silently skipped.
+    """
+    validator_path = repo_root() / "scripts" / "lib" / "validate_report.py"
+    schema_path = trace_schema_path()
+    if not validator_path.exists() or not schema_path.exists():
+        return [f"missing trace validator or schema: {validator_path}, {schema_path}"]
+
+    spec = importlib.util.spec_from_file_location("validate_report", validator_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors: list[str] = []
+    module.validate(trace, json.loads(schema_path.read_text()), "", errors)
+    return errors
+
+
 def write_json(path: str | None, payload: dict) -> None:
+    if payload.get("schema_version") == SCHEMA_VERSION:
+        errors = validate_trace(payload)
+        if errors:
+            for message in errors:
+                sys.stderr.write(f"trace does not match {trace_schema_path().name}: {message}\n")
+            raise SystemExit(1)
     text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     write_text(path, text)
 

@@ -11,8 +11,8 @@ per-experiment conclusions in `experiments/<name>/results.md`.
 
 | Producer | Schema | Definition |
 | --- | --- | --- |
-| `./scripts/evaluate` | `evaluate-report/v1` | `scripts/lib/evaluate-reports.sh` |
-| `./scripts/experiment` | `experiment-report/v1` | `experiments/_schemas/experiment-report.v1.json` |
+| `./scripts/evaluate` | `evaluate-report/v1` | `schemas/evaluate-report.v1.json` |
+| `./scripts/experiment` | `experiment-report/v1` | `schemas/experiment-report.v1.json` |
 
 `experiment-report/v1` is enforced, not just documented. `./scripts/experiment
 validate` checks every committed evidence file against it, and
@@ -22,7 +22,7 @@ renderer means updating the schema in the same change.
 
 ```bash
 python3 scripts/lib/validate_report.py \
-  --schema experiments/_schemas/experiment-report.v1.json \
+  --schema schemas/experiment-report.v1.json \
   experiments/kv-cache/evidence/*.json
 ```
 

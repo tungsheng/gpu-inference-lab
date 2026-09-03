@@ -60,7 +60,7 @@ checked-in JSON, so the measured conclusions are auditable without a cluster.
 
 `validate` also checks the checked-in serving images against
 `platform/inference/versions.env` and every committed evidence file against
-`experiments/_schemas/experiment-report.v1.json`.
+`schemas/`.
 
 Measured runs require Terraform, AWS CLI, `kubectl`, `helm`, AWS credentials,
 access to `us-west-2`, and a live cluster. The inference ALB is restricted to
