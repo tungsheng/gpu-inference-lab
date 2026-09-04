@@ -1,0 +1,14 @@
+# Python style for the helper scripts in this repository. Declared so linting is
+# a check rather than a reformatting exercise.
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# kv_observe.py predates this configuration and carries long table and query
+# literals. Everything except line length is enforced; reformatting it is a
+# separate change from turning the linter on.
+"observatory/kv-cache/kv_observe.py" = ["E501"]

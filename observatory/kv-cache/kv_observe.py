@@ -2,15 +2,14 @@
 
 import argparse
 import csv
-import importlib.util
 import html
+import importlib.util
 import json
 import sys
 import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-
 
 SCHEMA_VERSION = "kv-cache-trace/v1"
 DEFAULT_DEMO_OUTPUT = "/tmp/kv-cache-observatory.html"

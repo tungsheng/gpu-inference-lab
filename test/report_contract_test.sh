@@ -71,6 +71,20 @@ in_contract "check_reports_against_schema '${EXPERIMENT_REPORT_SCHEMA_VERSION:-e
 assert_status 1 "${COMMAND_STATUS}" "an unexpected field should fail schema validation"
 assert_contains "${COMMAND_OUTPUT}" "unexpected field 'tokens_per_watt'" "the failure should name the drifted field"
 
+# Reports written before later fields were added to the renderer are still
+# evaluate-report/v1 documents. The schema was first derived from current runs
+# only, which made it reject 18 of 23 real historical reports; these fixtures
+# are scrubbed copies of the older shapes, kept so that cannot regress.
+for fixture in "${REPO_ROOT}"/test/fixtures/evaluate-reports/*.json; do
+  in_contract "check_reports_against_schema '${EVALUATE_REPORT_SCHEMA_VERSION:-evaluate-report/v1}' '${fixture}'"
+  assert_status 0 "${COMMAND_STATUS}" "historical report $(basename "${fixture}") should satisfy the evaluate schema"
+done
+
+# Those fixtures are committed, so they must carry no cluster addresses.
+FIXTURE_BLOB=$(cat "${REPO_ROOT}"/test/fixtures/evaluate-reports/*.json)
+assert_not_contains "${FIXTURE_BLOB}" "public_endpoint" "committed report fixtures should have operational endpoints scrubbed"
+assert_not_contains "${FIXTURE_BLOB}" "amazonaws.com" "committed report fixtures should not carry cluster hostnames"
+
 # evaluate-report/v1 covers three document shapes; each must validate, and a
 # document matching none of them must report the closest shape.
 printf '{"schema_version":"evaluate-report/v1","generated_at":"x"}\n' > "${TEST_TMPDIR}/bogus.json"

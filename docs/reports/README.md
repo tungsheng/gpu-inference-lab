@@ -13,9 +13,14 @@ per-experiment conclusions in `experiments/<name>/results.md`.
 | --- | --- | --- |
 | `./scripts/evaluate` | `evaluate-report/v1` | `schemas/evaluate-report.v1.json` |
 | `./scripts/evaluate` | `evaluate-measurement/v1` | `schemas/evaluate-measurement.v1.json` |
+| `./scripts/experiment` | `experiment-case/v1` | `schemas/experiment-case.v1.json` |
 | `./scripts/experiment` | `experiment-report/v1` | `schemas/experiment-report.v1.json` |
 | `./scripts/failure` | `failure-drill-report/v1` | `schemas/failure-drill-report.v1.json` |
 | `./scripts/kv-observe` | `kv-cache-trace/v1` | `schemas/kv-cache-trace.v1.json` |
+
+Six documents are checked in total: four report families, plus the two seam
+documents -- the measurement record a run hands to the readout, and the
+resolved case the catalog hands to the renderers.
 
 ## Measurement Records
 

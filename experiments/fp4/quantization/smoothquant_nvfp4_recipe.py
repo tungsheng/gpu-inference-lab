@@ -1,7 +1,6 @@
 from llmcompressor.modifiers.quantization import QuantizationModifier
 from llmcompressor.modifiers.smoothquant import SmoothQuantModifier
 
-
 recipe = [
     SmoothQuantModifier(
         smoothing_strength=0.5,

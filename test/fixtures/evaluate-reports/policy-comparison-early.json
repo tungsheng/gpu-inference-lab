@@ -1,0 +1,68 @@
+{
+  "active_pressure": {
+    "capacity_assessment": {
+      "reason": "the efficiency readout was incomplete because one or more queue or GPU metrics were unavailable",
+      "status": "unknown"
+    },
+    "hpa_metric_name": "vllm_requests_active",
+    "hpa_target_average_value": "6",
+    "json_report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-warm-1-active-pressure-20260430-232638-active-pressure.json",
+    "metrics": {
+      "average_completed_requests_per_second": 2.3513289542483657,
+      "average_gpu_headroom_percent": null,
+      "average_gpu_utilization_percent": null,
+      "estimated_burst_cost": 0.439356,
+      "max_gpu_utilization_percent": null,
+      "p95_estimated_queue_wait_seconds": 0,
+      "p95_request_latency_seconds": 117,
+      "p95_ttft_seconds": 0.08931666666666666,
+      "peak_active_nodeclaims": 2,
+      "peak_active_requests": 256,
+      "peak_active_requests_per_gpu_node": 128.0,
+      "peak_waiting_requests": 0,
+      "recovery_ready_seconds": null,
+      "second_ready_seconds": 564
+    },
+    "metrics_collection_reason": null,
+    "metrics_collection_status": "complete",
+    "report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-warm-1-active-pressure-20260430-232638-active-pressure.md",
+    "resilience": {
+      "outcome": "fallback-engaged"
+    }
+  },
+  "generated_at": "2026-05-01T07:25:41Z",
+  "profile": "warm-1",
+  "resilience_mode": "healthy",
+  "running": {
+    "capacity_assessment": {
+      "reason": "the efficiency readout was incomplete because one or more queue or GPU metrics were unavailable",
+      "status": "unknown"
+    },
+    "hpa_metric_name": "vllm_requests_running",
+    "hpa_target_average_value": "128",
+    "json_report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-warm-1-running-20260430-232638-running.json",
+    "metrics": {
+      "average_completed_requests_per_second": 2.2743039215686274,
+      "average_gpu_headroom_percent": null,
+      "average_gpu_utilization_percent": null,
+      "estimated_burst_cost": 0.401513,
+      "max_gpu_utilization_percent": null,
+      "p95_estimated_queue_wait_seconds": 0,
+      "p95_request_latency_seconds": 117,
+      "p95_ttft_seconds": 0.09565542857142859,
+      "peak_active_nodeclaims": 2,
+      "peak_active_requests": 256,
+      "peak_active_requests_per_gpu_node": 128.0,
+      "peak_waiting_requests": 0,
+      "recovery_ready_seconds": null,
+      "second_ready_seconds": 989
+    },
+    "metrics_collection_reason": null,
+    "metrics_collection_status": "complete",
+    "report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-warm-1-running-20260430-232638-running.md",
+    "resilience": {
+      "outcome": "fallback-engaged"
+    }
+  },
+  "schema_version": "evaluate-report/v1"
+}

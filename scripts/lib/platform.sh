@@ -729,34 +729,6 @@ hpa_desired_replicas() {
     -o jsonpath='{.status.desiredReplicas}' 2>/dev/null | tr -d '[:space:]'
 }
 
-wait_for_hpa_desired_replicas_at_least() {
-  local namespace=$1
-  local hpa_name=$2
-  local expected=$3
-  local timeout_seconds=$4
-  local start_time
-
-  start_time=$(date +%s)
-
-  while true; do
-    local desired_replicas
-    desired_replicas=$(hpa_desired_replicas "${namespace}" "${hpa_name}")
-    desired_replicas=${desired_replicas:-0}
-
-    if (( desired_replicas >= expected )); then
-      return 0
-    fi
-
-    if (( $(date +%s) - start_time >= timeout_seconds )); then
-      printf 'Timed out waiting for HPA %s/%s to reach at least %s desired replica(s)\n' \
-        "${namespace}" "${hpa_name}" "${expected}" >&2
-      return 1
-    fi
-
-    sleep "${POLL_INTERVAL_SECONDS}"
-  done
-}
-
 wait_for_hpa_desired_replicas_at_most() {
   local namespace=$1
   local hpa_name=$2
@@ -815,27 +787,6 @@ nodepool_capacity_type() {
       printf 'unknown\n'
       ;;
   esac
-}
-
-wait_for_nodeclaims_at_least() {
-  local expected=$1
-  local timeout_seconds=$2
-  local start_time
-
-  start_time=$(date +%s)
-
-  while true; do
-    if (( $(nodeclaim_count) >= expected )); then
-      return 0
-    fi
-
-    if (( $(date +%s) - start_time >= timeout_seconds )); then
-      printf 'Timed out waiting for at least %s NodeClaim(s)\n' "${expected}" >&2
-      return 1
-    fi
-
-    sleep "${POLL_INTERVAL_SECONDS}"
-  done
 }
 
 wait_for_nodeclaims_at_most() {

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/gpu-inference-lab/evaluate-report.schema.json",
   "title": "Evaluation report",
-  "description": "Reports written by ./scripts/evaluate. One schema_version covers three document shapes: a single run, a policy comparison, and an active-pressure target sweep.",
+  "description": "Reports written by ./scripts/evaluate. One schema_version covers three document shapes: a single run, a policy comparison, and an active-pressure target sweep. Required fields are those present in every known v1 document, including ones written before later fields were added to the renderer.",
   "oneOf": [
     {
       "type": "object",
@@ -235,10 +235,6 @@
             "max_gpu_utilization_percent",
             "p95_estimated_queue_wait_seconds",
             "p95_request_latency_seconds",
-            "p95_server_decode_seconds",
-            "p95_server_inter_token_latency_seconds",
-            "p95_server_prefill_seconds",
-            "p95_server_queue_seconds",
             "p95_ttft_seconds",
             "peak_active_nodeclaims",
             "peak_active_nodeclaims_by_capacity_type",
@@ -540,7 +536,6 @@
         "operator_summary",
         "policy",
         "profile",
-        "public_endpoint",
         "recovery_gpu_availability_zone",
         "recovery_gpu_capacity_type",
         "recovery_gpu_instance_type",
@@ -597,16 +592,25 @@
                   "type": "number"
                 },
                 "average_gpu_headroom_percent": {
-                  "type": "number"
+                  "type": [
+                    "null",
+                    "number"
+                  ]
                 },
                 "average_gpu_utilization_percent": {
-                  "type": "number"
+                  "type": [
+                    "null",
+                    "number"
+                  ]
                 },
                 "estimated_burst_cost": {
                   "type": "number"
                 },
                 "max_gpu_utilization_percent": {
-                  "type": "number"
+                  "type": [
+                    "null",
+                    "number"
+                  ]
                 },
                 "p95_estimated_queue_wait_seconds": {
                   "type": "number"
@@ -656,10 +660,6 @@
                 "max_gpu_utilization_percent",
                 "p95_estimated_queue_wait_seconds",
                 "p95_request_latency_seconds",
-                "p95_server_decode_seconds",
-                "p95_server_inter_token_latency_seconds",
-                "p95_server_prefill_seconds",
-                "p95_server_queue_seconds",
                 "p95_ttft_seconds",
                 "peak_active_nodeclaims",
                 "peak_active_requests",
@@ -752,16 +752,25 @@
                   "type": "number"
                 },
                 "average_gpu_headroom_percent": {
-                  "type": "number"
+                  "type": [
+                    "null",
+                    "number"
+                  ]
                 },
                 "average_gpu_utilization_percent": {
-                  "type": "number"
+                  "type": [
+                    "null",
+                    "number"
+                  ]
                 },
                 "estimated_burst_cost": {
                   "type": "number"
                 },
                 "max_gpu_utilization_percent": {
-                  "type": "number"
+                  "type": [
+                    "null",
+                    "number"
+                  ]
                 },
                 "p95_estimated_queue_wait_seconds": {
                   "type": "number"
@@ -811,10 +820,6 @@
                 "max_gpu_utilization_percent",
                 "p95_estimated_queue_wait_seconds",
                 "p95_request_latency_seconds",
-                "p95_server_decode_seconds",
-                "p95_server_inter_token_latency_seconds",
-                "p95_server_prefill_seconds",
-                "p95_server_queue_seconds",
                 "p95_ttft_seconds",
                 "peak_active_nodeclaims",
                 "peak_active_requests",
@@ -865,7 +870,6 @@
       },
       "required": [
         "active_pressure",
-        "compare_order",
         "generated_at",
         "profile",
         "resilience_mode",
@@ -964,25 +968,43 @@
                 "additionalProperties": false,
                 "properties": {
                   "average_completed_requests_per_second": {
-                    "type": "number"
+                    "type": [
+                      "null",
+                      "number"
+                    ]
                   },
                   "average_gpu_headroom_percent": {
-                    "type": "number"
+                    "type": [
+                      "null",
+                      "number"
+                    ]
                   },
                   "average_gpu_utilization_percent": {
-                    "type": "number"
+                    "type": [
+                      "null",
+                      "number"
+                    ]
                   },
                   "estimated_burst_cost": {
                     "type": "number"
                   },
                   "max_gpu_utilization_percent": {
-                    "type": "number"
+                    "type": [
+                      "null",
+                      "number"
+                    ]
                   },
                   "p95_estimated_queue_wait_seconds": {
-                    "type": "number"
+                    "type": [
+                      "null",
+                      "number"
+                    ]
                   },
                   "p95_request_latency_seconds": {
-                    "type": "number"
+                    "type": [
+                      "null",
+                      "number"
+                    ]
                   },
                   "p95_server_decode_seconds": {
                     "type": "number"
@@ -997,19 +1019,34 @@
                     "type": "number"
                   },
                   "p95_ttft_seconds": {
-                    "type": "number"
+                    "type": [
+                      "null",
+                      "number"
+                    ]
                   },
                   "peak_active_nodeclaims": {
-                    "type": "integer"
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
                   },
                   "peak_active_requests": {
-                    "type": "integer"
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
                   },
                   "peak_active_requests_per_gpu_node": {
-                    "type": "number"
+                    "type": [
+                      "null",
+                      "number"
+                    ]
                   },
                   "peak_waiting_requests": {
-                    "type": "integer"
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
                   },
                   "recovery_ready_seconds": {
                     "type": "null"
@@ -1026,10 +1063,6 @@
                   "max_gpu_utilization_percent",
                   "p95_estimated_queue_wait_seconds",
                   "p95_request_latency_seconds",
-                  "p95_server_decode_seconds",
-                  "p95_server_inter_token_latency_seconds",
-                  "p95_server_prefill_seconds",
-                  "p95_server_queue_seconds",
                   "p95_ttft_seconds",
                   "peak_active_nodeclaims",
                   "peak_active_requests",

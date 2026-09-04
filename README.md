@@ -100,6 +100,8 @@ checks, and teardown recovery.
 | `platform/` | Kubernetes manifests for serving, capacity, observability, and validation |
 | `experiments/` | experiment definitions, cases, profiles, and curated results |
 | `scripts/` | lifecycle, evaluation, and experiment commands |
+| `schemas/` | JSON Schemas every report and seam document is checked against |
+| `observatory/` | KV-cache trace collection and visualization helpers |
 | `test/` | shell tests for scripts and manifest contracts |
 
 Failure drills use the same catalog/reporting style:
