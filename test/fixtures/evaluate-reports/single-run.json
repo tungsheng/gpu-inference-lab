@@ -1,0 +1,96 @@
+{
+  "capacity_assessment": {
+    "reason": "the efficiency readout was incomplete because one or more queue or GPU metrics were unavailable",
+    "status": "unknown"
+  },
+  "cost": {
+    "estimated_burst_cost": 0.065019,
+    "estimated_burst_cost_by_capacity_type": {
+      "on_demand": 0.065019,
+      "spot": 0
+    },
+    "estimated_idle_cost_per_hour": 0,
+    "estimated_idle_cost_per_hour_by_capacity_type": {
+      "on_demand": 0,
+      "spot": 0
+    }
+  },
+  "first_gpu_availability_zone": "us-west-2b",
+  "first_gpu_capacity_type": "on-demand",
+  "first_gpu_instance_type": "g4dn.xlarge",
+  "first_gpu_nodepool": "gpu-serving-ondemand",
+  "generated_at": "2026-06-07T07:27:12Z",
+  "hpa_metric_name": "vllm_requests_active",
+  "hpa_target_average_value": "4",
+  "metrics": {
+    "average_completed_requests_per_second": null,
+    "average_generation_tokens_per_second": null,
+    "average_gpu_headroom_percent": null,
+    "average_gpu_utilization_percent": null,
+    "max_gpu_utilization_percent": null,
+    "p95_estimated_queue_wait_seconds": null,
+    "p95_request_latency_seconds": null,
+    "p95_server_decode_seconds": null,
+    "p95_server_inter_token_latency_seconds": null,
+    "p95_server_prefill_seconds": null,
+    "p95_server_queue_seconds": null,
+    "p95_ttft_seconds": null,
+    "peak_active_nodeclaims": null,
+    "peak_active_nodeclaims_by_capacity_type": {
+      "on_demand": null,
+      "spot": null
+    },
+    "peak_active_requests": null,
+    "peak_active_requests_per_gpu_node": null,
+    "peak_running_requests": null,
+    "peak_waiting_requests": null
+  },
+  "metrics_collection_reason": "Run stopped before final metric collection because a resilience drill precondition was not satisfied.",
+  "metrics_collection_status": "not-collected",
+  "operator_summary": {
+    "container_started_to_ready_seconds": 84,
+    "interruption_to_recovery_gpu_node_seconds": null,
+    "interruption_to_recovery_ready_seconds": null,
+    "pod_scheduled_to_ready_seconds": 435
+  },
+  "policy": "active-pressure",
+  "profile": "zero-idle",
+  "recovery_gpu_availability_zone": null,
+  "recovery_gpu_capacity_type": null,
+  "recovery_gpu_instance_type": null,
+  "recovery_gpu_nodepool": null,
+  "resilience": {
+    "expected_recovery_capacity_type": "on-demand",
+    "mode": "spot-interruption",
+    "outcome": "interruption-precondition-failed",
+    "preferred_burst_capacity_type": "spot",
+    "reason": "spot-interruption requires the first GPU node to be spot before withdrawing on-demand capacity, but the first GPU node reported on-demand"
+  },
+  "resilience_mode": "spot-interruption",
+  "schema_version": "evaluate-report/v1",
+  "second_gpu_availability_zone": null,
+  "second_gpu_capacity_type": null,
+  "second_gpu_instance_type": null,
+  "second_gpu_nodepool": null,
+  "timeline": {
+    "cleanup_finish_seconds": null,
+    "first_gpu_node_seconds": 34,
+    "first_nodeclaim_seconds": 12,
+    "first_public_response_seconds": 445,
+    "first_ready_seconds": 435,
+    "hpa_scale_out_seconds": null,
+    "interrupted_gpu_node_removed_seconds": null,
+    "interrupted_nodeclaim_removed_seconds": null,
+    "interruption_trigger_seconds": null,
+    "load_complete_seconds": null,
+    "load_started_seconds": null,
+    "recovery_gpu_node_seconds": null,
+    "recovery_nodeclaim_seconds": null,
+    "recovery_ready_seconds": null,
+    "scale_in_seconds": null,
+    "second_gpu_node_seconds": null,
+    "second_nodeclaim_seconds": null,
+    "second_ready_seconds": null,
+    "warm_baseline_restored_seconds": null
+  }
+}

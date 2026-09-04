@@ -3,13 +3,13 @@
 import argparse
 import csv
 import html
+import importlib.util
 import json
 import sys
 import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-
 
 SCHEMA_VERSION = "kv-cache-trace/v1"
 DEFAULT_DEMO_OUTPUT = "/tmp/kv-cache-observatory.html"
@@ -214,7 +214,38 @@ def write_text(path: str | None, content: str) -> None:
         sys.stdout.write(content)
 
 
+def trace_schema_path() -> Path:
+    return repo_root() / "schemas" / "kv-cache-trace.v1.json"
+
+
+def validate_trace(trace: dict) -> list[str]:
+    """Check a trace against the checked-in kv-cache-trace schema.
+
+    Shares the validator with the report families so one schema dialect is
+    enforced everywhere; a missing validator or schema is reported rather than
+    silently skipped.
+    """
+    validator_path = repo_root() / "scripts" / "lib" / "validate_report.py"
+    schema_path = trace_schema_path()
+    if not validator_path.exists() or not schema_path.exists():
+        return [f"missing trace validator or schema: {validator_path}, {schema_path}"]
+
+    spec = importlib.util.spec_from_file_location("validate_report", validator_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors: list[str] = []
+    module.validate(trace, json.loads(schema_path.read_text()), "", errors)
+    return errors
+
+
 def write_json(path: str | None, payload: dict) -> None:
+    if payload.get("schema_version") == SCHEMA_VERSION:
+        errors = validate_trace(payload)
+        if errors:
+            for message in errors:
+                sys.stderr.write(f"trace does not match {trace_schema_path().name}: {message}\n")
+            raise SystemExit(1)
     text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     write_text(path, text)
 
@@ -399,8 +430,36 @@ def load_profile_image(experiment: str, profile: str) -> str | None:
     with profile_path.open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             if row.get("profile_id") == profile:
-                return row.get("vllm_image") or load_default_profile_image()
+                return resolve_serving_image(row.get("vllm_image")) or load_default_profile_image()
     return None
+
+
+def load_serving_image_versions() -> dict[str, str]:
+    """Read the declared vLLM images from platform/inference/versions.env.
+
+    The file is shell syntax, but it is a flat list of NAME="value" lines, so it
+    is parsed directly rather than shelled out to.
+    """
+    versions_path = repo_root() / "platform" / "inference" / "versions.env"
+    versions: dict[str, str] = {}
+    if not versions_path.exists():
+        return versions
+    for line in versions_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        versions[name.strip()] = value.strip().strip('"').strip("'")
+    return versions
+
+
+def resolve_serving_image(image: str | None) -> str | None:
+    """Expand an @VLLM_IMAGE_*@ reference from versions.env."""
+    if not image:
+        return image
+    for name, value in load_serving_image_versions().items():
+        image = image.replace(f"@{name}@", value)
+    return image
 
 
 def load_default_profile_image() -> str | None:
@@ -410,7 +469,7 @@ def load_default_profile_image() -> str | None:
     with defaults_path.open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             if row.get("profile_id") == "default":
-                return row.get("vllm_image") or None
+                return resolve_serving_image(row.get("vllm_image")) or None
     return None
 
 
@@ -419,8 +478,12 @@ def command_preflight(args: argparse.Namespace) -> int:
     if not image:
         sys.stderr.write(f"Missing serving profile: {args.experiment}/{args.profile}\n")
         return 1
-    if "v0.22.1" not in image:
-        sys.stderr.write(f"Expected a vLLM v0.22.1 image, found: {image}\n")
+    expected = load_serving_image_versions().get("VLLM_IMAGE_MODERN")
+    if not expected:
+        sys.stderr.write("platform/inference/versions.env does not define VLLM_IMAGE_MODERN\n")
+        return 1
+    if image != expected:
+        sys.stderr.write(f"Expected a {expected} image, found: {image}\n")
         return 1
     checked = ["vllm:kv_cache_usage_perc", "vllm:request_queue_time_seconds_bucket", "vllm:request_prefill_time_seconds_bucket"]
     if args.prometheus_url:

@@ -9,10 +9,46 @@ per-experiment conclusions in `experiments/<name>/results.md`.
 
 ## Schemas
 
-| Producer | Schema |
-| --- | --- |
-| `./scripts/evaluate` | `evaluate-report/v1` |
-| `./scripts/experiment` | `experiment-report/v1` |
+| Producer | Schema | Definition |
+| --- | --- | --- |
+| `./scripts/evaluate` | `evaluate-report/v1` | `schemas/evaluate-report.v1.json` |
+| `./scripts/evaluate` | `evaluate-measurement/v1` | `schemas/evaluate-measurement.v1.json` |
+| `./scripts/experiment` | `experiment-case/v1` | `schemas/experiment-case.v1.json` |
+| `./scripts/experiment` | `experiment-report/v1` | `schemas/experiment-report.v1.json` |
+| `./scripts/failure` | `failure-drill-report/v1` | `schemas/failure-drill-report.v1.json` |
+| `./scripts/kv-observe` | `kv-cache-trace/v1` | `schemas/kv-cache-trace.v1.json` |
+
+Six documents are checked in total: four report families, plus the two seam
+documents -- the measurement record a run hands to the readout, and the
+resolved case the catalog hands to the renderers.
+
+## Measurement Records
+
+`./scripts/evaluate` writes a measurement record beside every report it
+produces. The record is the seam between the live run and the readout: it
+carries every raw measurement the cost model, capacity verdict, resilience
+verdict and report renderers read, and none of the values they derive.
+
+```bash
+./scripts/evaluate render-report --record docs/reports/<report>.measurement.json
+```
+
+Rendering from a record takes the same derive-and-render path a run takes, so a
+readout can be rebuilt, reviewed, and tested without a cluster. The evaluation
+tests assert that a rendered readout matches the one its live run wrote, which
+is what keeps the two paths the same path.
+
+`experiment-report/v1` is enforced, not just documented. `./scripts/experiment
+validate` checks every committed evidence file against it, and
+`promote-evidence` refuses to admit a report that does not match. The schema is
+closed: an unexpected field fails validation, so adding a field to the report
+renderer means updating the schema in the same change.
+
+```bash
+python3 scripts/lib/validate_report.py \
+  --schema schemas/experiment-report.v1.json \
+  experiments/kv-cache/evidence/*.json
+```
 
 ## Evaluation Reports
 
@@ -61,8 +97,9 @@ here:
 ```
 
 `promote-evidence` validates that the report matches the named experiment,
-strips operational endpoints (such as load-balancer hostnames), and copies it
-under `experiments/<name>/evidence/`. `replay` renders the committed evidence —
+strips operational endpoints (such as load-balancer hostnames), checks the
+scrubbed document against `experiment-report/v1`, and copies it under
+`experiments/<name>/evidence/`. `replay` renders the committed evidence —
 latest report per case/profile — with the same table as `summarize-reports`,
 using only `jq` and no cluster or AWS access. That makes every promoted
 `results.md` table reproducible from the repository alone.

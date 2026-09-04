@@ -58,8 +58,14 @@ Local checks do not require AWS:
 `replay` renders the committed evidence behind a curated `results.md` table from
 checked-in JSON, so the measured conclusions are auditable without a cluster.
 
+`validate` also checks the checked-in serving images against
+`platform/inference/versions.env` and every committed evidence file against
+`schemas/`.
+
 Measured runs require Terraform, AWS CLI, `kubectl`, `helm`, AWS credentials,
-access to `us-west-2`, and a live cluster:
+access to `us-west-2`, and a live cluster. The inference ALB is restricted to
+the public IP of the machine running the command unless you set
+`GPU_INFERENCE_INBOUND_CIDRS`:
 
 ```bash
 ./scripts/up
@@ -94,6 +100,8 @@ checks, and teardown recovery.
 | `platform/` | Kubernetes manifests for serving, capacity, observability, and validation |
 | `experiments/` | experiment definitions, cases, profiles, and curated results |
 | `scripts/` | lifecycle, evaluation, and experiment commands |
+| `schemas/` | JSON Schemas every report and seam document is checked against |
+| `observatory/` | KV-cache trace collection and visualization helpers |
 | `test/` | shell tests for scripts and manifest contracts |
 
 Failure drills use the same catalog/reporting style:

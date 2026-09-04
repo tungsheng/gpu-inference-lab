@@ -35,6 +35,53 @@ run_experiment_validate_test() {
 
   assert_status 0 "${COMMAND_STATUS}" "scripts/experiment validate should succeed for the checked-in catalog"
   assert_contains "${COMMAND_OUTPUT}" "Validated 9 experiment(s)." "validate should report the number of checked-in experiments"
+  assert_contains "${COMMAND_OUTPUT}" "evidence report(s) against experiment-report.v1.json." "validate should check curated evidence against the report schema"
+  assert_not_contains "${COMMAND_OUTPUT}" "Validated 0 evidence report(s)." "validate should find the checked-in evidence corpus"
+}
+
+run_serving_image_alignment_test() {
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" validate
+  assert_contains "${COMMAND_OUTPUT}" "Serving images aligned with versions.env." "validate should confirm the serving images match the single source"
+
+  # A profile CSV that names an image directly must still resolve, but a stale
+  # tag that no longer matches versions.env has to be caught rather than served.
+  setup_test_tmpdir
+  local defaults="${TEST_TMPDIR}/serving-defaults.csv"
+  sed 's|@VLLM_IMAGE_DEFAULT@|vllm/vllm-openai:v0.0.1|' \
+    "${REPO_ROOT}/experiments/_profiles/serving-defaults.csv" > "${defaults}"
+
+  run_and_capture env EXPERIMENT_SERVING_DEFAULTS_PATH="${defaults}" \
+    /bin/bash "${REPO_ROOT}/scripts/experiment" validate
+
+  assert_status 1 "${COMMAND_STATUS}" "validate should fail when the default profile drifts from versions.env"
+  assert_contains "${COMMAND_OUTPUT}" "declares VLLM_IMAGE_DEFAULT=vllm/vllm-openai:v0.9.0" "the drift failure should name the declared image"
+
+  # An unknown reference must fail loudly instead of reaching a cluster.
+  sed 's|@VLLM_IMAGE_DEFAULT@|@VLLM_IMAGE_NOPE@|' \
+    "${REPO_ROOT}/experiments/_profiles/serving-defaults.csv" > "${defaults}"
+
+  run_and_capture env EXPERIMENT_SERVING_DEFAULTS_PATH="${defaults}" \
+    /bin/bash "${REPO_ROOT}/scripts/experiment" validate
+
+  assert_status 1 "${COMMAND_STATUS}" "validate should fail on an unknown image reference"
+  assert_contains "${COMMAND_OUTPUT}" "Unknown serving image reference" "the failure should name the unresolved reference"
+
+  teardown_test_tmpdir
+}
+
+run_serving_image_reference_resolution_test() {
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-serving \
+    --experiment kv-cache-observatory --profile modern-vllm-0221
+
+  assert_status 0 "${COMMAND_STATUS}" "render-serving should resolve a symbolic modern image"
+  assert_contains "${COMMAND_OUTPUT}" "image: vllm/vllm-openai:v0.22.1" "the modern reference should resolve to the declared image"
+  assert_not_contains "${COMMAND_OUTPUT}" "@VLLM_IMAGE" "no symbolic reference should reach a rendered manifest"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" render-serving \
+    --experiment fp4 --profile nvfp4-plain
+
+  assert_status 0 "${COMMAND_STATUS}" "render-serving should resolve a symbolic Blackwell image"
+  assert_contains "${COMMAND_OUTPUT}" "image: vllm/vllm-openai:v0.20.1" "the Blackwell reference should resolve to the declared image"
 }
 
 run_experiment_show_test() {
@@ -995,9 +1042,12 @@ run_promote_evidence_scrub_test() {
   setup_test_tmpdir
   mkdir -p "${TEST_TMPDIR}/reports" "${TEST_TMPDIR}/evidence"
 
+  # Start from real curated evidence so the fixture satisfies the report schema,
+  # then re-add the operational endpoint that promotion is expected to scrub.
   local source="${TEST_TMPDIR}/reports/experiment-kv-cache-prompt-512-output-100-default-20260501-160128.json"
-  printf '%s\n' \
-    '{"schema_version":"experiment-report/v1","experiment":{"name":"kv-cache","title":"KV Cache Vs Concurrency"},"case":{"id":"prompt-512-output-100"},"serving_profile":{"id":"default"},"run":{"status":"complete","generated_at":"2026-05-01T16:01:28Z","public_endpoint":"http://k8s-publicedge-9857f58927-1264520422.us-west-2.elb.amazonaws.com/v1/completions"},"results":{"success":{"successful_requests":900,"failed_requests":0}}}' \
+  jq '.run.public_endpoint = "http://k8s-publicedge-9857f58927-1264520422.us-west-2.elb.amazonaws.com/v1/completions"
+      | .results.success.successful_requests = 900' \
+    "${REPO_ROOT}/experiments/kv-cache/evidence/experiment-kv-cache-prompt-512-output-100-default-20260501-160128.json" \
     > "${source}"
 
   run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" promote-evidence \
@@ -1015,6 +1065,29 @@ run_promote_evidence_scrub_test() {
   assert_not_contains "${promoted_contents}" "public_endpoint" "promote-evidence should scrub operational endpoints"
   assert_not_contains "${promoted_contents}" "amazonaws.com" "promote-evidence should not leak cluster hostnames"
   assert_contains "${promoted_contents}" "\"successful_requests\": 900" "promote-evidence should preserve measured results"
+
+  teardown_test_tmpdir
+}
+
+run_promote_evidence_rejects_off_schema_report_test() {
+  setup_test_tmpdir
+  mkdir -p "${TEST_TMPDIR}/reports" "${TEST_TMPDIR}/evidence"
+
+  local source="${TEST_TMPDIR}/reports/experiment-kv-cache-prompt-512-output-100-default-20260501-160128.json"
+  jq 'del(.notes) | .results.serving.tokens_per_watt = 3' \
+    "${REPO_ROOT}/experiments/kv-cache/evidence/experiment-kv-cache-prompt-512-output-100-default-20260501-160128.json" \
+    > "${source}"
+
+  run_and_capture /bin/bash "${REPO_ROOT}/scripts/experiment" promote-evidence \
+    --experiment kv-cache \
+    --report "${source}" \
+    --evidence-dir "${TEST_TMPDIR}/evidence"
+
+  assert_status 1 "${COMMAND_STATUS}" "promote-evidence should reject a report that does not match the schema"
+  assert_contains "${COMMAND_OUTPUT}" "missing required field 'notes'" "promote-evidence should name the missing field"
+  assert_contains "${COMMAND_OUTPUT}" "unexpected field 'tokens_per_watt'" "promote-evidence should name the unknown field"
+  assert_contains "${COMMAND_OUTPUT}" "does not match experiment-report.v1.json" "promote-evidence should name the schema it enforced"
+  assert_file_not_exists "${TEST_TMPDIR}/evidence/experiment-kv-cache-prompt-512-output-100-default-20260501-160128.json" "promote-evidence should not write an off-schema report"
 
   teardown_test_tmpdir
 }
@@ -1766,6 +1839,8 @@ run_stream_experiment_runner_test() {
 run_experiment_list_test
 run_experiment_validate_test
 run_experiment_show_test
+run_serving_image_alignment_test
+run_serving_image_reference_resolution_test
 run_prefill_decode_show_test
 run_batching_show_test
 run_request_patterns_show_test
@@ -1804,6 +1879,7 @@ run_replay_test
 run_replay_missing_evidence_test
 run_promote_evidence_scrub_test
 run_promote_evidence_rejects_foreign_report_test
+run_promote_evidence_rejects_off_schema_report_test
 run_live_experiment_runner_test
 run_autoscaling_experiment_runner_timeline_test
 run_cost_experiment_runner_test

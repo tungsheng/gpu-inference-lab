@@ -4,6 +4,8 @@
 set -Eeuo pipefail
 
 SCRIPT_LIB_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+. "${SCRIPT_LIB_DIR}/reports.sh"
 COMMON_DIR=$(cd -- "${SCRIPT_LIB_DIR}/.." && pwd)
 REPO_ROOT=$(cd -- "${COMMON_DIR}/.." && pwd)
 
@@ -74,10 +76,11 @@ KARPENTER_SPOT_NODEPOOL_MANIFEST="${REPO_ROOT}/platform/karpenter/nodepool-gpu-s
 KARPENTER_WARM_NODEPOOL_MANIFEST="${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml"
 NVIDIA_DEVICE_PLUGIN_MANIFEST="${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml"
 GPU_INFERENCE_DEPLOYMENT_MANIFEST="${REPO_ROOT}/platform/inference/vllm-openai.yaml"
+GPU_INFERENCE_VERSIONS_ENV="${REPO_ROOT}/platform/inference/versions.env"
 GPU_INFERENCE_HPA_MANIFEST="${REPO_ROOT}/platform/inference/hpa.yaml"
 GPU_INFERENCE_ACTIVE_PRESSURE_HPA_MANIFEST="${REPO_ROOT}/platform/inference/hpa-active-pressure.yaml"
 GPU_INFERENCE_SERVICE_MANIFEST="${REPO_ROOT}/platform/inference/service.yaml"
-GPU_INFERENCE_INGRESS_MANIFEST="${REPO_ROOT}/platform/inference/ingress.yaml"
+GPU_INFERENCE_INGRESS_TEMPLATE="${REPO_ROOT}/platform/inference/ingress.yaml.tpl"
 GPU_LOAD_TEST_MANIFEST="${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml"
 GPU_WARM_PLACEHOLDER_MANIFEST="${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml"
 
@@ -97,6 +100,12 @@ GPU_INFERENCE_HPA_NAME="vllm-openai"
 GPU_INFERENCE_INGRESS_NAME="vllm-openai-ingress"
 GPU_INFERENCE_ALB_GROUP_NAME="public-edge"
 GPU_INFERENCE_EDGE_PATH="/v1/completions"
+# Defaults apply only when unset. An explicitly empty value is an error so a
+# blank override can never widen the edge by falling back to a default.
+GPU_INFERENCE_INGRESS_SCHEME="${GPU_INFERENCE_INGRESS_SCHEME-internet-facing}"
+GPU_INFERENCE_INBOUND_CIDRS="${GPU_INFERENCE_INBOUND_CIDRS-auto}"
+PUBLIC_IP_LOOKUP_URL="${PUBLIC_IP_LOOKUP_URL:-https://checkip.amazonaws.com}"
+PUBLIC_IP_LOOKUP_TIMEOUT_SECONDS="${PUBLIC_IP_LOOKUP_TIMEOUT_SECONDS:-10}"
 GPU_INFERENCE_SERVED_MODEL_NAME="qwen2.5-0.5b"
 GPU_LOAD_TEST_JOB_NAME="gpu-load-test"
 GPU_WARM_PLACEHOLDER_DEPLOYMENT_NAME="gpu-warm-placeholder"
@@ -105,6 +114,42 @@ CLUSTER_NAME=""
 AWS_REGION=""
 VPC_ID=""
 ALB_CONTROLLER_ROLE_ARN=""
+
+load_serving_image_versions() {
+  if [[ ! -f "${GPU_INFERENCE_VERSIONS_ENV}" ]]; then
+    printf 'Missing serving image versions: %s\n' "${GPU_INFERENCE_VERSIONS_ENV}" >&2
+    return 1
+  fi
+
+  # shellcheck disable=SC1090
+  . "${GPU_INFERENCE_VERSIONS_ENV}"
+
+  local name
+  for name in VLLM_IMAGE_DEFAULT VLLM_IMAGE_MODERN VLLM_IMAGE_BLACKWELL; do
+    if [[ -z "${!name:-}" ]]; then
+      printf '%s does not define %s\n' "${GPU_INFERENCE_VERSIONS_ENV}" "${name}" >&2
+      return 1
+    fi
+  done
+}
+
+load_serving_image_versions || exit 1
+
+# Expand @VLLM_IMAGE_*@ references from platform/inference/versions.env.
+resolve_serving_image() {
+  local image=$1
+
+  image=${image//@VLLM_IMAGE_DEFAULT@/${VLLM_IMAGE_DEFAULT}}
+  image=${image//@VLLM_IMAGE_MODERN@/${VLLM_IMAGE_MODERN}}
+  image=${image//@VLLM_IMAGE_BLACKWELL@/${VLLM_IMAGE_BLACKWELL}}
+
+  if [[ "${image}" == *@VLLM_IMAGE_* ]]; then
+    printf 'Unknown serving image reference in %s (see %s)\n' "$1" "${GPU_INFERENCE_VERSIONS_ENV}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "${image}"
+}
 
 FAILURE_HINTS=()
 
@@ -357,6 +402,141 @@ wait_for_service_endpoints() {
   done
 }
 
+normalize_inbound_cidr() {
+  local entry=$1
+  local address=${entry%%/*}
+  local prefix=""
+  local octet
+
+  if [[ "${entry}" == */* ]]; then
+    prefix=${entry#*/}
+    if [[ ! "${prefix}" =~ ^(0|[1-9][0-9]?)$ ]] || ((prefix > 32)); then
+      printf 'Invalid CIDR prefix length in %s (expected 0-32)\n' "${entry}" >&2
+      return 1
+    fi
+  else
+    prefix=32
+  fi
+
+  if [[ ! "${address}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'Invalid IPv4 address in %s\n' "${entry}" >&2
+    return 1
+  fi
+
+  local IFS='.'
+  # shellcheck disable=SC2206
+  local octets=(${address})
+  for octet in "${octets[@]}"; do
+    if [[ ! "${octet}" =~ ^(0|[1-9][0-9]{0,2})$ ]] || ((octet > 255)); then
+      printf 'Invalid IPv4 octet in %s\n' "${entry}" >&2
+      return 1
+    fi
+  done
+
+  printf '%s/%s\n' "${address}" "${prefix}"
+}
+
+lookup_public_ip() {
+  local address
+
+  address=$(curl -fsS --max-time "${PUBLIC_IP_LOOKUP_TIMEOUT_SECONDS}" "${PUBLIC_IP_LOOKUP_URL}" 2>/dev/null | tr -d '[:space:]') || true
+
+  if [[ -z "${address}" ]]; then
+    printf 'Unable to detect this machine public IP from %s.\n' "${PUBLIC_IP_LOOKUP_URL}" >&2
+    printf 'Set GPU_INFERENCE_INBOUND_CIDRS to an explicit source range, for example 203.0.113.4/32.\n' >&2
+    return 1
+  fi
+
+  printf '%s\n' "${address}"
+}
+
+resolve_inference_inbound_cidrs() {
+  local requested=${GPU_INFERENCE_INBOUND_CIDRS}
+  local resolved=()
+  local entry
+  local normalized
+
+  if [[ -z "${requested}" ]]; then
+    printf 'GPU_INFERENCE_INBOUND_CIDRS is empty.\n' >&2
+    printf 'Use "auto" for this machine public IP, an explicit list such as "203.0.113.4/32", or "0.0.0.0/0" to expose the endpoint to the internet.\n' >&2
+    return 1
+  fi
+
+  if [[ "${requested}" == "auto" ]]; then
+    requested=$(lookup_public_ip) || return 1
+  fi
+
+  for entry in ${requested//,/ }; do
+    normalized=$(normalize_inbound_cidr "${entry}") || return 1
+    resolved+=("${normalized}")
+  done
+
+  if ((${#resolved[@]} == 0)); then
+    printf 'GPU_INFERENCE_INBOUND_CIDRS did not resolve to any source range.\n' >&2
+    return 1
+  fi
+
+  local IFS=','
+  printf '%s\n' "${resolved[*]}"
+}
+
+warn_on_unrestricted_edge() {
+  local cidrs=$1
+
+  if [[ ",${cidrs}," != *",0.0.0.0/0,"* ]]; then
+    return 0
+  fi
+
+  printf 'WARNING: the inference edge accepts traffic from 0.0.0.0/0.\n' >&2
+  printf 'WARNING: %s serves an unauthenticated OpenAI-compatible API over plain HTTP.\n' "${GPU_INFERENCE_INGRESS_NAME}" >&2
+  printf 'WARNING: set GPU_INFERENCE_INBOUND_CIDRS=auto to restrict it to this machine.\n' >&2
+}
+
+render_inference_ingress_manifest() {
+  local destination=$1
+  local cidrs
+  local rendered
+
+  if [[ ! -f "${GPU_INFERENCE_INGRESS_TEMPLATE}" ]]; then
+    printf 'Missing ingress template: %s\n' "${GPU_INFERENCE_INGRESS_TEMPLATE}" >&2
+    return 1
+  fi
+
+  case "${GPU_INFERENCE_INGRESS_SCHEME}" in
+    internet-facing | internal) ;;
+    *)
+      printf 'Invalid GPU_INFERENCE_INGRESS_SCHEME: %s (expected internet-facing or internal)\n' "${GPU_INFERENCE_INGRESS_SCHEME}" >&2
+      return 1
+      ;;
+  esac
+
+  cidrs=$(resolve_inference_inbound_cidrs) || return 1
+  warn_on_unrestricted_edge "${cidrs}"
+
+  rendered=$(<"${GPU_INFERENCE_INGRESS_TEMPLATE}")
+  rendered=${rendered//@INBOUND_CIDRS@/${cidrs}}
+  rendered=${rendered//@INGRESS_SCHEME@/${GPU_INFERENCE_INGRESS_SCHEME}}
+  printf '%s\n' "${rendered}" > "${destination}"
+  printf 'Inference edge scheme=%s inbound-cidrs=%s\n' "${GPU_INFERENCE_INGRESS_SCHEME}" "${cidrs}"
+}
+
+apply_inference_ingress() {
+  local rendered_manifest
+  local status=0
+
+  require_commands curl || return 1
+
+  rendered_manifest=$(mktemp "${TMPDIR:-/tmp}/gpu-lab-ingress.XXXXXX")
+  if render_inference_ingress_manifest "${rendered_manifest}"; then
+    kubectl apply -f "${rendered_manifest}" || status=1
+  else
+    status=1
+  fi
+
+  rm -f "${rendered_manifest}"
+  return "${status}"
+}
+
 wait_for_ingress_hostname() {
   local timeout_seconds=$1
   local start_time
@@ -549,34 +729,6 @@ hpa_desired_replicas() {
     -o jsonpath='{.status.desiredReplicas}' 2>/dev/null | tr -d '[:space:]'
 }
 
-wait_for_hpa_desired_replicas_at_least() {
-  local namespace=$1
-  local hpa_name=$2
-  local expected=$3
-  local timeout_seconds=$4
-  local start_time
-
-  start_time=$(date +%s)
-
-  while true; do
-    local desired_replicas
-    desired_replicas=$(hpa_desired_replicas "${namespace}" "${hpa_name}")
-    desired_replicas=${desired_replicas:-0}
-
-    if (( desired_replicas >= expected )); then
-      return 0
-    fi
-
-    if (( $(date +%s) - start_time >= timeout_seconds )); then
-      printf 'Timed out waiting for HPA %s/%s to reach at least %s desired replica(s)\n' \
-        "${namespace}" "${hpa_name}" "${expected}" >&2
-      return 1
-    fi
-
-    sleep "${POLL_INTERVAL_SECONDS}"
-  done
-}
-
 wait_for_hpa_desired_replicas_at_most() {
   local namespace=$1
   local hpa_name=$2
@@ -635,27 +787,6 @@ nodepool_capacity_type() {
       printf 'unknown\n'
       ;;
   esac
-}
-
-wait_for_nodeclaims_at_least() {
-  local expected=$1
-  local timeout_seconds=$2
-  local start_time
-
-  start_time=$(date +%s)
-
-  while true; do
-    if (( $(nodeclaim_count) >= expected )); then
-      return 0
-    fi
-
-    if (( $(date +%s) - start_time >= timeout_seconds )); then
-      printf 'Timed out waiting for at least %s NodeClaim(s)\n' "${expected}" >&2
-      return 1
-    fi
-
-    sleep "${POLL_INTERVAL_SECONDS}"
-  done
 }
 
 wait_for_nodeclaims_at_most() {

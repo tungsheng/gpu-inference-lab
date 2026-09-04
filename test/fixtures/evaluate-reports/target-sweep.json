@@ -1,0 +1,140 @@
+{
+  "generated_at": "2026-05-01T20:25:17Z",
+  "heuristic": {
+    "balanced_max_gpu_utilization_percent_max": 95,
+    "balanced_p95_estimated_queue_wait_seconds_max": 1.0,
+    "balanced_p95_ttft_seconds_max": 1.0,
+    "balanced_waiting_at_or_below_target": true,
+    "underutilized_average_gpu_utilization_percent_max": 55
+  },
+  "mode": "sweep",
+  "policy": "active-pressure",
+  "profile": "zero-idle",
+  "recommendation": {
+    "active_target": 4,
+    "rationale": "the sweep results were incomplete, so the first available target is recommended",
+    "status": "unknown"
+  },
+  "resilience_mode": "healthy",
+  "results": [
+    {
+      "active_target": 2,
+      "hpa_metric_name": "vllm_requests_active",
+      "hpa_target_average_value": "2",
+      "json_report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-zero-idle-active-pressure-target-2-20260501-105046-active-pressure-target-2.json",
+      "metrics": {
+        "average_completed_requests_per_second": 2.3567917429193894,
+        "average_gpu_headroom_percent": null,
+        "average_gpu_utilization_percent": null,
+        "estimated_burst_cost": 0.483627,
+        "max_gpu_utilization_percent": null,
+        "p95_estimated_queue_wait_seconds": 0,
+        "p95_request_latency_seconds": 117,
+        "p95_ttft_seconds": 0.08990666666666663,
+        "peak_active_nodeclaims": 2,
+        "peak_active_requests": 256,
+        "peak_active_requests_per_gpu_node": 128.0,
+        "peak_waiting_requests": 1,
+        "recovery_ready_seconds": null,
+        "second_ready_seconds": 936
+      },
+      "metrics_collection_reason": null,
+      "metrics_collection_status": "complete",
+      "report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-zero-idle-active-pressure-target-2-20260501-105046-active-pressure-target-2.md",
+      "score": 212129.021,
+      "status": "unknown",
+      "status_reason": "the efficiency readout was incomplete because one or more queue or GPU metrics were unavailable"
+    },
+    {
+      "active_target": 4,
+      "hpa_metric_name": "vllm_requests_active",
+      "hpa_target_average_value": "4",
+      "json_report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-zero-idle-active-pressure-target-4-20260501-105046-active-pressure-target-4.json",
+      "metrics": {
+        "average_completed_requests_per_second": 2.358506862745098,
+        "average_gpu_headroom_percent": null,
+        "average_gpu_utilization_percent": null,
+        "estimated_burst_cost": 0.484213,
+        "max_gpu_utilization_percent": null,
+        "p95_estimated_queue_wait_seconds": 0,
+        "p95_request_latency_seconds": 117,
+        "p95_ttft_seconds": 0.08987857142857142,
+        "peak_active_nodeclaims": 2,
+        "peak_active_requests": 256,
+        "peak_active_requests_per_gpu_node": 128.0,
+        "peak_waiting_requests": 0,
+        "recovery_ready_seconds": null,
+        "second_ready_seconds": 952
+      },
+      "metrics_collection_reason": null,
+      "metrics_collection_status": "complete",
+      "report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-zero-idle-active-pressure-target-4-20260501-105046-active-pressure-target-4.md",
+      "score": 212125.606,
+      "status": "unknown",
+      "status_reason": "the efficiency readout was incomplete because one or more queue or GPU metrics were unavailable"
+    },
+    {
+      "active_target": 6,
+      "hpa_metric_name": "vllm_requests_active",
+      "hpa_target_average_value": "6",
+      "json_report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-zero-idle-active-pressure-target-6-20260501-105046-active-pressure-target-6.json",
+      "metrics": {
+        "average_completed_requests_per_second": 2.246736710239651,
+        "average_gpu_headroom_percent": null,
+        "average_gpu_utilization_percent": null,
+        "estimated_burst_cost": 0.487573,
+        "max_gpu_utilization_percent": null,
+        "p95_estimated_queue_wait_seconds": 0,
+        "p95_request_latency_seconds": 117,
+        "p95_ttft_seconds": 0.09249897435897436,
+        "peak_active_nodeclaims": 2,
+        "peak_active_requests": 256,
+        "peak_active_requests_per_gpu_node": 128.0,
+        "peak_waiting_requests": 0,
+        "recovery_ready_seconds": null,
+        "second_ready_seconds": 940
+      },
+      "metrics_collection_reason": null,
+      "metrics_collection_status": "complete",
+      "report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-zero-idle-active-pressure-target-6-20260501-105046-active-pressure-target-6.md",
+      "score": 212129.123,
+      "status": "unknown",
+      "status_reason": "the efficiency readout was incomplete because one or more queue or GPU metrics were unavailable"
+    },
+    {
+      "active_target": 8,
+      "hpa_metric_name": "vllm_requests_active",
+      "hpa_target_average_value": "8",
+      "json_report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-zero-idle-active-pressure-target-8-20260501-105046-active-pressure-target-8.json",
+      "metrics": {
+        "average_completed_requests_per_second": null,
+        "average_gpu_headroom_percent": null,
+        "average_gpu_utilization_percent": null,
+        "estimated_burst_cost": 0.653409,
+        "max_gpu_utilization_percent": null,
+        "p95_estimated_queue_wait_seconds": null,
+        "p95_request_latency_seconds": null,
+        "p95_ttft_seconds": null,
+        "peak_active_nodeclaims": null,
+        "peak_active_requests": null,
+        "peak_active_requests_per_gpu_node": null,
+        "peak_waiting_requests": null,
+        "recovery_ready_seconds": null,
+        "second_ready_seconds": 921
+      },
+      "metrics_collection_reason": null,
+      "metrics_collection_status": "complete",
+      "report_path": "/Users/tonylee/code/gpu-inference-lab/docs/reports/evaluate-zero-idle-active-pressure-target-8-20260501-105046-active-pressure-target-8.md",
+      "score": 700653.409,
+      "status": "unknown",
+      "status_reason": "the efficiency readout was incomplete because one or more queue or GPU metrics were unavailable"
+    }
+  ],
+  "schema_version": "evaluate-report/v1",
+  "targets_evaluated": [
+    2,
+    4,
+    6,
+    8
+  ]
+}

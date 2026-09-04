@@ -5,8 +5,10 @@ choose what to measure and [Evidence](evidence.md) to read current conclusions.
 
 ## Prerequisites
 
-Local catalog commands need only the repository. Live runs also need Terraform,
-AWS CLI, `kubectl`, `helm`, AWS credentials, and access to `us-west-2`.
+Local catalog commands need the repository plus `jq` and `python3`: `replay` and
+`summarize-reports` read committed evidence with `jq`, and `validate` checks it
+against the report schema with `python3`. Live runs also need Terraform, AWS
+CLI, `kubectl`, `helm`, `curl`, AWS credentials, and access to `us-west-2`.
 
 Run local tests at any point:
 
@@ -19,7 +21,9 @@ Run local tests at any point:
 | Need | Command |
 | --- | --- |
 | Inspect experiment definitions | `./scripts/experiment list` |
-| Validate catalog contracts | `./scripts/experiment validate` |
+| Validate catalog contracts, serving images, and curated evidence | `./scripts/experiment validate` |
+| Re-render an evaluation readout offline | `./scripts/evaluate render-report --record <record>` |
+| Inspect a resolved experiment case | `./scripts/experiment resolve --experiment kv-cache --case prompt-512-output-100` |
 | Show one experiment | `./scripts/experiment show kv-cache` |
 | Render a KV cache timeline demo | `./scripts/kv-observe demo --output /tmp/kv-cache-observatory.html` |
 | Bring up the dev platform | `./scripts/up` |
@@ -77,8 +81,38 @@ Expected state after `./scripts/up`:
 
 - system nodes are present and labeled `workload=system`
 - Prometheus, Grafana, the custom metrics API, and Karpenter are Ready
-- public inference ingress has a hostname
+- the inference ingress has a hostname
 - GPU node count is still `0`
+
+### Edge Exposure
+
+The inference ALB serves an unauthenticated OpenAI-compatible API over plain
+HTTP, so the listener is never created without an explicit source range. By
+default it is restricted to the public IP of the machine that ran the command:
+
+```bash
+# restricted to this machine (default)
+./scripts/up
+
+# a fixed range, for example an office egress block
+GPU_INFERENCE_INBOUND_CIDRS=203.0.113.0/24 ./scripts/up
+
+# private ALB with no internet listener
+GPU_INFERENCE_INGRESS_SCHEME=internal GPU_INFERENCE_INBOUND_CIDRS=10.0.0.0/8 ./scripts/up
+```
+
+`./scripts/up` prints the range it resolved. `./scripts/evaluate` re-renders the
+ingress the same way, so set the same variable for both. Opening the endpoint to
+`0.0.0.0/0` requires writing it out explicitly and prints a warning.
+
+If your public IP changes mid-session, re-render the edge rather than editing
+the ingress by hand:
+
+```bash
+GPU_INFERENCE_INBOUND_CIDRS=auto ./scripts/evaluate --profile zero-idle
+```
+
+See [platform/inference](../platform/inference/README.md) for the full contract.
 
 ## Cold Start
 

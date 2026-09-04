@@ -55,53 +55,9 @@ write_stub helm \
 "  *) exit 1 ;;" \
 "esac"
 
-write_stub kubectl \
-"#!/usr/bin/env bash" \
-"set -euo pipefail" \
-"printf '%s\n' \"\$*\" >> \"${TEST_TMPDIR}/kubectl.log\"" \
-"case \"\$*\" in" \
-"  'cluster-info') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/controller/aws-load-balancer-controller/service-account.yaml') exit 0 ;;" \
-"  'annotate serviceaccount -n kube-system aws-load-balancer-controller eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/alb-controller --overwrite') exit 0 ;;" \
-"  apply\ -f\ /tmp/*|apply\ -f\ */tmp.*) exit 0 ;;" \
-"  'rollout status deployment/aws-load-balancer-controller -n kube-system --timeout=10m') exit 0 ;;" \
-"  'get endpointslice -n kube-system -l kubernetes.io/service-name=aws-load-balancer-webhook-service -o jsonpath={.items[*].endpoints[*].addresses[*]}') printf '%s\n' '10.0.0.1' ;;" \
-"  'rollout status deployment/kube-prometheus-stack-operator -n monitoring --timeout=10m') exit 0 ;;" \
-"  'rollout status deployment/kube-prometheus-stack-grafana -n monitoring --timeout=10m') exit 0 ;;" \
-"  'rollout status statefulset/prometheus-kube-prometheus-stack-prometheus -n monitoring --timeout=10m') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/observability/vllm-podmonitor.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/observability/karpenter-podmonitor.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/observability/pushgateway.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/observability/dashboards/serving-dashboard.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/observability/dashboards/capacity-dashboard.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/observability/dashboards/experiment-dashboard.yaml') exit 0 ;;" \
-"  'get deployment pushgateway -n monitoring') exit 0 ;;" \
-"  'rollout status deployment/pushgateway -n monitoring --timeout=5m') exit 0 ;;" \
-"  'get daemonset dcgm-exporter -n monitoring') exit 0 ;;" \
-"  'rollout status deployment/prometheus-adapter -n monitoring --timeout=10m') exit 0 ;;" \
-"  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True' ;;" \
-"  'apply -f ${REPO_ROOT}/platform/karpenter/serviceaccount.yaml') exit 0 ;;" \
-"  'wait --for=condition=Established crd/nodepools.karpenter.sh --timeout=10m') exit 0 ;;" \
-"  'wait --for=condition=Established crd/nodeclaims.karpenter.sh --timeout=10m') exit 0 ;;" \
-"  'wait --for=condition=Established crd/ec2nodeclasses.karpenter.k8s.aws --timeout=10m') exit 0 ;;" \
-"  'rollout status deployment/karpenter -n karpenter --timeout=10m') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/karpenter/nodeclass-gpu-serving.yaml') exit 0 ;;" \
-"  'wait --for=condition=Ready ec2nodeclass/gpu-serving --timeout=10m') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml') exit 0 ;;" \
-"  'wait --for=condition=Ready nodepool/gpu-serving-ondemand --timeout=10m') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml') exit 0 ;;" \
-"  'wait --for=condition=Ready nodepool/gpu-serving-spot --timeout=10m') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml') exit 0 ;;" \
-"  'rollout status daemonset/nvidia-device-plugin-daemonset -n kube-system --timeout=10m') exit 0 ;;" \
-"  'get namespace app') exit 1 ;;" \
-"  'create namespace app') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
-"  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com' ;;" \
-"  'get nodes -l workload=gpu -o name') exit 0 ;;" \
-"  *) printf 'unexpected kubectl command: %s\n' \"\$*\" >&2; exit 1 ;;" \
-"esac"
+kubectl_stub_reset
+kubectl_bundle_up_happy_path
+kubectl_stub_write
 
 run_and_capture env PATH="${TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" /bin/bash "${REPO_ROOT}/scripts/up" -auto-approve
 
@@ -123,6 +79,10 @@ assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/observability/v
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/observability/dcgm-exporter.yaml" "up should apply the GPU metrics exporter"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml" "up should install the on-demand serving NodePool"
 assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml" "up should install the spot serving NodePool"
-assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/inference/ingress.yaml" "up should apply the inference ingress"
+assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/inference/service.yaml" "up should apply the inference service"
+assert_contains "${KUBECTL_LOG}" "apply -f ${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml" "up should install the NVIDIA device plugin"
+assert_contains "${KUBECTL_LOG}" "apply -f " "up should apply the rendered inference ingress"
+assert_contains "${COMMAND_OUTPUT}" "Inference edge scheme=internet-facing inbound-cidrs=203.0.113.10/32" "up should report the resolved edge scheme and source range"
+assert_not_contains "${COMMAND_OUTPUT}" "0.0.0.0/0" "up should not open the edge to the internet by default"
 assert_contains "${KUBECTL_LOG}" "get nodes -l workload=gpu -o name" "up should verify the zero-GPU baseline before reporting ready"
 assert_not_contains "${KUBECTL_LOG}" "platform/examples/echo" "up should not reference the sample app"

@@ -9,22 +9,7 @@ SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 TEST_PATH_SUFFIX="/usr/bin:/bin:/usr/sbin:/sbin"
 
 write_common_up_stubs() {
-  write_stub terraform \
-"#!/usr/bin/env bash" \
-"set -euo pipefail" \
-"case \"\$2\" in" \
-"  init|apply) exit 0 ;;" \
-"  output)" \
-"    case \"\$4\" in" \
-"      cluster_name) printf '%s\n' 'gpu-inference' ;;" \
-"      aws_region) printf '%s\n' 'us-west-2' ;;" \
-"      vpc_id) printf '%s\n' 'vpc-12345' ;;" \
-"      aws_load_balancer_controller_role_arn) printf '%s\n' 'arn:aws:iam::123456789012:role/alb-controller' ;;" \
-"      *) exit 1 ;;" \
-"    esac" \
-"    ;;" \
-"  *) exit 1 ;;" \
-"esac"
+  stub_terraform "init|apply"
 
   write_stub aws \
 "#!/usr/bin/env bash" \
@@ -65,93 +50,14 @@ write_common_verify_stubs() {
 }
 
 write_common_down_stubs() {
-  write_stub terraform \
-"#!/usr/bin/env bash" \
-"set -euo pipefail" \
-"case \"\$2\" in" \
-"  init|destroy) exit 0 ;;" \
-"  output)" \
-"    case \"\$4\" in" \
-"      cluster_name) printf '%s\n' 'gpu-inference' ;;" \
-"      aws_region) printf '%s\n' 'us-west-2' ;;" \
-"      vpc_id) printf '%s\n' 'vpc-12345' ;;" \
-"      aws_load_balancer_controller_role_arn) printf '%s\n' 'arn:aws:iam::123456789012:role/alb-controller' ;;" \
-"      *) exit 1 ;;" \
-"    esac" \
-"    ;;" \
-"  *) exit 1 ;;" \
-"esac"
-
-  write_stub helm \
-"#!/usr/bin/env bash" \
-"set -euo pipefail" \
-"case \"\$1\" in" \
-"  status|uninstall) exit 0 ;;" \
-"  *) exit 1 ;;" \
-"esac"
+  stub_terraform "init|destroy"
+  stub_helm_teardown
 }
 
 write_successful_down_kubectl_stub() {
-  write_stub kubectl \
-"#!/usr/bin/env bash" \
-"set -euo pipefail" \
-"if [[ \"\$*\" == 'delete namespace monitoring --ignore-not-found=true' ]]; then" \
-"  : > \"${TEST_TMPDIR}/monitoring-deleted\"" \
-"  exit 0" \
-"fi" \
-"if [[ \"\$*\" == 'get namespace monitoring' ]]; then" \
-"  if [[ -f \"${TEST_TMPDIR}/monitoring-deleted\" ]]; then" \
-"    exit 1" \
-"  fi" \
-"  exit 0" \
-"fi" \
-"case \"\$*\" in" \
-"  'cluster-info') exit 0 ;;" \
-"  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com' ;;" \
-"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get job gpu-load-test -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get deployment gpu-warm-placeholder -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get hpa vllm-openai -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/inference/ingress.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get ingress vllm-openai-ingress -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/inference/service.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get service vllm-openai -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/inference/vllm-openai.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get deployment vllm-openai -n app') exit 1 ;;" \
-"  'get crd nodepools.karpenter.sh') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/legacy/karpenter/nodepool-gpu-warm.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get nodepool gpu-warm-1') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get nodepool gpu-serving-spot') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get nodepool gpu-serving-ondemand') exit 1 ;;" \
-"  'delete nodepool/gpu-serving --ignore-not-found=true') exit 0 ;;" \
-"  'get nodepool gpu-serving') exit 1 ;;" \
-"  'get crd ec2nodeclasses.karpenter.k8s.aws') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/nodeclass-gpu-serving.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get ec2nodeclass gpu-serving') exit 1 ;;" \
-"  'get crd nodeclaims.karpenter.sh') exit 0 ;;" \
-"  'get nodeclaims -l karpenter.sh/nodepool in (gpu-serving-ondemand,gpu-serving-spot) -o name') exit 0 ;;" \
-"  'get nodes -l workload=gpu -o name') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/observability/dashboards/experiment-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/observability/dashboards/capacity-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/observability/dashboards/serving-dashboard.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/observability/pushgateway.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete daemonset dcgm-exporter -n monitoring --ignore-not-found=true') exit 0 ;;" \
-"  'delete service dcgm-exporter -n monitoring --ignore-not-found=true') exit 0 ;;" \
-"  'get crd servicemonitors.monitoring.coreos.com') exit 0 ;;" \
-"  'delete servicemonitor dcgm-exporter -n monitoring --ignore-not-found=true') exit 0 ;;" \
-"  'get crd podmonitors.monitoring.coreos.com') exit 0 ;;" \
-"  'delete podmonitor karpenter-metrics -n monitoring --ignore-not-found=true') exit 0 ;;" \
-"  'delete podmonitor vllm-metrics -n monitoring --ignore-not-found=true') exit 0 ;;" \
-"  'get apiservice v1beta1.custom.metrics.k8s.io') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/karpenter/serviceaccount.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/system/nvidia-device-plugin.yaml --ignore-not-found=true') exit 0 ;;" \
-"  'get daemonset nvidia-device-plugin-daemonset -n kube-system') exit 1 ;;" \
-"  *) printf 'unexpected kubectl command: %s\n' \"\$*\" >&2; exit 1 ;;" \
-"esac"
+  kubectl_stub_reset
+  kubectl_bundle_down_happy_path
+  kubectl_stub_write
 }
 
 run_missing_prereq_test() {
@@ -160,7 +66,7 @@ run_missing_prereq_test() {
   run_and_capture env PATH="${TEST_BIN}" /bin/bash "${REPO_ROOT}/scripts/up"
   assert_status 1 "${COMMAND_STATUS}" "up should fail fast when required tools are missing"
   assert_contains "${COMMAND_OUTPUT}" "FAIL 1/9 checking prerequisites" "up should fail in the prerequisite stage when tools are missing"
-  assert_contains "${COMMAND_OUTPUT}" "Missing required command(s): aws helm kubectl terraform" "up should explain which commands are missing"
+  assert_contains "${COMMAND_OUTPUT}" "Missing required command(s): aws curl helm kubectl terraform" "up should explain which commands are missing"
   teardown_test_tmpdir
 }
 
@@ -243,7 +149,7 @@ run_up_ingress_timeout_test() {
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') exit 0 ;;" \
 "  *) exit 1 ;;" \
 "esac"
@@ -362,7 +268,7 @@ run_evaluate_scale_out_timeout_test() {
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -452,7 +358,7 @@ run_evaluate_scale_out_failed_job_test() {
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -545,7 +451,7 @@ run_evaluate_spot_interruption_requires_spot_baseline_test() {
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -652,7 +558,7 @@ run_evaluate_metric_pipeline_timeout_test() {
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -740,7 +646,7 @@ run_evaluate_active_pressure_metric_pipeline_timeout_test() {
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -828,7 +734,7 @@ run_evaluate_warm_profile_capacity_timeout_test() {
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -911,7 +817,7 @@ run_evaluate_compare_second_policy_failure_test() {
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true')" \
@@ -1085,7 +991,7 @@ run_evaluate_sweep_second_target_failure_test() {
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true')" \
@@ -1269,7 +1175,7 @@ run_evaluate_compare_warm_profile_capacity_timeout_test() {
 "  'get namespace app') exit 1 ;;" \
 "  'create namespace app') exit 0 ;;" \
 "  'apply -f ${REPO_ROOT}/platform/inference/service.yaml') exit 0 ;;" \
-"  'apply -f ${REPO_ROOT}/platform/inference/ingress.yaml') exit 0 ;;" \
+"  'apply -f '*'/gpu-lab-ingress.'*) exit 0 ;;" \
 "  'get apiservice v1beta1.custom.metrics.k8s.io -o jsonpath={.status.conditions[?(@.type=='\"'\"'Available'\"'\"')].status}') printf '%s\n' 'True'; exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app -o jsonpath={.status.loadBalancer.ingress[0].hostname}') printf '%s\n' 'public-edge.example.com'; exit 0 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/workloads/validation/gpu-load-test.yaml --ignore-not-found=true') exit 0 ;;" \
@@ -1354,7 +1260,7 @@ run_down_alb_timeout_test() {
 "  'get job gpu-load-test -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/hpa.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get hpa vllm-openai -n app') exit 1 ;;" \
-"  'delete -f ${REPO_ROOT}/platform/inference/ingress.yaml --ignore-not-found=true') exit 0 ;;" \
+"  'delete ingress vllm-openai-ingress -n app --ignore-not-found=true') exit 0 ;;" \
 "  'get ingress vllm-openai-ingress -n app') exit 1 ;;" \
 "  'delete -f ${REPO_ROOT}/platform/inference/service.yaml --ignore-not-found=true') exit 0 ;;" \
 "  'get service vllm-openai -n app') exit 1 ;;" \

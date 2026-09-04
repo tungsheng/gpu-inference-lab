@@ -17,10 +17,14 @@ LOAD_TEST_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/workloads/validation/gpu
 WARM_PLACEHOLDER_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/workloads/validation/gpu-warm-placeholder.yaml")
 ONDEMAND_NODEPOOL_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-ondemand.yaml")
 SPOT_NODEPOOL_MANIFEST_CONTENT=$(cat "${REPO_ROOT}/platform/karpenter/nodepool-gpu-serving-spot.yaml")
+EXPERIMENT_SCRIPT_CONTENT=$(cat "${REPO_ROOT}/scripts/experiment")
 SCRIPT_CONTENT=$(cat "${REPO_ROOT}/scripts/_common.sh" "${REPO_ROOT}/scripts/lib/platform.sh" "${REPO_ROOT}/scripts/up" "${REPO_ROOT}/scripts/verify" "${REPO_ROOT}/scripts/down" "${REPO_ROOT}/scripts/evaluate")
 
 assert_contains "${DEPLOYMENT_MANIFEST_CONTENT}" 'kind: Deployment' "the default inference manifest should remain the deployment entrypoint"
 assert_not_contains "${DEPLOYMENT_MANIFEST_CONTENT}" 'kind: HorizontalPodAutoscaler' "the default inference manifest should no longer include the HPA"
+assert_contains "${DEPLOYMENT_MANIFEST_CONTENT}" 'startupProbe:' "the serving deployment should gate the cold-start budget behind a startup probe"
+assert_occurs_before "${DEPLOYMENT_MANIFEST_CONTENT}" 'startupProbe:' 'livenessProbe:' "the startup probe should be declared before the liveness probe it protects"
+assert_not_contains "${DEPLOYMENT_MANIFEST_CONTENT}" 'initialDelaySeconds: 60' "the liveness probe should no longer carry its own cold-start delay"
 assert_contains "${RUNNING_HPA_MANIFEST_CONTENT}" 'kind: HorizontalPodAutoscaler' "the running-policy manifest should define the HPA"
 assert_contains "${RUNNING_HPA_MANIFEST_CONTENT}" 'name: vllm_requests_running' "the running-policy HPA should use the running-request metric target"
 assert_contains "${RUNNING_HPA_MANIFEST_CONTENT}" 'averageValue: "128"' "the running-policy HPA should preserve the existing concurrency target"
@@ -71,3 +75,12 @@ assert_contains "${ONDEMAND_NODEPOOL_MANIFEST_CONTENT}" 'on-demand' "the on-dema
 assert_contains "${SPOT_NODEPOOL_MANIFEST_CONTENT}" 'name: gpu-serving-spot' "the spot serving NodePool should use the new explicit name"
 assert_contains "${SPOT_NODEPOOL_MANIFEST_CONTENT}" 'weight: 50' "the spot serving NodePool should be preferred for new provisioning"
 assert_contains "${SPOT_NODEPOOL_MANIFEST_CONTENT}" 'spot' "the spot serving NodePool should pin capacity type to spot"
+assert_contains "${EXPERIMENT_SCRIPT_CONTENT}" 'startupProbe:' "the experiment serving renderer should use the same startup-probe shape as the checked-in deployment"
+assert_occurs_before "${EXPERIMENT_SCRIPT_CONTENT}" 'startupProbe:' 'livenessProbe:' "the experiment serving renderer should declare the startup probe before the liveness probe"
+
+VERSIONS_ENV_CONTENT=$(cat "${REPO_ROOT}/platform/inference/versions.env")
+
+assert_contains "${VERSIONS_ENV_CONTENT}" 'VLLM_IMAGE_DEFAULT=' "versions.env should declare the baseline serving image"
+assert_contains "${VERSIONS_ENV_CONTENT}" 'VLLM_IMAGE_MODERN=' "versions.env should declare the current serving image"
+assert_contains "${VERSIONS_ENV_CONTENT}" 'VLLM_IMAGE_BLACKWELL=' "versions.env should declare the Blackwell serving image"
+assert_not_contains "${DEPLOYMENT_MANIFEST_CONTENT}" '@VLLM_IMAGE' "the checked-in deployment should pin a concrete image, kept in step by scripts/experiment validate"

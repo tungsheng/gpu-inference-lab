@@ -10,6 +10,17 @@ Validate catalog edits with:
 ./scripts/experiment validate
 ```
 
+An experiment, case and serving profile resolve into one document. Read it when
+you want to know what a case actually runs with, after shared defaults and
+sparse profile overrides have been applied:
+
+```bash
+./scripts/experiment resolve --experiment kv-cache --case prompt-512-output-100 --profile long-context
+```
+
+Renderers and validators read that resolved case rather than sequencing the CSV
+loaders themselves, so a case resolves the same way wherever it is used.
+
 ## Catalog
 
 | Experiment | Status | Decision question | Location |

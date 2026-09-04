@@ -111,7 +111,8 @@ run_kv_observe_preflight_test() {
     --profile default
 
   assert_status 1 "${COMMAND_STATUS}" "kv-observe preflight should reject the historical default profile"
-  assert_contains "${COMMAND_OUTPUT}" "Expected a vLLM v0.22.1 image" "preflight should explain profile version mismatch"
+  assert_contains "${COMMAND_OUTPUT}" "Expected a vllm/vllm-openai:v0.22.1 image" "preflight should explain profile version mismatch"
+  assert_contains "${COMMAND_OUTPUT}" "found: vllm/vllm-openai:v0.9.0" "preflight should name the image it actually found"
 }
 
 run_kv_observe_demo_test

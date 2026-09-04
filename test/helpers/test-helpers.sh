@@ -4,6 +4,13 @@ TEST_HELPERS_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC2034
 REPO_ROOT=$(cd -- "${TEST_HELPERS_DIR}/../.." && pwd)
 
+# Pin the inference edge source range so stubbed runs never reach the public-IP
+# lookup service. Tests that exercise resolution set their own value.
+export GPU_INFERENCE_INBOUND_CIDRS="${GPU_INFERENCE_INBOUND_CIDRS:-203.0.113.10/32}"
+
+# shellcheck disable=SC1091
+. "${TEST_HELPERS_DIR}/cluster-stub.sh"
+
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
@@ -37,8 +44,10 @@ assert_occurs_before() {
   local first_line
   local second_line
 
-  first_line=$(printf '%s\n' "${haystack}" | awk -v needle="${first_needle}" 'index($0, needle) { print NR; exit }')
-  second_line=$(printf '%s\n' "${haystack}" | awk -v needle="${second_needle}" 'index($0, needle) { print NR; exit }')
+  # awk must consume the whole stream: exiting on the first match closes the
+  # pipe early and makes printf die with SIGPIPE under `set -o pipefail`.
+  first_line=$(printf '%s\n' "${haystack}" | awk -v needle="${first_needle}" 'index($0, needle) && !found { line = NR; found = 1 } END { if (found) print line }')
+  second_line=$(printf '%s\n' "${haystack}" | awk -v needle="${second_needle}" 'index($0, needle) && !found { line = NR; found = 1 } END { if (found) print line }')
 
   if [[ -z "${first_line}" || -z "${second_line}" || "${first_line}" -ge "${second_line}" ]]; then
     fail "${message}"

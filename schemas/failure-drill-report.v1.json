@@ -1,0 +1,99 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "generated_at": {
+      "type": "string"
+    },
+    "injector": {
+      "type": "string"
+    },
+    "mitigation": {
+      "type": "string"
+    },
+    "note": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "recovery_gate": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "runner": {
+      "type": "string"
+    },
+    "scenario": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "failure-drill-report/v1"
+    },
+    "status": {
+      "type": "string"
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ]
+    },
+    "timeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "first_successful_response_seconds": {
+          "type": "null"
+        },
+        "recovered_ready_seconds": {
+          "type": "null"
+        },
+        "replacement_seconds": {
+          "type": "null"
+        },
+        "trigger_seconds": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "first_successful_response_seconds",
+        "recovered_ready_seconds",
+        "replacement_seconds",
+        "trigger_seconds"
+      ]
+    }
+  },
+  "required": [
+    "generated_at",
+    "injector",
+    "mitigation",
+    "note",
+    "outcome",
+    "recovery_gate",
+    "run_id",
+    "runner",
+    "scenario",
+    "schema_version",
+    "status",
+    "target",
+    "timeline"
+  ],
+  "title": "Failure drill report",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/gpu-inference-lab/failure-drill-report.schema.json",
+  "description": "Reports written by ./scripts/failure for kubectl-injector drills."
+}

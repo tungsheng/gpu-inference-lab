@@ -47,18 +47,26 @@ spec:
           ports:
             - containerPort: 8000
               name: http
-          readinessProbe:
+          # The startup probe owns the cold-start budget (620s) so image pull
+          # and model load cannot trip the liveness probe and crash-loop the
+          # pod. Readiness and liveness only begin once startup succeeds.
+          startupProbe:
             httpGet:
               path: /health
               port: http
             initialDelaySeconds: 20
             periodSeconds: 10
             failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 60
             periodSeconds: 20
             failureThreshold: 6
           resources:
