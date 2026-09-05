@@ -96,7 +96,7 @@ checks, and teardown recovery.
 
 | Path | Purpose |
 | --- | --- |
-| `infra/` | Terraform VPC, EKS, and Karpenter AWS prerequisites |
+| `infra/` | Terraform VPC, EKS, and Karpenter AWS prerequisites, plus remote-state bootstrap |
 | `platform/` | Kubernetes manifests for serving, capacity, observability, and validation |
 | `experiments/` | experiment definitions, cases, profiles, and curated results |
 | `scripts/` | lifecycle, evaluation, and experiment commands |

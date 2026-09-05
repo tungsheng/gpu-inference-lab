@@ -3,6 +3,8 @@ name: Shell Checks
 on:
   pull_request:
   push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -30,7 +32,11 @@ jobs:
         run: terraform -chdir=infra/env/dev init -backend=false -input=false
 
       - name: Terraform validate
-        run: terraform -chdir=infra/env/dev validate
+        run: |
+          terraform -chdir=infra/env/dev validate
+          terraform -chdir=infra/bootstrap init -backend=false -input=false
+          terraform -chdir=infra/bootstrap validate
+          terraform fmt -check -recursive infra/
 
       - name: Bash syntax
         run: |

@@ -1,0 +1,22 @@
+# Remote state for the dev environment.
+#
+# Copy this file to backend_override.tf and fill in the bucket, then re-run
+# ./scripts/up (or `terraform -chdir=infra/env/dev init -migrate-state`).
+#
+# It is a Terraform override file, so it adds the backend without editing the
+# checked-in configuration, and *_override.tf is already gitignored -- your
+# bucket name never lands in the repository. Without this file the environment
+# keeps using local state, which is the checked-in default.
+#
+# use_lockfile is Terraform's native S3 locking (1.10+). It needs no DynamoDB
+# table; the lock is an object beside the state.
+
+terraform {
+  backend "s3" {
+    bucket       = "REPLACE-WITH-YOUR-STATE-BUCKET"
+    key          = "dev/terraform.tfstate"
+    region       = "us-west-2"
+    encrypt      = true
+    use_lockfile = true
+  }
+}

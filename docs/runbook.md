@@ -9,6 +9,8 @@ Local catalog commands need the repository plus `jq` and `python3`: `replay` and
 `summarize-reports` read committed evidence with `jq`, and `validate` checks it
 against the report schema with `python3`. Live runs also need Terraform, AWS
 CLI, `kubectl`, `helm`, `curl`, AWS credentials, and access to `us-west-2`.
+Terraform state is local by default; see [infra](../infra/README.md) for the
+remote-state opt-in and why it matters before a second operator appears.
 
 Run local tests at any point:
 

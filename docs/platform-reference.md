@@ -133,6 +133,13 @@ The active environment keeps the EKS API public:
 Production requires private cluster access, a documented operator path, and
 narrower public CIDR controls.
 
+Terraform state for `infra/env/dev` is local by default: no locking, no history.
+That is workable for one operator tearing the environment down between runs, but
+losing the state file while infrastructure exists leaves an orphaned VPC to clean
+up by hand. Remote state with S3 native locking is a documented opt-in; see
+[infra](../infra/README.md). Move to it before a second person, a second machine,
+or CI ever runs an apply.
+
 The inference ALB is narrower than the EKS API. Its listener carries an explicit
 `inbound-cidrs` source range chosen at apply time and defaults to the operator
 public IP; see [Edge Exposure](../platform/inference/README.md#edge-exposure).
